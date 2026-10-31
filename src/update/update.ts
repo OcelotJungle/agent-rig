@@ -379,7 +379,7 @@ async function completeSuccessfulUpdate(
       `update-ok:${transaction.target.rig}:${transaction.target.hub}`,
       "update-ok",
       "info",
-      `Обновлено: ${await versionChanges(ports, transaction.before, transaction.target)}. rig apply и rig check прошли успешно.`,
+      `Обновлено: ${await versionChanges(ports, transaction.before, transaction.target)}.`,
     ),
     ...(pendingResult.event === null ? [] : [pendingResult.event]),
     ...featureEvents,

@@ -463,7 +463,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig 0.1.0 → 0.2.0, хаб 1.0.0 → 1.1.0. rig apply и rig check прошли успешно.",
+      "Обновлено: agent-rig 0.1.0 → 0.2.0, хаб 1.0.0 → 1.1.0.",
     );
   });
 
@@ -475,7 +475,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig 0.2.0 (r1 → r2). rig apply и rig check прошли успешно.",
+      "Обновлено: agent-rig 0.2.0 (r1 → r2).",
     );
   });
 
@@ -487,7 +487,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig r1 → abcdef0, хаб h1 → fedcba9. rig apply и rig check прошли успешно.",
+      "Обновлено: agent-rig r1 → abcdef0, хаб h1 → fedcba9.",
     );
   });
 
