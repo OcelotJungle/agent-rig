@@ -1,0 +1,504 @@
+{
+  "name": "base",
+  "description": "Базовые правила и хуки.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-compact-instructions.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/shared-addressing-the-user.md",
+      "target": "shared"
+    },
+    {
+      "path": "rules/claude-global-rules-vs-project-memory.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-global-rules-vs-project-memory-telegram-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-global-rules-vs-project-memory-telegram-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-global-rules-vs-project-memory-after-telegram.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-ask-driven-development.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-ask-driven-development-telegram-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-ask-driven-development-telegram-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-ask-driven-development-after-telegram.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-every-message-gets-an-answer.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-every-message-gets-an-answer-telegram-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-every-message-gets-an-answer-telegram-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-every-message-gets-an-answer-after-telegram.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-writing-to-the-user.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-writing-to-the-user-telegram-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-writing-to-the-user-telegram-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-fixing-a-sent-answer.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-blockers-go-first.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-review-and-engineering-method.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-01-heading.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-02-fable.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-03-routing-codex-on-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-03-routing-codex-on-volunteers-off.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ],
+      "whenDisabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-03-routing-codex-off-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-03-routing-codex-off-volunteers-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-04-most-tasks-codex-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-04-most-tasks-codex-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-04-instructions-codex-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-04-instructions-codex-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-06-final-review-codex-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-06-final-review-codex-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-07-leftovers.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-01-subagent-models-08-agent-guidance.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-01-heading.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-02-context-cost.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-03-orchestrator.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-04-locating-codex-on-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-04-locating-codex-on-volunteers-off.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ],
+      "whenDisabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-04-locating-codex-off-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-04-locating-codex-off-volunteers-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-05-mechanical-chain-codex-on-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-05-mechanical-chain-codex-on-volunteers-off.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ],
+      "whenDisabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-05-mechanical-chain-codex-off-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-05-mechanical-chain-codex-off-volunteers-off.md",
+      "target": "claude",
+      "whenDisabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-06-main-session-decisions.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-07-subagent-reports.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-08-model-and-effort.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-09-session-instructions.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-10-cleanup-approval.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-11-read-files.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-12-estimates.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-13-limit-pause.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-delegation-02-main-context-14-scan-skills.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-commits.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-no-heredocs.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/claude-windows-commands-go-through-bash.md",
+      "target": "claude",
+      "platform": "windows"
+    },
+    {
+      "path": "rules/claude-background-tasks-and-monitors.md",
+      "target": "claude"
+    },
+    {
+      "path": "rules/shared-specs-are-living-documents.md",
+      "target": "shared"
+    },
+    {
+      "path": "rules/shared-temporary-files.md",
+      "target": "shared"
+    },
+    {
+      "path": "rules/shared-tests-and-runs.md",
+      "target": "shared"
+    }
+  ],
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "matcher": "compact",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/base/hooks/compact_history.py"
+      ],
+      "timeout": 30,
+      "statusMessage": "Saving pre-compaction history"
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "",
+      "command": "bash",
+      "args": [
+        "{{CLONE}}/base/hooks/project-tmp.sh"
+      ],
+      "timeout": 60
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/base/hooks/no_ampersand.py"
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "attribution",
+      "value": {
+        "commit": "",
+        "pr": ""
+      }
+    },
+    {
+      "key": "env.CLAUDE_CODE_USE_POWERSHELL_TOOL",
+      "value": "0",
+      "platform": "windows"
+    }
+  ],
+  "plugins": [],
+  "files": [
+    "hooks/compact_history.py",
+    "hooks/no_ampersand.py",
+    "hooks/project-tmp.sh",
+    "hooks/project-tmp-settings.ps1",
+    "tools/patchlib.py"
+  ],
+  "assets": [],
+  "agents": [
+    "agents/explore.md",
+    "agents/general-purpose.md"
+  ],
+  "skills": [],
+  "hubCommands": [],
+  "programs": [
+    {
+      "name": "python3",
+      "command": "python3",
+      "installCommand": "sudo apt install python3",
+      "systemPackage": true,
+      "platform": "linux"
+    },
+    {
+      "name": "python",
+      "command": "python",
+      "installCommand": "winget install --id Python.Python.3.13 --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    },
+    {
+      "name": "python3",
+      "command": "python3",
+      "installCommand": "brew install python",
+      "systemPackage": true,
+      "platform": "darwin"
+    },
+    {
+      "name": "bash",
+      "command": "bash",
+      "installCommand": "sudo apt install bash",
+      "systemPackage": true,
+      "platform": "linux"
+    },
+    {
+      "name": "bash",
+      "command": "bash",
+      "installCommand": "winget install --id Git.Git --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    },
+    {
+      "name": "bash",
+      "command": "bash",
+      "installCommand": "brew install bash",
+      "systemPackage": true,
+      "platform": "darwin"
+    },
+    {
+      "name": "git",
+      "command": "git",
+      "installCommand": "sudo apt install git",
+      "systemPackage": true,
+      "platform": "linux"
+    },
+    {
+      "name": "git",
+      "command": "git",
+      "installCommand": "winget install --id Git.Git --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    },
+    {
+      "name": "git",
+      "command": "git",
+      "installCommand": "brew install git",
+      "systemPackage": true,
+      "platform": "darwin"
+    },
+    {
+      "name": "cron",
+      "command": "crontab",
+      "installCommand": "sudo apt install cron",
+      "systemPackage": true,
+      "platform": "linux"
+    }
+  ]
+}

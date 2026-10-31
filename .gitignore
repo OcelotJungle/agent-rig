@@ -1,0 +1,5 @@
+node_modules/
+.tmp/
+__pycache__/
+.claude/worktrees/
+docs/superpowers/plans/

@@ -1,0 +1,31 @@
+{
+  "name": "pwsh",
+  "description": "Команда PowerShell в Telegram-хабе.",
+  "enabledByDefault": false,
+  "platforms": [
+    "windows"
+  ],
+  "dependencies": [
+    "telegram"
+  ],
+  "rules": [],
+  "hooks": [],
+  "settings": [],
+  "plugins": [],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [
+    "pwsh"
+  ],
+  "programs": [
+    {
+      "name": "pwsh",
+      "command": "pwsh.exe",
+      "installCommand": "winget install --id Microsoft.PowerShell --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+{
+  "name": "volunteers",
+  "description": "Делегирование рядовой работы волонтёрским моделям.",
+  "enabledByDefault": false,
+  "platforms": [
+    "windows"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-delegation-04-volunteers-01-heading.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-02-executor.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-03-task-ownership-codex-on.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers",
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-03-task-ownership-codex-off.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-04-background.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-05-allowlist-codex-on.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers",
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-05-allowlist-codex-off.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-06-failure-codex-on.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers",
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-06-failure-codex-off.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ],
+      "whenDisabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-04-volunteers-07-commits.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "volunteers"
+      ]
+    }
+  ],
+  "hooks": [],
+  "settings": [],
+  "plugins": [],
+  "files": [
+    "tools/volunteer-run.py",
+    "tools/volunteer-models.py",
+    "tools/volunteer-launch.ps1",
+    "tools/volunteer-design.md",
+    "tools/volunteer-probes.md"
+  ],
+  "assets": [],
+  "agents": [
+    "agents/volunteer.md"
+  ],
+  "skills": [],
+  "hubCommands": [],
+  "programs": [
+    {
+      "name": "opencode",
+      "command": "opencode",
+      "installCommand": null,
+      "systemPackage": false
+    },
+    {
+      "name": "uv",
+      "command": "uvx",
+      "installCommand": "winget install --id astral-sh.uv --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    }
+  ]
+}

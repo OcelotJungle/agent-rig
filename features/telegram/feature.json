@@ -1,0 +1,48 @@
+{
+  "name": "telegram",
+  "description": "Интеграция с Telegram-хабом.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-attention-chime.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    },
+    {
+      "path": "rules/claude-telegram-mode.md",
+      "target": "claude",
+      "whenEnabled": [
+        "telegram"
+      ]
+    }
+  ],
+  "hooks": [],
+  "settings": [],
+  "plugins": [
+    "telegram-hub"
+  ],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [
+    "bash"
+  ],
+  "programs": [
+    {
+      "name": "tmux",
+      "command": "tmux",
+      "installCommand": "sudo apt install tmux",
+      "systemPackage": true,
+      "platform": "linux"
+    }
+  ]
+}

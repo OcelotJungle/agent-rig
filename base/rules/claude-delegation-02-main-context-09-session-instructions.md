@@ -1,0 +1,1 @@
+- A subagent reads `{{HOME}}/.claude/CLAUDE.md` as it was at session start; after editing it, give a fresh copy by path.

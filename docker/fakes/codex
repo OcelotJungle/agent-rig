@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -eu
+
+state_dir="$HOME/.agent-rig/fakes"
+mkdir -p "$state_dir"
+printf '%s\n' "$*" >> "$state_dir/codex.calls"
+
+if [ "${1:-}" = "--version" ]; then
+	printf 'codex fake 0.0.0\n'
+	exit 0
+fi
+
+printf 'fake codex received: %s\n' "$*"

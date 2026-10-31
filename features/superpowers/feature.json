@@ -1,0 +1,23 @@
+{
+  "name": "superpowers",
+  "description": "Плагин Superpowers.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [],
+  "hooks": [],
+  "settings": [],
+  "plugins": [
+    "superpowers@claude-plugins-official"
+  ],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": []
+}

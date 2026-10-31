@@ -1,0 +1,1 @@
+- Estimates: my own real time plus test wall-clock and the owner's review; no human buffer; risk named separately.

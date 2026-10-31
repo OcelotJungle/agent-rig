@@ -1,0 +1,29 @@
+{
+  "name": "js-ts-rules",
+  "description": "Конвенции JavaScript и TypeScript.",
+  "enabledByDefault": false,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/shared-js-ts-code-conventions.md",
+      "target": "shared",
+      "whenEnabled": [
+        "js-ts-rules"
+      ]
+    }
+  ],
+  "hooks": [],
+  "settings": [],
+  "plugins": [],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": []
+}

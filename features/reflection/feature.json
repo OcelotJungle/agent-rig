@@ -1,0 +1,38 @@
+{
+  "name": "reflection",
+  "description": "Рефлексия после ходов Claude Code.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [],
+  "hooks": [
+    {
+      "event": "Stop",
+      "matcher": "",
+      "command": "{{PYTHON}}",
+      "args": [
+        "-X",
+        "utf8",
+        "{{CLONE}}/features/reflection/hooks/reflect.py"
+      ],
+      "timeout": 330,
+      "statusMessage": "Рефлексия хода",
+      "asyncRewake": true
+    }
+  ],
+  "settings": [],
+  "plugins": [],
+  "files": [
+    "hooks/reflect.py",
+    "hooks/reflect_prompt.md"
+  ],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": []
+}

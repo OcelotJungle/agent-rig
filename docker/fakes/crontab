@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -eu
+
+state_dir="$HOME/.agent-rig/fakes"
+state_file="$state_dir/crontab"
+mkdir -p "$state_dir"
+case "${1:-}" in
+	-l)
+		if [ -f "$state_file" ]; then
+			cat "$state_file"
+		else
+			printf 'no crontab for rig\n' >&2
+			exit 1
+		fi
+		;;
+	-)
+		# Debian cron refuses a non-empty file whose last byte is not a newline; the empty file is valid.
+		input_file="$state_file.new"
+		cat > "$input_file"
+		if [ -s "$input_file" ] && [ -n "$(tail -c 1 "$input_file")" ]; then
+			rm -f "$input_file"
+			printf '%s\n' "new crontab file is missing newline before EOF, can't install." >&2
+			exit 1
+		fi
+		mv "$input_file" "$state_file"
+		;;
+	-r)
+		rm -f "$state_file"
+		;;
+	*)
+		printf 'unsupported fake crontab command: %s\n' "$*" >&2
+		exit 1
+		;;
+esac

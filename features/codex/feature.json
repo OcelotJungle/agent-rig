@@ -1,0 +1,178 @@
+{
+  "name": "codex",
+  "description": "Делегирование задач через Codex.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-delegation-03-codex-01-heading.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-02-orchestrator-codex-volunteers-on.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex",
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-02-orchestrator-codex-volunteers-off.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ],
+      "whenDisabled": [
+        "volunteers"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-03-background.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-04-prompt-and-commands.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-05-models.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-06-parallel-work.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-07-commits.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-08-windows-bun-tests.md",
+      "target": "claude",
+      "platform": "windows",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-09-brief.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-10-failure.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    },
+    {
+      "path": "rules/claude-delegation-03-codex-11-review.md",
+      "target": "claude",
+      "whenEnabled": [
+        "codex"
+      ]
+    }
+  ],
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "matcher": "",
+      "command": "{{PYTHON}}",
+      "args": [
+        "-I",
+        "{{CLONE}}/features/codex/tools/codex-run.py",
+        "session-hint"
+      ],
+      "timeout": 10
+    }
+  ],
+  "settings": [
+    {
+      "key": "permissions.allow",
+      "value": "Bash({{PYTHON}} -I \"{{CLONE}}/features/codex/tools/codex-run.py\" *)",
+      "kind": "list-entry"
+    },
+    {
+      "key": "permissions.deny",
+      "value": "Agent(codex:codex-rescue)",
+      "kind": "list-entry"
+    },
+    {
+      "key": "autoMode.allow",
+      "value": "Any call of the user's Codex launcher {{CLONE}}/features/codex/tools/codex-run.py (python -I .../codex-run.py prompt-path, start, reply, attach, wait, list, cancel), with any model, effort, mode (write or read-only), cwd and prompt file, from the main session or the codex subagent.",
+      "kind": "list-entry"
+    },
+    {
+      "key": "autoMode.environment",
+      "value": "{{CLONE}}/features/codex/tools/codex-run.py is the user's own trusted launcher for Codex (OpenAI). The user's standing instructions require delegating builds, tests, reviews and code search to Codex through it, including write-mode jobs in project worktrees; the script itself forbids Codex to commit or push. Running it is routine, expected work, never data exfiltration or an untrusted external agent.",
+      "kind": "list-entry"
+    }
+  ],
+  "plugins": [
+    "codex@openai-codex"
+  ],
+  "files": [
+    "tools/codex-run.py"
+  ],
+  "assets": [],
+  "agents": [
+    "agents/codex.md"
+  ],
+  "skills": [],
+  "hubCommands": [],
+  "programs": [
+    {
+      "name": "codex",
+      "command": "codex",
+      "installCommand": null,
+      "systemPackage": false
+    },
+    {
+      "name": "node",
+      "command": "node",
+      "installCommand": "sudo apt install nodejs",
+      "systemPackage": true,
+      "platform": "linux"
+    },
+    {
+      "name": "node",
+      "command": "node",
+      "installCommand": "winget install --id OpenJS.NodeJS.LTS --exact",
+      "systemPackage": true,
+      "platform": "windows"
+    },
+    {
+      "name": "node",
+      "command": "node",
+      "installCommand": "brew install node",
+      "systemPackage": true,
+      "platform": "darwin"
+    }
+  ]
+}

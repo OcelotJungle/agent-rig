@@ -1,0 +1,43 @@
+{
+  "name": "rtk",
+  "description": "Сокращение вывода инструментов с RTK.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [],
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "command": "rtk",
+      "args": [
+        "hook",
+        "claude"
+      ]
+    }
+  ],
+  "settings": [],
+  "plugins": [],
+  "files": [],
+  "assets": [
+    {
+      "sourcePath": "tools/RTK.md",
+      "targetPath": "RTK.md"
+    }
+  ],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": [
+    {
+      "name": "rtk",
+      "command": "rtk",
+      "installCommand": null,
+      "systemPackage": false
+    }
+  ]
+}

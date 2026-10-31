@@ -1,0 +1,13 @@
+{
+  "name": "telegram-hub",
+  "owner": {
+    "name": "agent-rig Docker fixture"
+  },
+  "plugins": [
+    {
+      "name": "telegram-hub",
+      "source": "./plugin",
+      "description": "Fake hub plugin for the Docker scenarios"
+    }
+  ]
+}

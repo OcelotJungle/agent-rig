@@ -1,0 +1,32 @@
+{
+	"name": "example",
+	"description": "Example manifest used by schema tests",
+	"enabledByDefault": false,
+	"platforms": ["linux", "windows", "darwin"],
+	"dependencies": [],
+	"rules": [],
+	"hooks": [
+		{
+			"event": "Stop",
+			"matcher": "",
+			"command": "{{PYTHON}}",
+			"args": ["{{CLONE}}/hooks/example.py"],
+			"timeout": 30,
+			"statusMessage": "Checking reflection",
+			"async": false,
+			"asyncRewake": false,
+			"shell": "bash"
+		}
+	],
+	"settings": [
+		{"key": "attribution.commit", "value": ""},
+		{"key": "permissions.allow", "value": "Bash(python example.py)"}
+	],
+	"plugins": ["example@claude-plugins-official"],
+	"files": [],
+	"assets": [{"sourcePath": "files/example.md", "targetPath": "files/example.md"}],
+	"agents": ["agents/example.md"],
+	"skills": ["skills/example"],
+	"hubCommands": ["example"],
+	"programs": []
+}

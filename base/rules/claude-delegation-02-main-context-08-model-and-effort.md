@@ -1,0 +1,1 @@
+- general-purpose and Explore get `model` and `effort` set explicitly by the tiers in «Subagent models».

@@ -1,0 +1,23 @@
+{
+  "name": "cmd",
+  "description": "Команда Command Prompt в Telegram-хабе.",
+  "enabledByDefault": false,
+  "platforms": [
+    "windows"
+  ],
+  "dependencies": [
+    "telegram"
+  ],
+  "rules": [],
+  "hooks": [],
+  "settings": [],
+  "plugins": [],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [
+    "cmd"
+  ],
+  "programs": []
+}

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -eu
+
+if [ "${1:-}" = "--version" ]; then
+	printf 'rtk fake 0.0.0\n'
+	else
+	printf 'fake rtk received: %s\n' "$*"
+fi

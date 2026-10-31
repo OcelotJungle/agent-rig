@@ -1,0 +1,1 @@
+- The main session keeps design decisions, a subtle bug, reviewing a subagent's result, anything discussed with the user.

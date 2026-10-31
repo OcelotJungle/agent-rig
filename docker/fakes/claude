@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+set -eu
+
+state_dir="$HOME/.agent-rig/fakes"
+calls_file="$state_dir/claude-plugin.calls"
+all_calls_file="$state_dir/claude.calls"
+plugins_file="$state_dir/claude-plugins"
+marketplaces_file="$state_dir/claude-marketplaces"
+roots_file="$state_dir/claude-marketplace-roots"
+helper="$(dirname "$0")/claude-enabled-plugins.py"
+mkdir -p "$state_dir"
+printf '%s\n' "$*" >> "$all_calls_file"
+if [ ! -f "$plugins_file" ]; then : > "$plugins_file"; fi
+if [ ! -f "$marketplaces_file" ]; then : > "$marketplaces_file"; fi
+if [ ! -f "$roots_file" ]; then : > "$roots_file"; fi
+
+# Prints the source directory a local marketplace was added from; empty for the official marketplaces.
+marketplace_root() {
+	local root="" entry_name entry_path
+	while IFS=' ' read -r entry_name entry_path; do
+		if [ "$entry_name" = "$1" ]; then root="$entry_path"; fi
+	done < "$roots_file"
+	printf '%s' "$root"
+}
+
+if [ "${1:-}" != "plugin" ]; then
+	printf 'fake claude: %s\n' "$*"
+	exit 0
+fi
+
+printf '%s\n' "$*" >> "$calls_file"
+if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "list" ] &&
+	[ -n "${FAKE_CLAUDE_GATE_ENTER:-}" ] &&
+	mkdir "$state_dir/claude-gate-used" 2>/dev/null; then
+	printf '%s\n' "$$" > "$state_dir/claude.pid"
+	printf 'entered\n' > "$FAKE_CLAUDE_GATE_ENTER"
+	read -r _ < "$FAKE_CLAUDE_GATE_RELEASE"
+	rm -f "$state_dir/claude.pid"
+fi
+
+if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "list" ]; then
+	while IFS= read -r marketplace; do
+		[ -n "$marketplace" ] && printf '❯ %s\n' "$marketplace"
+	done < "$marketplaces_file"
+	exit 0
+fi
+
+if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "add" ]; then
+	source="${4:-}"
+	case "$source" in
+		*claude-plugins-official*) marketplace="claude-plugins-official" ;;
+		*codex-plugin-cc*) marketplace="openai-codex" ;;
+		*)
+			# A local directory: the marketplace is named by the manifest the directory declares, like the real CLI.
+			if ! marketplace="$(python3 "$helper" marketplace-name "$source")"; then
+				printf 'Failed to add marketplace from %s: no .claude-plugin/marketplace.json with a name\n' "$source" >&2
+				exit 1
+			fi
+			printf '%s %s\n' "$marketplace" "$source" >> "$roots_file"
+			;;
+	esac
+	if ! grep -Fxq "$marketplace" "$marketplaces_file"; then
+		printf '%s\n' "$marketplace" >> "$marketplaces_file"
+	fi
+	exit 0
+fi
+
+if [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; then
+	separator=""
+	printf '['
+	while IFS= read -r plugin; do
+		[ -n "$plugin" ] || continue
+		printf '%s{"id":"%s"}' "$separator" "$plugin"
+		separator=","
+	done < "$plugins_file"
+	printf ']\n'
+	exit 0
+fi
+
+if [ "${2:-}" = "install" ]; then
+	plugin="${3:?plugin id required}"
+	# Like the real CLI, the id is <plugin>@<marketplace>: the marketplace must be added and must list the plugin.
+	name="${plugin%@*}"
+	marketplace="${plugin##*@}"
+	not_found="Plugin \"$name\" not found in marketplace \"$marketplace\""
+	if ! grep -Fxq "$marketplace" "$marketplaces_file"; then
+		printf '%s\n' "$not_found" >&2
+		exit 1
+	fi
+	root="$(marketplace_root "$marketplace")"
+	if [ -n "$root" ] && ! python3 "$helper" lists-plugin "$root" "$name"; then
+		printf '%s\n' "$not_found" >&2
+		exit 1
+	fi
+	if ! grep -Fxq "$plugin" "$plugins_file"; then
+		printf '%s\n' "$plugin" >> "$plugins_file"
+	fi
+	python3 "$helper" install "$plugin"
+	exit 0
+fi
+
+if [ "${2:-}" = "uninstall" ]; then
+	plugin="${3:?plugin id required}"
+	grep -Fvx -- "$plugin" "$plugins_file" > "$plugins_file.next" || true
+	mv "$plugins_file.next" "$plugins_file"
+	python3 "$helper" uninstall "$plugin"
+	exit 0
+fi
+
+printf 'unsupported fake claude plugin command: %s\n' "$*" >&2
+exit 1

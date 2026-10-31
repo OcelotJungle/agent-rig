@@ -1,0 +1,33 @@
+{
+  "name": "skills",
+  "description": "Повторно используемые навыки Claude Code.",
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-measurement-runs.md",
+      "target": "claude",
+      "whenEnabled": [
+        "skills"
+      ]
+    }
+  ],
+  "hooks": [],
+  "settings": [],
+  "plugins": [],
+  "files": [],
+  "assets": [],
+  "agents": [],
+  "skills": [
+    "skills/measurement-runs",
+    "skills/mutation-check-new-tests",
+    "skills/spec-drafting"
+  ],
+  "hubCommands": [],
+  "programs": []
+}

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -eu
+
+# The real tool cannot reach the user bus without XDG_RUNTIME_DIR (cron and su start commands without it).
+if [ "${1:-}" = "--user" ] && [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+	printf 'Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined (consider using --machine=<user>@.host --user to connect to bus)\n' >&2
+	exit 1
+fi
+
+state_dir="$HOME/.agent-rig/fakes"
+state_file="$state_dir/telegram-hub.state"
+calls_file="$state_dir/systemctl.calls"
+mkdir -p "$state_dir"
+printf '%s\n' "$*" >> "$calls_file"
+if [ ! -f "$state_file" ]; then
+	if [ "${FAKE_SYSTEMCTL_HUB_WONT_START:-0}" = "1" ]; then
+		printf 'inactive\n' > "$state_file"
+	else
+		printf 'active\n' > "$state_file"
+	fi
+fi
+
+if [ "${1:-}" = "--user" ]; then shift; fi
+action="${1:-}"
+case "$action" in
+	start|restart)
+		if [ "${FAKE_SYSTEMCTL_HUB_WONT_START:-0}" = "1" ]; then
+			printf 'inactive\n' > "$state_file"
+		else
+			printf 'active\n' > "$state_file"
+		fi
+		;;
+	stop)
+		printf 'inactive\n' > "$state_file"
+		;;
+	is-active)
+		if [ "$(cat "$state_file")" = "active" ]; then exit 0; fi
+		exit 3
+		;;
+	*)
+		printf 'unsupported fake systemctl command: %s\n' "$*" >&2
+		exit 1
+		;;
+esac
