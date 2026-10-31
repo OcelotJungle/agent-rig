@@ -1,6 +1,6 @@
 # Установка rig на сервер
 
-Этот файл читает ИИ-агент на сервере. Первую часть («Что делает человек») выполняет человек сам: в ней входы и токены.
+Этот файл читает ИИ-агент на сервере. Человек ставит Claude Code и запускает агента, дальше установку ведёт агент: он сам делает всё, что может, и говорит человеку, когда нужен именно он.
 Токены, пароли и коды входа человек вводит только в терминале или в браузере. В чат агенту их не вставляют.
 
 Целевая система: Ubuntu 24.04 (другие Linux с `apt` подойдут, имена пакетов те же).
@@ -9,29 +9,33 @@
 
 ## Что делает человек
 
-1. Создай обычного пользователя, не root. Дай ему `sudo`. Если `sudo` спросит пароль, вводи его в терминале.
-2. Настрой вход по SSH-ключу для этого пользователя и работай дальше под ним.
-3. Установи `curl` и `ca-certificates`. Они нужны установщикам Claude Code и Bun:
-   `sudo apt-get update && sudo apt-get install -y curl ca-certificates`
-4. Установи Claude Code на канале `stable` и проверь версию:
-   `curl -fsSL https://claude.ai/install.sh | bash -s stable && ~/.local/bin/claude --version`
-   Этот установщик сам записывает `autoUpdatesChannel: stable` в `~/.claude/settings.json`. Если ключа там нет, `rig install` на сервере запишет `stable` сам, но ключом не владеет и позже его не меняет. Канал по умолчанию (`latest`) может принести нестабильную версию.
-5. Войди в Claude Code: запусти `claude` и пройди вход по ссылке в браузере. Выйди из него после входа.
-6. Создай Telegram-бота: в Telegram напиши @BotFather, команда `/newbot`. Токен сохрани у себя, агенту его не отправляй.
-7. Создай супергруппу в Telegram, включи в ней темы (Topics), добавь бота и сделай его администратором.
-8. Узнай свой числовой Telegram ID (например, через бота @userinfobot). Он понадобится на шаге 7.3 (`allowFrom`). Числовой ID самой группы (`groupId`) узнаешь на шаге 7.6: напиши в группе любое сообщение, ID будет в журнале хаба.
+1. Зайди на сервер под обычным пользователем, не root. Если есть только root, создай пользователя и перейди к нему:
+   `adduser rig && usermod -aG sudo rig && su - rig`
+2. Установи Claude Code на канале `stable`:
+   `sudo apt-get update && sudo apt-get install -y curl ca-certificates && curl -fsSL https://claude.ai/install.sh | bash -s stable`
+   Канал по умолчанию (`latest`) может принести нестабильную версию. Если установщик не записал `autoUpdatesChannel`, `rig install` запишет `stable` сам.
+3. Запусти `~/.local/bin/claude`, войди по ссылке в браузере и напиши агенту:
+   `Установи rig по инструкции https://raw.githubusercontent.com/OcelotJungle/agent-rig/main/INSTALL.md`
 
-Когда всё готово, скажи агенту: «Начинай с шага 1». Токен бота, Telegram ID и ID группы введёшь сам на шаге 7: агент скажет, какую команду выполнить в терминале (токен вводится скрытно, в историю шелла и в чат не попадает), а ты ответишь, что готово.
+Дальше отвечай агенту, когда он попросит. За тобой останутся: бот и группа в Telegram, токен бота, одно сообщение в группе и вход в Codex. Если `sudo` на сервере спрашивает пароль, ещё одна команда на шаге 1. Агент сам скажет, когда что делать. Держи открытым второе окно терминала на том же сервере и под тем же пользователем: команды с вводом выполняются там, а не в окне агента.
 
 ## Что делает агент
 
 Выполняй шаги по порядку, по одному действию. После каждого проверь признак успеха. Если проверка не прошла, смотри раздел «Если шаг не удался» и не иди дальше.
 
-### Шаг 1. Системные пакеты
+### Шаг 1. Подготовка системы
 
-Команда:
+Проверь, что ты не root: `test "$(id -u)" -ne 0`. Если ты root, останови установку и попроси человека выполнить первый шаг его списка.
 
-`sudo apt-get update && sudo apt-get install -y git python3 bash cron tmux unzip ca-certificates curl nodejs`
+Эта команда нужна с правами root:
+
+`curl -fsSL https://raw.githubusercontent.com/OcelotJungle/agent-rig/main/scripts/prepare-server.sh | sudo bash -s -- "$USER"`
+
+Проверь `sudo -n true`. Код 0: выполни команду сам. Иначе попроси человека выполнить её во втором окне и написать, что готово.
+
+Что делает скрипт: ставит пакеты, запускает `cron`, включает linger (пользовательские службы работают без открытого SSH) и пишет `/etc/claude-code/managed-settings.json`. Скрипт можно запускать повторно.
+
+Этот файл разрешает из каналов только плагин `telegram-hub` и действует на всех пользователей сервера. Без него Claude Code спрашивает подтверждение канала при каждом запуске сессии. Хаб запускает сессию в отсоединённом tmux, ответить там некому, поэтому сессия из темы не подключится. Если файл уже есть и в нём нет этого разрешения, скрипт ничего не меняет и печатает нужные ключи: попроси человека дописать их и запусти скрипт снова.
 
 Зачем каждый пакет:
 
@@ -43,7 +47,7 @@
 - `unzip`, `curl`, `ca-certificates`: установщик Bun и загрузки по HTTPS.
 - `nodejs`: Codex, установленный через Bun, запускается как `#!/usr/bin/env node`; без `node` команда `codex` не работает (`/usr/bin/env: 'node': No such file or directory`). Версия 18 из репозитория Ubuntu 24.04 подходит.
 
-Признак успеха: команда завершилась с кодом 0, а `git --version`, `python3 --version`, `tmux -V` и `node --version` печатают версии, `command -v crontab` находит программу. У `crontab` нет флага `-V`, на `crontab -V` он печатает справку с ошибкой: это нормально.
+Признак успеха: команда завершилась с кодом 0, а `git --version`, `python3 --version`, `tmux -V` и `node --version` печатают версии. `command -v crontab` находит программу (у `crontab` нет флага `-V`), `systemctl is-active cron` печатает `active`, `loginctl show-user "$USER" -p Linger` печатает `Linger=yes`, файл `/etc/claude-code/managed-settings.json` существует.
 
 ### Шаг 2. Каталог для программ и PATH
 
@@ -57,7 +61,7 @@
 
 Последняя команда действует только в текущем шелле. Rig записывает PATH в cron в момент установки, поэтому `rig install` (шаг 6) запускай из шелла, где `claude`, `bun` и `~/.local/bin` уже находятся в PATH.
 
-Признак успеха: `command -v claude` печатает путь к `claude`. Если не печатает, Claude Code не установлен или лежит вне PATH: вернись к шагу 4 человека.
+Признак успеха: `command -v claude` печатает путь к `claude`. Если не печатает, Claude Code не установлен или лежит вне PATH: попроси человека повторить второй шаг его списка.
 
 ### Шаг 3. Bun
 
@@ -99,53 +103,52 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 
 ### Шаг 7. Настройка хаба и служба systemd
 
-Порядок важен: сначала файлы с токеном и конфигом, потом служба. Токен бота и Telegram ID вводит человек, в терминале. Ты их не просишь, не печатаешь и не читаешь файл `.env` обратно. Все файлы хаба лежат в `~/.claude/channels/telegram-hub/`. Команды берутся из README хаба (`~/.agent-rig/hub/README.md`), только путь клона здесь `~/.agent-rig/hub`, а не `~/claude-telegram-hub`.
+Порядок важен: сначала токен и конфиг, потом служба, потом доступ. Токен вводит человек, в терминале. Ты его не просишь, не печатаешь и не читаешь файл `.env` обратно. Все файлы хаба лежат в `~/.claude/channels/telegram-hub/`.
 
 **7.1. Каталог.** Выполни сам: `mkdir -p "$HOME/.claude/channels/telegram-hub"`. Зависимости хаба вручную ставить не нужно: служба перед каждым запуском сама выполняет `bun install --frozen-lockfile`.
 
-**7.2. Токен (делает человек).** Скажи человеку: «Выполни в терминале эту команду. Она спросит токен, который ты получил от @BotFather; при вводе он не виден и не попадает в историю шелла. Потом напиши мне, что готово». Команда:
+**7.2. Бот и токен (делает человек).** Скажи человеку одним сообщением:
+
+1. Создай бота: напиши @BotFather, команда `/newbot`. Токен агенту не отправляй.
+2. Создай супергруппу, включи в ней темы (Topics), добавь бота и сделай его администратором.
+3. Выполни во втором окне терминала команду ниже. Она спросит токен; при вводе он не виден и не попадает в историю шелла.
+4. Напиши мне, что готово.
+
+Команда:
 
 `( umask 077; read -rs -p "Токен бота: " T; printf 'TELEGRAM_BOT_TOKEN=%s\n' "$T" > "$HOME/.claude/channels/telegram-hub/.env" )`
 
-Формат файла по README хаба: одна строка `TELEGRAM_BOT_TOKEN=<токен>` в `~/.claude/channels/telegram-hub/.env`. README не требует особых прав на файл; `umask 077` в команде лишь оставляет его читаемым только владельцу. Признак успеха: `test -s "$HOME/.claude/channels/telegram-hub/.env"` (файл есть и не пустой). Содержимое не читай.
+Признак успеха: `test -s "$HOME/.claude/channels/telegram-hub/.env"` (файл есть и не пустой). Содержимое не читай.
 
-**7.3. Telegram ID (делает человек).** Скажи человеку выполнить и сообщить, что готово:
+**7.3. Запуск сессий из темы (делаешь ты).** Создай `config.json` с секцией `launch`. Это обычный Claude; хаб сам подставляет `{session}`, `{cwd}` и `{mode}`:
 
-`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");json.dump({"allowFrom":[input("Telegram ID: ")]},open(p,"w"),indent=2)'`
+`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");json.dump({"launch":{"command":["tmux","new-session","-d","-s","claude-{session}","-c","{cwd}","--","claude","--channels","plugin:telegram-hub@telegram-hub","--resume","{session}","{mode}"],"timeoutSec":90}},open(p,"w"),indent=2)'`
 
-Так создаётся `config.json` с ключом `allowFrom` (писать боту смогут только эти ID). Предупреди человека: попасть в `allowFrom` значит получить shell на сервере (`/bash` выполняет любую команду). Признак успеха: `test -s "$HOME/.claude/channels/telegram-hub/config.json"`.
+Часть имени плагина после `@` (`telegram-hub`) должна совпадать с `name` в `~/.agent-rig/hub/.claude-plugin/marketplace.json`. Проверка: `grep -m1 '"name"' ~/.agent-rig/hub/.claude-plugin/marketplace.json` печатает `"name": "telegram-hub"`.
 
-**7.4. Запуск сессий из темы (делаешь ты).** Добавь в `config.json` секцию `launch`. Это обычный Claude; хаб сам подставляет `{session}`, `{cwd}` и `{mode}`. Команда вносит правку, не печатая файл:
-
-`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["launch"]={"command":["tmux","new-session","-d","-s","claude-{session}","-c","{cwd}","--","claude","--channels","plugin:telegram-hub@telegram-hub","--resume","{session}","{mode}"],"timeoutSec":90};json.dump(c,open(p,"w"),indent=2)'`
-
-Часть имени плагина после `@` (`telegram-hub`) должна совпадать с `name` в `~/.agent-rig/hub/.claude-plugin/marketplace.json`. Проверка: `grep -m1 '"name"' ~/.agent-rig/hub/.claude-plugin/marketplace.json` печатает `"name": "telegram-hub"`. Если имя другое, подставь его в команду вместо `telegram-hub`.
-
-**7.5. Служба.** Из каталога хаба:
+**7.4. Служба.** Из каталога хаба:
 
 `cd "$HOME/.agent-rig/hub" && bash scripts/install-hub-service.sh`
 
-Скрипт сам включает linger (`loginctl enable-linger`), ждёт до 30 секунд пользовательскую шину systemd, пишет файл `telegram-hub.service`, включает и запускает службу и создаёт `~/.claude/channels/telegram-hub/service-managed`. В юните уже прописан PATH с `~/.local/bin` и `~/.bun/bin`, поэтому `bun`, `claude` и `rig` хабу доступны; `tmux` берётся из `/usr/bin`. Если скрипт печатает `the user systemd bus did not appear in 30s`, установи `sudo apt-get install -y dbus-user-session`, перелогинься по SSH и запусти скрипт снова. Если скрипт печатает `Could not enable linger: Access denied` (так бывает, например, без пакета `polkitd`) или политика сервера не даёт включить linger, администратор выполняет `sudo loginctl enable-linger "$(id -un)"`; проверка: `loginctl show-user "$USER" -p Linger` печатает `Linger=yes`. После этого запусти скрипт ещё раз.
+Скрипт пишет файл `telegram-hub.service`, включает и запускает службу и создаёт `~/.claude/channels/telegram-hub/service-managed`. В юните уже прописан PATH с `~/.local/bin` и `~/.bun/bin`, поэтому `bun`, `claude` и `rig` хабу доступны; `tmux` берётся из `/usr/bin`. Если скрипт печатает `the user systemd bus did not appear in 30s`, попроси человека выполнить `sudo apt-get install -y dbus-user-session`, перелогиниться и запусти скрипт снова.
 
-Признаки успеха: `systemctl --user is-active telegram-hub.service` печатает `active`, а в `~/.claude/channels/telegram-hub/hub.log` есть строка `polling Telegram as @имя_бота` (`grep -q "polling Telegram as" ~/.claude/channels/telegram-hub/hub.log`). Если вместо неё `no TELEGRAM_BOT_TOKEN` или `bot token rejected`, токен введён неверно: попроси человека повторить 7.2 и выполни `systemctl --user restart telegram-hub.service`. Если `getMe failed (Unable to connect...)`, с сервера не открывается `api.telegram.org`. Если `getUpdates 409 Conflict`, тем же ботом пользуется кто-то ещё, обычно официальный плагин telegram. Диагностика: `journalctl --user -u telegram-hub.service -n 50`.
+Признаки успеха: `systemctl --user is-active telegram-hub.service` печатает `active`, а `grep -q "polling Telegram as" ~/.claude/channels/telegram-hub/hub.log` находит строку. Если вместо неё `no TELEGRAM_BOT_TOKEN` или `bot token rejected`, токен введён неверно: попроси человека повторить команду из 7.2 и выполни `systemctl --user restart telegram-hub.service`. Если `getMe failed (Unable to connect...)`, с сервера не открывается `api.telegram.org`. Если `getUpdates 409 Conflict`, тем же ботом пользуется кто-то ещё, обычно официальный плагин telegram. Диагностика: `journalctl --user -u telegram-hub.service -n 50`.
 
-**7.6. groupId (делает человек).** Попроси человека написать любое сообщение в супергруппе. Тогда в `hub.log` появится строка `ignored update from chat -100… (supergroup "…")`. Покажи человеку команду `grep "ignored update from chat" ~/.claude/channels/telegram-hub/hub.log | tail -1`; число с минусом после `chat` и есть `groupId`. Человек вносит его сам:
+**7.5. Доступ к боту (человек пишет сообщение, остальное делаешь ты).** Попроси человека написать любое сообщение в супергруппе. Потом прочитай строку из журнала:
 
-`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["groupId"]=input("groupId: ");json.dump(c,open(p,"w"),indent=2)'`
+`grep "ignored update from chat" ~/.claude/channels/telegram-hub/hub.log | tail -1`
 
-Хаб перечитывает `config.json` на каждом сообщении, перезапускать службу не нужно. Если в логе строк `ignored update` нет совсем, Telegram не отдаёт боту сообщения группы: бот должен быть администратором группы (либо в @BotFather `/setprivacy` → бот → `Disable`, потом удалить бота из группы и добавить заново). Если в логе `delivery to session … is blocked`, у бота нет прав писать в группу или в `config.json` не тот `groupId`.
+Она выглядит так: `ignored update from chat -100… (supergroup "Название"), sender 123…: …`. Число после `chat` это ID группы, число после `sender` это ID человека. Это не секреты. Если в скобках не `supergroup`, в группе не включены темы или сообщение пришло не из неё: попроси человека исправить это и написать снова.
 
-**7.7. Разрешение канала (делаешь ты, шаг обязательный).** Без разрешения Claude Code спрашивает подтверждение канала при каждом запуске сессии. Хаб запускает сессию в отсоединённом tmux, ответить там некому, поэтому сессия из темы не подключится. Флаг `--channels` из шага 7.4 рассчитан на файл из этого шага.
+Покажи человеку название группы и оба числа и спроси, его ли это группа и его ли ID. Предупреди: кто попал в `allowFrom`, получает shell на сервере, потому что `/bash` выполняет любую команду. Когда человек подтвердит, запиши оба значения, подставив числа вместо `ID_ГРУППЫ` и `ID_ЧЕЛОВЕКА`:
 
-Файл действует на всех пользователей и все запуски Claude Code на сервере, а из каналов разрешает только плагин `telegram-hub`. Первая команда создаёт каталог. Вторая отказывается работать, если файл уже есть: тогда попроси человека дописать в него `channelsEnabled` и `allowedChannelPlugins` вручную.
+`python3 -c 'import json,os,sys;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["groupId"]=sys.argv[1];c["allowFrom"]=[sys.argv[2]];json.dump(c,open(p,"w"),indent=2)' ID_ГРУППЫ ID_ЧЕЛОВЕКА`
 
-`sudo mkdir -p /etc/claude-code`
+Хаб перечитывает `config.json` на каждом сообщении, перезапускать службу не нужно. Попроси человека написать `/rig status` в теме General группы.
 
-`sudo test ! -e /etc/claude-code/managed-settings.json && printf '%s\n' '{"channelsEnabled":true,"allowedChannelPlugins":[{"plugin":"telegram-hub","marketplace":"telegram-hub"}]}' | sudo tee /etc/claude-code/managed-settings.json > /dev/null`
+Признак успеха: хаб отвечает на `/rig status` в группе. Если в журнале строк `ignored update` нет совсем, Telegram не отдаёт боту сообщения группы: бот должен быть администратором группы (либо в @BotFather `/setprivacy` → бот → `Disable`, потом удалить бота из группы и добавить заново). Если в журнале `delivery to session … is blocked`, у бота нет прав писать в группу или в `config.json` не тот `groupId`.
 
-Значение `marketplace` в файле должно совпадать с именем из проверки в шаге 7.4. Признак успеха: `sudo test -s /etc/claude-code/managed-settings.json`, а сессия, запущенная сообщением в теме, подключается к хабу без подключения к tmux.
-
-Если сессия всё же не подключилась за `timeoutSec` (в шаге 7.4 это 90 секунд), тема сообщает об этом и называет команду подключения. Посмотри, что написано в tmux: `tmux attach -t claude-<id сессии>`.
+Если сессия потом не подключится за `timeoutSec` (в шаге 7.3 это 90 секунд), тема сообщает об этом и называет команду подключения. Посмотри, что написано в tmux: `tmux attach -t claude-<id сессии>`.
 
 Итоговый признак успеха шага: `systemctl --user is-active telegram-hub.service` печатает `active`.
 
@@ -167,14 +170,21 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 
 ### Шаг 10. Вход в Codex (делает человек)
 
-Агент просит человека выполнить в терминале одну команду. Вход делает человек, ссылку и код агент не обрабатывает:
+Попроси человека выполнить во втором окне одну команду. Вход делает человек, ссылку и код ты не обрабатываешь:
 
 `codex login --device-auth`
 
-Команда печатает адрес `https://auth.openai.com/codex/device` и код для входа в браузере. Нужен `node` (шаг 1). Если у тебя другая версия Codex и флаг не принимается, выполни `codex login --help` и выбери вариант входа без локального браузера.
+Команда печатает адрес `https://auth.openai.com/codex/device` и код для входа в браузере. Нужен `node` (шаг 1). Если у человека другая версия Codex и флаг не принимается, выполни `codex login --help` и выбери вариант входа без локального браузера.
 
 Признак успеха: `codex login status` сообщает, что вход выполнен, код выхода 0. Без входа он печатает «Not logged in» и завершается кодом 1.
 
+### Шаг 11. Отчёт человеку
+
+Закончи установку одним сообщением. Если все условия из раздела «Установка закончена, если» выполнены:
+
+`Готово: rig <версия>, хаб <версия>, rig check пройден. Пиши боту в группе.`
+
+Если что-то не сделано, вместо этого напиши блок `Осталось сделать тебе:` и пронумерованный список. В каждом пункте укажи, что случилось, точную команду и где её выполнить. Не перечисляй то, что можешь доделать сам: доделай.
 ## Если шаг не удался
 
 Системный пакет отсутствует. Проявляется строкой `Установи системный пакет <имя>: <команда>` при `rig install` или `rig feature <имя> enable`, а в `rig check` строкой «Не найден системный пакет <имя>. Выполни: <команда>». Выполни указанную команду и повтори шаг.
@@ -204,3 +214,5 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 3. `crontab -l` содержит записи `# agent-rig-update-hourly` и `# agent-rig-update-pending`.
 4. `systemctl --user is-active telegram-hub.service` печатает `active`.
 5. Человек выполнил вход в Codex (шаг 10).
+6. Хаб ответил на `/rig status` в группе (шаг 7.5).
+7. Человек получил отчёт (шаг 11).

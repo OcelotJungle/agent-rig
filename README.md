@@ -69,6 +69,7 @@
 
 ## Скрипты
 
+- `scripts/prepare-server.sh` делает единственный шаг установки, которому нужен root: пакеты, `cron`, linger, разрешение канала.
 - `scripts/test-docker.sh` собирает образ Ubuntu 24.04 `agent-rig-ubuntu-24.04-tests` и запускает в нём сценарии из `tests/docker/`. Один сценарий запускается по префиксу имени файла: `scripts/test-docker.sh 04`.
 - `scripts/verify-rules-verbatim.py` (запуск: `python -I -X utf8 scripts/verify-rules-verbatim.py`) сверяет куски правил включённых фич с живыми `~/.claude/CLAUDE.md` и `~/.codex/AGENTS.md` при переносе ручных правил на записи rig.
 
