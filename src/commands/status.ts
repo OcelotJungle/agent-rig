@@ -64,7 +64,7 @@ export const formatStatus = (status: StatusView): string[] => {
 		`Режим: ${status.mode}`,
 		`agent-rig: ${formatRepositoryVersion(status.releases.rig, status.versions.rig)}`,
 		`hub: ${formatRepositoryVersion(status.releases.hub, status.versions.hub)}`,
-		`Перезапуск хаба ожидается: ${status.pendingHubRestart === null ? "нет" : status.pendingHubRestart}`,
+		`Перезапуск хаба ожидается: ${status.pendingHubRestart === null ? "нет" : "да"}`,
 	];
 	for (const feature of status.features) lines.push(`Фича ${feature.name}: ${feature.enabled ? "включена" : "выключена"}${feature.platformAllowed ? "" : " (недоступна на этой платформе)"}`);
 	if (status.lastUpdate !== null) lines.push(`Последнее обновление: ${status.lastUpdate.time} — ${status.lastUpdate.text}`);

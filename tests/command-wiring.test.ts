@@ -504,6 +504,21 @@ describe("command wiring", () => {
 		expect(lines).toContain("hub: old-commit");
 	});
 
+	test("status text says yes or no about a pending hub restart and keeps the raw value for the JSON form", async () => {
+		const harness = createMemoryRuntime();
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedState(harness.fs, {});
+		const status = await readStatus(harness.runtime);
+		expect(status.ok).toBe(true);
+		if (!status.ok) return;
+		const raw = '{"hubCommit":"abc"}';
+
+		expect(formatStatus(status.value)).toContain("Перезапуск хаба ожидается: нет");
+		const waiting = formatStatus({ ...status.value, pendingHubRestart: raw });
+		expect(waiting).toContain("Перезапуск хаба ожидается: да");
+		expect(waiting.join("\n")).not.toContain(raw);
+	});
+
 	test("status says the version is unknown when git cannot name the commit", async () => {
 		const harness = createMemoryRuntime();
 		seedFeature(harness.fs, REPO, baseManifest());
