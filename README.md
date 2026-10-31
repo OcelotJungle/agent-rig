@@ -63,6 +63,8 @@
 2. В клоне `agent-rig` запусти `bun install`, затем `bun run src/cli.ts install --dev`.
 3. Проверь установку: `rig check`.
 
+Версию в `package.json` повышай в том же коммите, который меняет то, что видит пользователь.
+
 Если клон лежит в `.worktrees/`, корнем проекта считается каталог выше `.worktrees/`. Тесты запускаются командой `bun test`, типы проверяет `bun run typecheck`. Тесты в Docker запускает `scripts/test-docker.sh`.
 
 ## Скрипты

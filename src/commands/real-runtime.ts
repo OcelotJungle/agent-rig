@@ -16,6 +16,7 @@ import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../no
 import { err, errorText, ok } from "../result.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { runProcess } from "./process-runner.js";
+import { parseVersion, VERSION_PATHS } from "../version-manifest.js";
 
 // This keeps lock waits responsive without spinning while another command owns the lock.
 const LOCK_POLL_INTERVAL_MS = 250;
@@ -135,6 +136,15 @@ export const createRealGitAdapter = (
 		if (!fetched.ok) return fetched;
 		const target = await runGit(processPorts, repository, ["rev-parse", "origin/main"], paths);
 		return target.ok ? ok(target.value.trim()) : target;
+	},
+	readVersion: async (repository, commit) => {
+		const path = VERSION_PATHS[repository];
+		const repositoryPath = repository === "rig" ? paths.repo : paths.hub;
+		const exists = await processPorts.run("git", ["-C", repositoryPath, "cat-file", "-e", `${commit}:${path}`]);
+		if (!exists.ok) return exists;
+		if (exists.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return ok(null);
+		const file = await runGit(processPorts, repository, ["show", `${commit}:${path}`], paths);
+		return file.ok ? ok(parseVersion(file.value)) : file;
 	},
 	head: async (repository) => {
 		const result = await runGit(processPorts, repository, ["rev-parse", "HEAD"], paths);

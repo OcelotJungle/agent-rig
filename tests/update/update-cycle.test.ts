@@ -14,7 +14,7 @@ import type {
 } from "../../src/update/update";
 
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +49,7 @@ type Control = {
   now: string;
   heads: Pair;
   remote: Pair;
+  releaseVersions: Record<string, string>;
 };
 
 type Fake = {
@@ -104,6 +105,7 @@ const makeFake = (initial: UpdateState = baseState()): Fake => {
     now: T0,
     heads: pair("r1", "h1"),
     remote: pair("r1", "h1"),
+    releaseVersions: {},
   };
   const ports: UpdatePorts = {
     git: {
@@ -113,6 +115,10 @@ const makeFake = (initial: UpdateState = baseState()): Fake => {
         if (control.fetchError !== null) return { ok: false, error: control.fetchError };
         return { ok: true, value: control.remote[repository] };
       },
+      readVersion: async (repository: RepositoryName, commit: string) => ({
+        ok: true,
+        value: control.releaseVersions[`${repository}:${commit}`] ?? null,
+      }),
       head: async (repository: RepositoryName) => ({ ok: true, value: control.heads[repository] }),
       fastForward: async (repository: RepositoryName, commit: string) => {
         calls.push(`ff:${repository}`);
@@ -444,9 +450,39 @@ describe("C8: bad pairs stay bounded", () => {
 });
 
 describe("the update-ok event names the versions", () => {
-  test("it shows old and new short commits of both changed repositories", async () => {
+  test("it shows different release versions read from the before and target commits", async () => {
     const fake = makeFake(baseState({ features: { telegram: false } }));
     fake.control.remote = pair("abcdef0123456789", "fedcba9876543210");
+    fake.control.releaseVersions = {
+      "rig:r1": "0.1.0",
+      "rig:abcdef0123456789": "0.2.0",
+      "hub:h1": "1.0.0",
+      "hub:fedcba9876543210": "1.1.0",
+    };
+
+    expect((await runUpdate(fake.ports)).ok).toBe(true);
+
+    expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
+      "Обновлено: agent-rig 0.1.0 → 0.2.0, хаб 1.0.0 → 1.1.0. rig apply и rig check прошли успешно.",
+    );
+  });
+
+  test("it shows commits when both releases are equal and leaves out unchanged repositories", async () => {
+    const fake = makeFake(baseState({ features: { telegram: false } }));
+    fake.control.remote = pair("r2", "h1");
+    fake.control.releaseVersions = { "rig:r1": "0.2.0", "rig:r2": "0.2.0" };
+
+    expect((await runUpdate(fake.ports)).ok).toBe(true);
+
+    expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
+      "Обновлено: agent-rig 0.2.0 (r1 → r2). rig apply и rig check прошли успешно.",
+    );
+  });
+
+  test("it falls back to short commits when either release is unknown", async () => {
+    const fake = makeFake(baseState({ features: { telegram: false } }));
+    fake.control.remote = pair("abcdef0123456789", "fedcba9876543210");
+    fake.control.releaseVersions = { "rig:abcdef0123456789": "0.2.0" };
 
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
@@ -455,16 +491,36 @@ describe("the update-ok event names the versions", () => {
     );
   });
 
-  test("it leaves out a repository that did not change", async () => {
-    const fake = makeFake(baseState({ features: { telegram: false } }));
-    fake.control.remote = pair("r2", "h1");
+  test("release lookup reads the commit even when the working tree has another version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rig-release-version-"));
+    try {
+      const repository = join(root, "repo");
+      runGit(root, "init", "--initial-branch=main", repository);
+      runGit(repository, "config", "user.name", "Cycle Test");
+      runGit(repository, "config", "user.email", "cycle-test@example.com");
+      await writeFile(join(repository, "package.json"), JSON.stringify({ version: "0.1.0" }));
+      runGit(repository, "add", "package.json");
+      runGit(repository, "-c", "user.name=Cycle Test", "-c", "user.email=cycle-test@example.com", "commit", "-m", "release");
+      const commit = runGit(repository, "rev-parse", "HEAD");
+      await writeFile(join(repository, "package.json"), JSON.stringify({ version: "9.9.9" }));
+      const adapter = createRealGitAdapter(realProcess(), { repo: repository, hub: repository });
 
-    expect((await runUpdate(fake.ports)).ok).toBe(true);
-
-    expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig r1 → r2. rig apply и rig check прошли успешно.",
-    );
+      expect(await adapter.readVersion("rig", commit)).toEqual({ ok: true, value: "0.1.0" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
+});
+
+test("the root package version uses three numeric components", async () => {
+  const manifest: unknown = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
+  expect(typeof manifest).toBe("object");
+  expect(manifest).not.toBeNull();
+  expect(manifest).toHaveProperty("version");
+  if (typeof manifest !== "object" || manifest === null || !("version" in manifest)) return;
+  expect(typeof manifest.version).toBe("string");
+  if (typeof manifest.version !== "string") return;
+  expect(manifest.version).toMatch(/^\d+\.\d+\.\d+$/);
 });
 
 describe("C9: an event is delivered once across a crash", () => {

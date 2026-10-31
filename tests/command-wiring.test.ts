@@ -1,3 +1,4 @@
+import type { RuntimePorts } from "../src/ports.js";
 import type { RigState } from "../src/state.js";
 import type { Result } from "../src/result.js";
 
@@ -10,7 +11,8 @@ import { checkRig, inspectRig } from "../src/commands/check.js";
 import { changeFeature, listFeatureViews } from "../src/commands/feature.js";
 import { installRig } from "../src/commands/install.js";
 import { readRigState } from "../src/commands/shared.js";
-import { readStatus } from "../src/commands/status.js";
+import { formatStatus, readStatus } from "../src/commands/status.js";
+import { PROCESS_SUCCESS_EXIT_CODE } from "../src/ports.js";
 import { err, ok } from "../src/result.js";
 import {
 	baseManifest,
@@ -34,6 +36,10 @@ const BUS_FAILURE_TEXT = "Failed to connect to bus: No medium found";
 const FIRST_ASK = 1;
 // The first question and the two rechecks.
 const ASKS_WHEN_STOPPED = 3;
+// Positions in `git -C <path> <subcommand> <object>`, the form status.ts uses.
+const GIT_SUBCOMMAND_INDEX = 2;
+const GIT_OBJECT_INDEX = 3;
+const GIT_FAILURE_EXIT_CODE = 128;
 
 describe("command wiring", () => {
 	test("enables and disables a dependent feature and refuses to disable its dependency", async () => {
@@ -76,7 +82,7 @@ describe("command wiring", () => {
 		const status = await readStatus(harness.runtime);
 		expect(status.ok).toBe(true);
 		if (!status.ok) return;
-		expect(Object.keys(status.value)).toEqual(["schemaVersion", "mode", "versions", "features", "lastUpdate", "pendingHubRestart", "errors"]);
+		expect(Object.keys(status.value)).toEqual(["schemaVersion", "mode", "versions", "releases", "features", "lastUpdate", "pendingHubRestart", "errors"]);
 	});
 
 	test("install can be repeated and reports a missing system package command", async () => {
@@ -462,6 +468,68 @@ describe("command wiring", () => {
 		if (!status.ok) return;
 		expect(status.value.errors.map((error) => error.text)).toEqual(["first error", "second error"]);
 	});
+
+	test("status reads each release from the manifest at the current commit and shows it beside the commit", async () => {
+		const harness = createMemoryRuntime();
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedState(harness.fs, {});
+		const runtime = withGit(harness.runtime, {
+			head: "rig-commit",
+			manifests: { "rig-commit:package.json": '{"version":"0.2.0"}', "rig-commit:plugin/package.json": '{"version":"1.4.0"}' },
+		});
+
+		const status = await readStatus(runtime);
+
+		expect(status.ok).toBe(true);
+		if (!status.ok) return;
+		expect(status.value.versions).toEqual({ rig: "rig-commit", hub: "rig-commit" });
+		expect(status.value.releases).toEqual({ rig: "0.2.0", hub: "1.4.0" });
+		const lines = formatStatus(status.value);
+		expect(lines).toContain("agent-rig: 0.2.0 (rig-commit)");
+		expect(lines).toContain("hub: 1.4.0 (rig-commit)");
+	});
+
+	test("status shows the commit alone when the manifest has no usable version", async () => {
+		const harness = createMemoryRuntime();
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedState(harness.fs, {});
+
+		const status = await readStatus(withGit(harness.runtime, { head: "old-commit", manifests: { "old-commit:package.json": "not json" } }));
+
+		expect(status.ok).toBe(true);
+		if (!status.ok) return;
+		expect(status.value.releases).toEqual({ rig: null, hub: null });
+		const lines = formatStatus(status.value);
+		expect(lines).toContain("agent-rig: old-commit");
+		expect(lines).toContain("hub: old-commit");
+	});
+
+	test("status says the version is unknown when git cannot name the commit", async () => {
+		const harness = createMemoryRuntime();
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedState(harness.fs, {});
+
+		const status = await readStatus(withGit(harness.runtime, { head: null, manifests: {} }));
+
+		expect(status.ok).toBe(true);
+		if (!status.ok) return;
+		expect(status.value.releases).toEqual({ rig: null, hub: null });
+		expect(formatStatus(status.value)).toContain("agent-rig: неизвестно");
+	});
+});
+
+const withGit = (runtime: RuntimePorts, git: { head: string | null; manifests: Record<string, string> }): RuntimePorts => ({
+	...runtime,
+	process: {
+		...runtime.process,
+		run: async (command, args, options) => {
+			if (command !== "git") return runtime.process.run(command, args, options);
+			const output = args[GIT_SUBCOMMAND_INDEX] === "rev-parse" ? (git.head === null ? null : `${git.head}\n`) : git.manifests[args[GIT_OBJECT_INDEX] ?? ""] ?? null;
+			return ok(output === null
+				? { stdout: "", stderr: "fatal: not found", exitCode: GIT_FAILURE_EXIT_CODE }
+				: { stdout: output, stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
+		},
+	},
 });
 
 const REAL_REPOSITORY = join(import.meta.dir, "..");

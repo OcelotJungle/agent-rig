@@ -789,6 +789,7 @@ function makeHarness(
         const branch = git(working[repository], "rev-parse", "refs/remotes/origin/main");
         return ok(branch);
       },
+      readVersion: async () => ok(null),
       head: async (repository) => {
         calls.push(`head:${repository}`);
         return ok(git(working[repository], "rev-parse", "HEAD"));

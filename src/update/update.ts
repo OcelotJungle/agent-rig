@@ -49,11 +49,24 @@ export type TransactionPhase =
 
 const shortCommit = (commit: string): string => commit.slice(0, SHORT_COMMIT_LENGTH);
 
-const versionChanges = (before: Pair, target: Pair): string =>
-  REPOSITORIES
+const versionChanges = async (ports: UpdatePorts, before: Pair, target: Pair): Promise<string> => {
+  const changes = await Promise.all(REPOSITORIES
     .filter((name) => before[name] !== target[name])
-    .map((name) => `${REPOSITORY_TITLES[name]} ${shortCommit(before[name])} → ${shortCommit(target[name])}`)
-    .join(", ");
+    .map(async (name) => {
+      const [oldVersion, newVersion] = await Promise.all([
+        ports.git.readVersion(name, before[name]),
+        ports.git.readVersion(name, target[name]),
+      ]);
+      const oldRelease = oldVersion.ok ? oldVersion.value : null;
+      const newRelease = newVersion.ok ? newVersion.value : null;
+      if (oldRelease !== null && newRelease !== null) {
+        if (oldRelease !== newRelease) return `${REPOSITORY_TITLES[name]} ${oldRelease} → ${newRelease}`;
+        return `${REPOSITORY_TITLES[name]} ${newRelease} (${shortCommit(before[name])} → ${shortCommit(target[name])})`;
+      }
+      return `${REPOSITORY_TITLES[name]} ${shortCommit(before[name])} → ${shortCommit(target[name])}`;
+    }));
+  return changes.join(", ");
+};
 
 export type UpdateTransaction = {
   before: Pair;
@@ -89,6 +102,7 @@ export type UpdatePorts = {
     // The clone must be on branch main with no commits that origin/main lacks.
     branchProblem: (repository: RepositoryName) => Promise<Result<BranchProblem>>;
     fetchMain: (repository: RepositoryName) => Promise<Result<string>>;
+    readVersion: (repository: RepositoryName, commit: string) => Promise<Result<string | null>>;
     head: (repository: RepositoryName) => Promise<Result<string>>;
     // The adapter applies the commit to branch main with git merge --ff-only.
     fastForward: (repository: RepositoryName, commit: string) => Promise<Result<void>>;
@@ -365,7 +379,7 @@ async function completeSuccessfulUpdate(
       `update-ok:${transaction.target.rig}:${transaction.target.hub}`,
       "update-ok",
       "info",
-      `Обновлено: ${versionChanges(transaction.before, transaction.target)}. rig apply и rig check прошли успешно.`,
+      `Обновлено: ${await versionChanges(ports, transaction.before, transaction.target)}. rig apply и rig check прошли успешно.`,
     ),
     ...(pendingResult.event === null ? [] : [pendingResult.event]),
     ...featureEvents,

@@ -7,6 +7,7 @@ import { err, ok } from "../result.js";
 import { listFeatureViews } from "./feature.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { pathJoin, readRigState } from "./shared.js";
+import { parseVersion, VERSION_PATHS } from "../version-manifest.js";
 
 const UPDATE_EVENT_TYPES = ["update-ok", "update-skipped", "update-failed", "rollback"] as const;
 // The only event that marks a successful update (src/update/update.ts); errors logged before it are settled.
@@ -17,6 +18,7 @@ export type StatusView = {
 	schemaVersion: typeof STATUS_SCHEMA_VERSION;
 	mode: "dev" | "server";
 	versions: { rig: string | null; hub: string | null };
+	releases: { rig: string | null; hub: string | null };
 	features: FeatureView[];
 	lastUpdate: { type: string; time: string; level: string; text: string } | null;
 	pendingHubRestart: string | null;
@@ -33,6 +35,10 @@ export const readStatus = async (runtime: RuntimePorts): Promise<Result<StatusVi
 		readGitHead(runtime, state.value.paths.hub),
 		readEvents(runtime),
 	]);
+	const [rigRelease, hubRelease] = await Promise.all([
+		readGitVersion(runtime, state.value.paths.repo, rigVersion.ok ? rigVersion.value : null, VERSION_PATHS.rig),
+		readGitVersion(runtime, state.value.paths.hub, hubVersion.ok ? hubVersion.value : null, VERSION_PATHS.hub),
+	]);
 	const parsedEvents = events.ok ? events.value : [];
 	const updateEvents = parsedEvents.filter((event) => isUpdateEventType(event.type));
 	const last = updateEvents[updateEvents.length - 1];
@@ -45,6 +51,7 @@ export const readStatus = async (runtime: RuntimePorts): Promise<Result<StatusVi
 		schemaVersion: STATUS_SCHEMA_VERSION,
 		mode: state.value.mode,
 		versions: { rig: rigVersion.ok ? rigVersion.value : null, hub: hubVersion.ok ? hubVersion.value : null },
+		releases: { rig: rigRelease, hub: hubRelease },
 		features: features.value,
 		lastUpdate: last === undefined ? null : { type: last.type, time: last.time, level: last.level, text: last.text },
 		pendingHubRestart: state.value.pendingHubRestart,
@@ -55,8 +62,8 @@ export const readStatus = async (runtime: RuntimePorts): Promise<Result<StatusVi
 export const formatStatus = (status: StatusView): string[] => {
 	const lines = [
 		`Режим: ${status.mode}`,
-		`agent-rig: ${status.versions.rig ?? "неизвестно"}`,
-		`hub: ${status.versions.hub ?? "неизвестно"}`,
+		`agent-rig: ${formatRepositoryVersion(status.releases.rig, status.versions.rig)}`,
+		`hub: ${formatRepositoryVersion(status.releases.hub, status.versions.hub)}`,
 		`Перезапуск хаба ожидается: ${status.pendingHubRestart === null ? "нет" : status.pendingHubRestart}`,
 	];
 	for (const feature of status.features) lines.push(`Фича ${feature.name}: ${feature.enabled ? "включена" : "выключена"}${feature.platformAllowed ? "" : " (недоступна на этой платформе)"}`);
@@ -65,11 +72,23 @@ export const formatStatus = (status: StatusView): string[] => {
 	return lines;
 };
 
+const formatRepositoryVersion = (release: string | null, commit: string | null): string => {
+	if (commit === null) return "неизвестно";
+	return release === null ? commit : `${release} (${commit})`;
+};
+
 const readGitHead = async (runtime: RuntimePorts, path: string): Promise<Result<string>> => {
 	const result = await runtime.process.run("git", ["-C", path, "rev-parse", "HEAD"]);
 	if (!result.ok) return result;
 	if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || result.value.stdout || "git rev-parse failed");
 	return ok(result.value.stdout.trim());
+};
+
+const readGitVersion = async (runtime: RuntimePorts, path: string, commit: string | null, manifestPath: string): Promise<string | null> => {
+	if (commit === null) return null;
+	const result = await runtime.process.run("git", ["-C", path, "show", `${commit}:${manifestPath}`]);
+	if (!result.ok || result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return null;
+	return parseVersion(result.value.stdout);
 };
 
 const readEvents = async (runtime: RuntimePorts): Promise<Result<RigEvent[]>> => {
