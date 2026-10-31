@@ -21,7 +21,7 @@
 7. Создай супергруппу в Telegram, включи в ней темы (Topics), добавь бота и сделай его администратором.
 8. Узнай свой числовой Telegram ID (например, через бота @userinfobot). Он понадобится на шаге 7.3 (`allowFrom`). Числовой ID самой группы (`groupId`) узнаешь на шаге 7.6: напиши в группе любое сообщение, ID будет в журнале хаба.
 
-Когда всё готово, скажи агенту: «Начинай с шага 1». Токен бота, Telegram ID и ID группы введёшь сам на шаге 7: агент скажет, какую команду выполнить в терминале (токен вводится скрытно, в историю шелла и в чат не попадает), а ты ответишь, что готово. Подтверждение канала в tmux тоже твоё: шаг 7.7 говорит, когда оно нужно и как убрать этот вопрос совсем.
+Когда всё готово, скажи агенту: «Начинай с шага 1». Токен бота, Telegram ID и ID группы введёшь сам на шаге 7: агент скажет, какую команду выполнить в терминале (токен вводится скрытно, в историю шелла и в чат не попадает), а ты ответишь, что готово.
 
 ## Что делает агент
 
@@ -117,7 +117,7 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 
 **7.4. Запуск сессий из темы (делаешь ты).** Добавь в `config.json` секцию `launch`. Это обычный Claude; хаб сам подставляет `{session}`, `{cwd}` и `{mode}`. Команда вносит правку, не печатая файл:
 
-`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["launch"]={"command":["tmux","new-session","-d","-s","claude-{session}","-c","{cwd}","--","claude","--dangerously-load-development-channels","plugin:telegram-hub@telegram-hub","--resume","{session}","{mode}"],"timeoutSec":90};json.dump(c,open(p,"w"),indent=2)'`
+`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["launch"]={"command":["tmux","new-session","-d","-s","claude-{session}","-c","{cwd}","--","claude","--channels","plugin:telegram-hub@telegram-hub","--resume","{session}","{mode}"],"timeoutSec":90};json.dump(c,open(p,"w"),indent=2)'`
 
 Часть имени плагина после `@` (`telegram-hub`) должна совпадать с `name` в `~/.agent-rig/hub/.claude-plugin/marketplace.json`. Проверка: `grep -m1 '"name"' ~/.agent-rig/hub/.claude-plugin/marketplace.json` печатает `"name": "telegram-hub"`. Если имя другое, подставь его в команду вместо `telegram-hub`.
 
@@ -125,7 +125,7 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 
 `cd "$HOME/.agent-rig/hub" && bash scripts/install-hub-service.sh`
 
-Скрипт сам включает linger (`loginctl enable-linger`), ждёт до 30 секунд пользовательскую шину systemd, пишет файл `telegram-hub.service`, включает и запускает службу и создаёт `~/.claude/channels/telegram-hub/service-managed`. В юните уже прописан PATH с `~/.local/bin` и `~/.bun/bin`, поэтому `bun`, `claude` и `rig` хабу доступны; `tmux` берётся из `/usr/bin`. Если скрипт печатает `the user systemd bus did not appear in 30s`, установи `sudo apt-get install -y dbus-user-session`, перелогинься по SSH и запусти скрипт снова. Если политика сервера не даёт включить linger, администратор выполняет `sudo loginctl enable-linger "$(id -un)"`; проверка: `loginctl show-user "$USER" -p Linger` печатает `Linger=yes`.
+Скрипт сам включает linger (`loginctl enable-linger`), ждёт до 30 секунд пользовательскую шину systemd, пишет файл `telegram-hub.service`, включает и запускает службу и создаёт `~/.claude/channels/telegram-hub/service-managed`. В юните уже прописан PATH с `~/.local/bin` и `~/.bun/bin`, поэтому `bun`, `claude` и `rig` хабу доступны; `tmux` берётся из `/usr/bin`. Если скрипт печатает `the user systemd bus did not appear in 30s`, установи `sudo apt-get install -y dbus-user-session`, перелогинься по SSH и запусти скрипт снова. Если скрипт печатает `Could not enable linger: Access denied` (так бывает, например, без пакета `polkitd`) или политика сервера не даёт включить linger, администратор выполняет `sudo loginctl enable-linger "$(id -un)"`; проверка: `loginctl show-user "$USER" -p Linger` печатает `Linger=yes`. После этого запусти скрипт ещё раз.
 
 Признаки успеха: `systemctl --user is-active telegram-hub.service` печатает `active`, а в `~/.claude/channels/telegram-hub/hub.log` есть строка `polling Telegram as @имя_бота` (`grep -q "polling Telegram as" ~/.claude/channels/telegram-hub/hub.log`). Если вместо неё `no TELEGRAM_BOT_TOKEN` или `bot token rejected`, токен введён неверно: попроси человека повторить 7.2 и выполни `systemctl --user restart telegram-hub.service`. Если `getMe failed (Unable to connect...)`, с сервера не открывается `api.telegram.org`. Если `getUpdates 409 Conflict`, тем же ботом пользуется кто-то ещё, обычно официальный плагин telegram. Диагностика: `journalctl --user -u telegram-hub.service -n 50`.
 
@@ -135,27 +135,17 @@ Bun нужен до `rig`: `rig` запускается как `bun run …/src/
 
 Хаб перечитывает `config.json` на каждом сообщении, перезапускать службу не нужно. Если в логе строк `ignored update` нет совсем, Telegram не отдаёт боту сообщения группы: бот должен быть администратором группы (либо в @BotFather `/setprivacy` → бот → `Disable`, потом удалить бота из группы и добавить заново). Если в логе `delivery to session … is blocked`, у бота нет прав писать в группу или в `config.json` не тот `groupId`.
 
-**7.7. Подтверждение канала (делает человек).** С флагом `--dangerously-load-development-channels` Claude Code может спросить подтверждение канала прямо в tmux. Спрашивает ли он только при первом запуске или при каждом, на Linux не проверено. Предупреди об этом человека: считай, что вопрос может появляться у каждой новой сессии.
+**7.7. Разрешение канала (делаешь ты, шаг обязательный).** Без разрешения Claude Code спрашивает подтверждение канала при каждом запуске сессии. Хаб запускает сессию в отсоединённом tmux, ответить там некому, поэтому сессия из темы не подключится. Флаг `--channels` из шага 7.4 рассчитан на файл из этого шага.
 
-Хаб запускает сессию в отсоединённом tmux, поэтому на вопрос там некому ответить, и пока ответа нет, сессия к хабу не подключается. Хаб сообщает об этом сам:
-- если сессия не подключилась за `timeoutSec` (в шаге 7.4 это 90 секунд), тема пишет, что сессия, возможно, ждёт подтверждения в tmux, и называет команду подключения;
-- если такая tmux-сессия уже жива, тема сразу просит подключиться к ней.
-
-Человек подключается командой из темы и отвечает на вопрос сам:
-
-`tmux attach -t claude-<id сессии>`
-
-Вопрос можно убрать совсем, но это настройка всей машины: файл действует на всех пользователей и все запуски Claude Code на сервере и правится только с правами root. Спроси человека, нужно ли это. Если да, он выполняет две команды сам. Первая создаёт каталог, вторая отказывается работать, если файл уже есть (тогда человек дописывает две настройки в него вручную):
+Файл действует на всех пользователей и все запуски Claude Code на сервере, а из каналов разрешает только плагин `telegram-hub`. Первая команда создаёт каталог. Вторая отказывается работать, если файл уже есть: тогда попроси человека дописать в него `channelsEnabled` и `allowedChannelPlugins` вручную.
 
 `sudo mkdir -p /etc/claude-code`
 
 `sudo test ! -e /etc/claude-code/managed-settings.json && printf '%s\n' '{"channelsEnabled":true,"allowedChannelPlugins":[{"plugin":"telegram-hub","marketplace":"telegram-hub"}]}' | sudo tee /etc/claude-code/managed-settings.json > /dev/null`
 
-После этого замени в `launch` флаг `--dangerously-load-development-channels` на `--channels`. Сделай это сам, команда не печатает файл:
+Значение `marketplace` в файле должно совпадать с именем из проверки в шаге 7.4. Признак успеха: `sudo test -s /etc/claude-code/managed-settings.json`, а сессия, запущенная сообщением в теме, подключается к хабу без подключения к tmux.
 
-`python3 -c 'import json,os;p=os.path.expanduser("~/.claude/channels/telegram-hub/config.json");c=json.load(open(p));c["launch"]["command"]=["--channels" if a=="--dangerously-load-development-channels" else a for a in c["launch"]["command"]];json.dump(c,open(p,"w"),indent=2)'`
-
-Значение `marketplace` в файле должно совпадать с именем из проверки в шаге 7.4. Признак успеха: `grep -c -- '"--channels"' ~/.claude/channels/telegram-hub/config.json` печатает `1`, а новая сессия подключается к хабу без подключения к tmux.
+Если сессия всё же не подключилась за `timeoutSec` (в шаге 7.4 это 90 секунд), тема сообщает об этом и называет команду подключения. Посмотри, что написано в tmux: `tmux attach -t claude-<id сессии>`.
 
 Итоговый признак успеха шага: `systemctl --user is-active telegram-hub.service` печатает `active`.
 
