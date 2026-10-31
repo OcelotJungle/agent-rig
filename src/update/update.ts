@@ -3,6 +3,9 @@ import type { Result } from "../result.js";
 const HUB_RESTART_TIMEOUT_MS = 5 * 60 * 1000;
 const HUB_WAIT_WARNING_MS = 24 * 60 * 60 * 1000;
 const REPOSITORIES = ["rig", "hub"] as const;
+// The short form git itself prints.
+const SHORT_COMMIT_LENGTH = 7;
+const REPOSITORY_TITLES = { rig: "agent-rig", hub: "хаб" } as const;
 
 export type RepositoryName = "rig" | "hub";
 export type Pair = { rig: string; hub: string };
@@ -43,6 +46,14 @@ export type TransactionPhase =
   | "rolling-back"
   | "rollback-applying"
   | "rollback-restarting";
+
+const shortCommit = (commit: string): string => commit.slice(0, SHORT_COMMIT_LENGTH);
+
+const versionChanges = (before: Pair, target: Pair): string =>
+  REPOSITORIES
+    .filter((name) => before[name] !== target[name])
+    .map((name) => `${REPOSITORY_TITLES[name]} ${shortCommit(before[name])} → ${shortCommit(target[name])}`)
+    .join(", ");
 
 export type UpdateTransaction = {
   before: Pair;
@@ -354,7 +365,7 @@ async function completeSuccessfulUpdate(
       `update-ok:${transaction.target.rig}:${transaction.target.hub}`,
       "update-ok",
       "info",
-      "Репозитории обновлены, rig apply и rig check прошли успешно.",
+      `Обновлено: ${versionChanges(transaction.before, transaction.target)}. rig apply и rig check прошли успешно.`,
     ),
     ...(pendingResult.event === null ? [] : [pendingResult.event]),
     ...featureEvents,

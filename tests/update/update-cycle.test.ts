@@ -443,6 +443,30 @@ describe("C8: bad pairs stay bounded", () => {
   });
 });
 
+describe("the update-ok event names the versions", () => {
+  test("it shows old and new short commits of both changed repositories", async () => {
+    const fake = makeFake(baseState({ features: { telegram: false } }));
+    fake.control.remote = pair("abcdef0123456789", "fedcba9876543210");
+
+    expect((await runUpdate(fake.ports)).ok).toBe(true);
+
+    expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
+      "Обновлено: agent-rig r1 → abcdef0, хаб h1 → fedcba9. rig apply и rig check прошли успешно.",
+    );
+  });
+
+  test("it leaves out a repository that did not change", async () => {
+    const fake = makeFake(baseState({ features: { telegram: false } }));
+    fake.control.remote = pair("r2", "h1");
+
+    expect((await runUpdate(fake.ports)).ok).toBe(true);
+
+    expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
+      "Обновлено: agent-rig r1 → r2. rig apply и rig check прошли успешно.",
+    );
+  });
+});
+
 describe("C9: an event is delivered once across a crash", () => {
   test("a failed save right after an event is appended does not deliver it again", async () => {
     const fake = makeFake(baseState({ features: { telegram: false } }));
