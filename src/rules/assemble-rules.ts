@@ -47,11 +47,11 @@ export function assembleRules(
   const newline = source.includes("\r\n") ? "\r\n" : "\n";
   const shared = chunks
     .filter((chunk) => chunk.target === "shared")
-		.map((chunk) => chunk.text)
+    .map(endWithNewline)
     .join(newline);
   const claude = chunks
     .filter((chunk) => chunk.target === "claude")
-		.map((chunk) => chunk.text)
+    .map(endWithNewline)
     .join(newline);
   const block = `${BEGIN_MARKER}${newline}${shared}${newline}${END_MARKER}`;
   const codexResult = assembleCodexBlock(source, block, newline);
@@ -186,6 +186,12 @@ function assembleCodexBlock(
     content: `${prefix}${block}${separator}${preserved}`,
     repaired,
   };
+}
+
+// Chunks are joined with one newline, which leaves a blank line between them only when each chunk ends with a newline.
+// A chunk file that lost its last newline must not glue its last line to the next chunk, so the end is normalised here.
+function endWithNewline(chunk: RuleChunk): string {
+  return chunk.text.length === 0 || chunk.text.endsWith("\n") ? chunk.text : `${chunk.text}\n`;
 }
 
 function detectNewline(source: string): string {

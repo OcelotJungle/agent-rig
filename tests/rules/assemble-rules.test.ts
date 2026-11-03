@@ -11,8 +11,8 @@ describe("rule assembly", () => {
   test("builds shared and Claude text separately", () => {
     const result = assembleRules([shared, claude]);
 
-    expect(result.codex).toBe("<!-- rig:begin -->\nShared policy\n<!-- rig:end -->");
-    expect(result.claude).toBe("Claude policy");
+    expect(result.codex).toBe("<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->");
+    expect(result.claude).toBe("Claude policy\n");
     expect(result.claude).not.toContain("Shared policy");
     expect(result.repairs).toEqual([]);
   });
@@ -25,8 +25,35 @@ describe("rule assembly", () => {
 			{ target: "claude", text: "Section 02 part 01" },
 		]);
 
-		expect(result.claude).toBe("Section 01 part 01\nSection 01 part 02\nSection 02 part 01");
+		expect(result.claude).toBe("Section 01 part 01\n\nSection 01 part 02\n\nSection 02 part 01\n");
 		expect(result.codex).toContain("Shared policy");
+	});
+
+	test("a chunk without a trailing newline assembles like the same chunk with one", () => {
+		const withNewline = assembleRules([
+			{ target: "claude", text: "- first bullet\n" },
+			{ target: "claude", text: "- second bullet\n" },
+			{ target: "claude", text: "# Heading\n" },
+			{ target: "shared", text: "Shared rule\n" },
+		]);
+		const withoutNewline = assembleRules([
+			{ target: "claude", text: "- first bullet" },
+			{ target: "claude", text: "- second bullet\n" },
+			{ target: "claude", text: "# Heading" },
+			{ target: "shared", text: "Shared rule" },
+		]);
+
+		expect(withoutNewline).toEqual(withNewline);
+		expect(withNewline.claude).toBe("- first bullet\n\n- second bullet\n\n# Heading\n");
+	});
+
+	test("a chunk that already ends with blank lines is kept as it is", () => {
+		const result = assembleRules([
+			{ target: "claude", text: "# Heading\n\n" },
+			{ target: "claude", text: "- bullet\n" },
+		]);
+
+		expect(result.claude).toBe("# Heading\n\n\n- bullet\n");
 	});
 
 	test("substitutes double-brace placeholders and rejects unresolved names", () => {
@@ -46,14 +73,14 @@ describe("rule assembly", () => {
       codex: "before\n<!-- rig:begin -->\nold\n<!-- rig:end -->\nafter",
     });
 
-    expect(result.codex).toBe("before\n<!-- rig:begin -->\nShared policy\n<!-- rig:end -->\nafter");
+    expect(result.codex).toBe("before\n<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->\nafter");
     expect(result.repairs).toEqual([]);
   });
 
   test("starts a missing block at the beginning", () => {
     const result = assembleRules([shared], { codex: "personal" });
 
-    expect(result.codex).toBe("<!-- rig:begin -->\nShared policy\n<!-- rig:end -->\npersonal");
+    expect(result.codex).toBe("<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->\npersonal");
   });
 
   test("repairs one marker without losing text", () => {
@@ -61,7 +88,7 @@ describe("rule assembly", () => {
 
     expect(result.codex).toContain("personal\n");
     expect(result.codex).toContain("old block");
-    expect(result.codex).toContain("<!-- rig:begin -->\nShared policy\n<!-- rig:end -->");
+    expect(result.codex).toContain("<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->");
     expect(result.repairs).toEqual(["codex"]);
   });
 
@@ -91,13 +118,13 @@ describe("rule assembly", () => {
     const source = "\uFEFFoutside\r\n<!-- rig:begin -->\r\nold\r\n<!-- rig:end -->\r\ntail";
     const result = assembleRules([shared], { codex: source });
 
-    expect(result.codex).toBe("\uFEFFoutside\r\n<!-- rig:begin -->\r\nShared policy\r\n<!-- rig:end -->\r\ntail");
+    expect(result.codex).toBe("\uFEFFoutside\r\n<!-- rig:begin -->\r\nShared policy\n\r\n<!-- rig:end -->\r\ntail");
   });
 
   test("preserves BOM and CRLF when repairing a single marker", () => {
     const result = assembleRules([shared], { codex: "\uFEFFone\r\n<!-- rig:begin -->\r\nold" });
 
-    expect(result.codex.startsWith("\uFEFF<!-- rig:begin -->\r\nShared policy\r\n<!-- rig:end -->\r\n")).toBe(true);
+    expect(result.codex.startsWith("\uFEFF<!-- rig:begin -->\r\nShared policy\n\r\n<!-- rig:end -->\r\n")).toBe(true);
     expect(result.codex).toContain("one\r\nold");
   });
 
@@ -105,7 +132,7 @@ describe("rule assembly", () => {
     const source = "Say <!-- rig:begin --> to open a block\n<!-- rig:begin -->\nold\n<!-- rig:end -->\ntail";
     const result = assembleRules([shared], { codex: source });
 
-    expect(result.codex).toBe("Say <!-- rig:begin --> to open a block\n<!-- rig:begin -->\nShared policy\n<!-- rig:end -->\ntail");
+    expect(result.codex).toBe("Say <!-- rig:begin --> to open a block\n<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->\ntail");
     expect(result.repairs).toEqual([]);
   });
 
@@ -115,7 +142,7 @@ describe("rule assembly", () => {
 
     expect(result.codex).toContain("Close it with <!-- rig:end --> please\n");
     expect(result.codex).toContain("old block");
-    expect(result.codex).toContain("<!-- rig:begin -->\nShared policy\n<!-- rig:end -->");
+    expect(result.codex).toContain("<!-- rig:begin -->\nShared policy\n\n<!-- rig:end -->");
     expect(result.repairs).toEqual(["codex"]);
     expect(assembleRules([shared], { codex: result.codex }).codex).toBe(result.codex);
   });

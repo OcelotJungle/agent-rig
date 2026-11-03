@@ -1,8 +1,10 @@
 {
   "name": "reflection",
-  "description": {
-    "en": "Reflection after Claude Code turns.",
-    "ru": "Рефлексия после ходов Claude Code."
+  "description": "Reflection after Claude Code turns.",
+  "translations": {
+    "ru": {
+      "description": "Рефлексия после ходов Claude Code."
+    }
   },
   "enabledByDefault": true,
   "platforms": [

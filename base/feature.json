@@ -1,8 +1,10 @@
 {
   "name": "base",
-  "description": {
-    "en": "Base rules and hooks.",
-    "ru": "Базовые правила и хуки."
+  "description": "Base rules and hooks.",
+  "translations": {
+    "ru": {
+      "description": "Базовые правила и хуки."
+    }
   },
   "enabledByDefault": true,
   "platforms": [

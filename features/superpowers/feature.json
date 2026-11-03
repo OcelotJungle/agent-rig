@@ -1,8 +1,10 @@
 {
   "name": "superpowers",
-  "description": {
-    "en": "The Superpowers plugin.",
-    "ru": "Плагин Superpowers."
+  "description": "The Superpowers plugin.",
+  "translations": {
+    "ru": {
+      "description": "Плагин Superpowers."
+    }
   },
   "enabledByDefault": true,
   "platforms": [

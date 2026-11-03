@@ -1,8 +1,10 @@
 {
   "name": "cmd",
-  "description": {
-    "en": "The Command Prompt command in the Telegram hub.",
-    "ru": "Команда Command Prompt в Telegram-хабе."
+  "description": "The Command Prompt command in the Telegram hub.",
+  "translations": {
+    "ru": {
+      "description": "Команда Command Prompt в Telegram-хабе."
+    }
   },
   "enabledByDefault": false,
   "platforms": [

@@ -27,13 +27,13 @@ export const installMissingPrograms = async (
 			const available = await runtime.process.isAvailable(program.command);
 			if (available) continue;
 			if (program.systemPackage) {
-				if (program.installCommand === null) return err(`System package ${program.name} is missing and has no install command`);
+				if (program.installCommand === null) return err(messagesFor(runtime.language).programs.noInstallCommand(program.name));
 				missingSystem.push({ name: program.name, command: program.installCommand });
 				continue;
 			}
 			const installed = await runtime.programs.install(program.name, pathJoin(runtime.home, ".local", "bin"));
 			if (!installed.ok) return installed;
-			if (!await runtime.process.isAvailable(program.command)) return err(`Program ${program.name} is still unavailable after installation`);
+			if (!await runtime.process.isAvailable(program.command)) return err(messagesFor(runtime.language).programs.stillUnavailable(program.name));
 		}
 	}
 	return ok(missingSystem);

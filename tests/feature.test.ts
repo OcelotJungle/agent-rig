@@ -10,7 +10,8 @@ import { en } from "../src/messages.js";
 
 const manifest = (overrides: Partial<FeatureManifest> = {}): FeatureManifest => ({
 	name: "codex",
-	description: { en: "Codex integration", ru: "Codex integration (ru)" },
+	description: "Codex integration",
+	translations: { ru: { description: "Codex integration (ru)" } },
 	enabledByDefault: false,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],
@@ -53,6 +54,21 @@ describe("feature manifests", () => {
 		const result = validateFeature({ ...manifest(), dependencies: [4] });
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toContain("codex");
+	});
+
+	test("rejects a description that is not a plain string, because the previous release reads new manifests", () => {
+		const objectDescription = validateFeature({ ...manifest(), description: { en: "Codex", ru: "Codex (ru)" } });
+		expect(objectDescription.ok).toBe(false);
+	});
+
+	test("accepts a manifest without translations and rejects malformed translations", () => {
+		const { translations: _translations, ...withoutTranslations } = manifest();
+		expect(validateFeature(withoutTranslations).ok).toBe(true);
+		expect(validateFeature({ ...manifest(), translations: { ru: { description: 4 } } }).ok).toBe(false);
+		expect(validateFeature({ ...manifest(), translations: { ru: "text" } }).ok).toBe(false);
+		expect(validateFeature({ ...manifest(), translations: "ru" }).ok).toBe(false);
+		// A language this release does not know is ignored, so a newer manifest still loads.
+		expect(validateFeature({ ...manifest(), translations: { de: { description: "x" } } }).ok).toBe(true);
 	});
 
 	test("rejects enable when dependencies are missing", () => {

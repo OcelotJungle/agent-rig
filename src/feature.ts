@@ -1,7 +1,9 @@
 import type { FileSystem } from "./file-system.js";
+import type { TranslatedLanguage } from "./messages.js";
 import type { Result } from "./result.js";
 
 import { joinPath } from "./file-system.js";
+import { isTranslatedLanguage } from "./messages.js";
 import { err, errorText, ok } from "./result.js";
 
 const REQUIRED_LISTS = [
@@ -52,7 +54,10 @@ export type AssetManifest = { sourcePath: string; targetPath: string };
 export type ProgramManifest = { name: string; command: string; installCommand: string | null; systemPackage: boolean; platform?: Platform };
 export type FeatureManifest = {
 	name: string;
-	description: { en: string; ru: string };
+	/** English text. It stays a plain string: the previous release reads new manifests during `rig update`. */
+	description: string;
+	/** Texts in the other languages, keyed by language. A missing language falls back to the English text. */
+	translations?: Partial<Record<TranslatedLanguage, { description: string }>>;
 	enabledByDefault: boolean;
 	platforms: Platform[];
 	dependencies: string[];
@@ -122,12 +127,13 @@ const hasValidLists = (value: Record<string, unknown>): boolean => {
 	return REQUIRED_LISTS.every((key) => key in value);
 };
 
-const isDescription = (value: unknown): value is { en: string; ru: string } =>
-	isObject(value) && isString(value.en) && isString(value.ru);
+// A language this release does not know is ignored, so a manifest with a newer translation still loads.
+const isTranslations = (value: unknown): boolean => isObject(value) &&
+	Object.entries(value).every(([language, text]) => !isTranslatedLanguage(language) || (isObject(text) && isString(text.description)));
 
 const isFeatureManifest = (value: unknown): value is FeatureManifest => isObject(value) &&
-	isString(value.name) && /^[a-z0-9][a-z0-9-]*$/.test(value.name) && isDescription(value.description) &&
-	typeof value.enabledByDefault === "boolean" && hasValidLists(value);
+	isString(value.name) && /^[a-z0-9][a-z0-9-]*$/.test(value.name) && isString(value.description) &&
+	(value.translations === undefined || isTranslations(value.translations)) && typeof value.enabledByDefault === "boolean" && hasValidLists(value);
 
 export const validateFeature = (value: unknown): Result<FeatureManifest> => {
 	const name = isObject(value) && isString(value.name) ? value.name : "<unknown>";

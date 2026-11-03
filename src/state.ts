@@ -3,7 +3,7 @@ import type { Language } from "./messages.js";
 import type { Result } from "./result.js";
 
 import { atomicWrite, joinPath } from "./file-system.js";
-import { isLanguage } from "./messages.js";
+import { DEFAULT_LANGUAGE, isLanguage } from "./messages.js";
 import { err, errorText, ok } from "./result.js";
 
 // A write-ahead journal of one `apply`. `entries` hold the record changes that count only when the file at `path`
@@ -32,6 +32,7 @@ export type RigState = {
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
+const isMissingFile = (error: unknown): boolean => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 const isUnknownArray = (value: unknown): value is unknown[] => Array.isArray(value);
 const isStringRecord = (value: unknown): value is Record<string, string> =>
 	isObject(value) && Object.values(value).every((entry) => typeof entry === "string");
@@ -53,7 +54,11 @@ const isJournal = (value: unknown): value is Journal =>
 	isNullableStringRecord(value.always) &&
 	isUnknownArray(value.events) && value.events.every(isJournalEvent);
 
-export const parseState = (text: string): Result<RigState> => {
+// `languageInvalid`: state.json holds a `language` value that is not a supported language. Every reader treats it as
+// absent (English); only `rig language en|ru` needs to know, to write a valid value back.
+export type StateReport = { state: RigState; languageInvalid: boolean };
+
+export const parseStateReport = (text: string): Result<StateReport> => {
 	let value: unknown;
 	try {
 		value = JSON.parse(text);
@@ -65,7 +70,6 @@ export const parseState = (text: string): Result<RigState> => {
 		!isBooleanRecord(value.features) || !isStringRecord(value.records) ||
 		!isUnknownArray(value.badPairs) || !value.badPairs.every(isBadPair) ||
 		!(value.pendingHubRestart === null || typeof value.pendingHubRestart === "string") ||
-		!(value.language === undefined || isLanguage(value.language)) ||
 		!(value.journal === undefined || isJournal(value.journal))) {
 		return err("state.json has an invalid shape");
 	}
@@ -77,9 +81,15 @@ export const parseState = (text: string): Result<RigState> => {
 		badPairs: value.badPairs,
 		pendingHubRestart: value.pendingHubRestart,
 	};
-	if (value.language !== undefined) state.language = value.language;
+	const languageInvalid = value.language !== undefined && !isLanguage(value.language);
+	if (isLanguage(value.language)) state.language = value.language;
 	if (value.journal !== undefined) state.journal = value.journal;
-	return ok(state);
+	return ok({ state, languageInvalid });
+};
+
+export const parseState = (text: string): Result<RigState> => {
+	const report = parseStateReport(text);
+	return report.ok ? ok(report.value.state) : report;
 };
 
 export const readState = async (fs: FileSystem, home: string): Promise<Result<RigState>> => {
@@ -88,6 +98,24 @@ export const readState = async (fs: FileSystem, home: string): Promise<Result<Ri
 	} catch (error) {
 		return err(`Could not read state.json: ${errorText(error)}`);
 	}
+};
+
+// null: there is no state.json (rig is not installed yet).
+export const readStateReport = async (fs: FileSystem, home: string): Promise<Result<StateReport | null>> => {
+	let text: string;
+	try {
+		text = await fs.readText(joinPath(home, ".agent-rig", "state.json"));
+	} catch (error) {
+		return isMissingFile(error) ? ok(null) : err(`Could not read state.json: ${errorText(error)}`);
+	}
+	return parseStateReport(text);
+};
+
+// The language of everything rig prints: a missing, unreadable or invalid state.json, or an unsupported value in it,
+// means the default language; the command itself reports a broken state later.
+export const readStoredLanguage = async (fs: FileSystem, home: string): Promise<Language> => {
+	const state = await readState(fs, home);
+	return state.ok ? state.value.language ?? DEFAULT_LANGUAGE : DEFAULT_LANGUAGE;
 };
 
 export const writeState = async (fs: FileSystem, home: string, state: RigState): Promise<Result<void>> => {

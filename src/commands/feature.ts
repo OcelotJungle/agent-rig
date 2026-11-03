@@ -6,7 +6,7 @@ import type { RuntimePorts } from "../ports.js";
 
 import { applyRig } from "../apply.js";
 import { resolveFeatureChange } from "../feature-graph.js";
-import { messagesFor } from "../messages.js";
+import { isTranslatedLanguage, messagesFor } from "../messages.js";
 import { err, ok } from "../result.js";
 import { emitRigEvent, readFeatureManifests, readRigState, withRigLock } from "./shared.js";
 import { installMissingPrograms } from "./programs.js";
@@ -85,7 +85,7 @@ const revertFeatureChange = async (
 
 const toFeatureView = (feature: FeatureManifest, enabled: Record<string, boolean>, platform: Platform, language: Language): FeatureView => ({
 	name: feature.name,
-	description: feature.description[language],
+	description: (isTranslatedLanguage(language) ? feature.translations?.[language]?.description : undefined) ?? feature.description,
 	enabled: enabled[feature.name] === true,
 	platformAllowed: feature.platforms.includes(platform),
 });

@@ -1,5 +1,4 @@
 import type { FeatureManifest } from "../feature.js";
-import type { Language } from "../messages.js";
 import type { RigState } from "../state.js";
 import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
@@ -8,19 +7,12 @@ import { loadFeatures } from "../feature-graph.js";
 import { acquireLock } from "../lock.js";
 import { appendEvent } from "../events.js";
 import { joinPath } from "../file-system.js";
-import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
+import { messagesFor } from "../messages.js";
 import { readState } from "../state.js";
 import { err, errorText, ok } from "../result.js";
 
 export const readRigState = async (runtime: RuntimePorts): Promise<Result<RigState>> =>
 	readState(runtime.fs, runtime.home);
-
-// Read once per command run, before the command is parsed. A missing, unreadable or invalid state.json means the
-// default language: the command itself reports that problem later, in the default language.
-export const readLanguage = async (runtime: RuntimePorts): Promise<Language> => {
-	const state = await readRigState(runtime);
-	return state.ok ? state.value.language ?? DEFAULT_LANGUAGE : DEFAULT_LANGUAGE;
-};
 
 export const readFeatureManifests = async (runtime: RuntimePorts, repoPath: string): Promise<Result<FeatureManifest[]>> =>
 	loadFeatures(runtime.fs, repoPath);

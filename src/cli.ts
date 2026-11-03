@@ -9,11 +9,11 @@ import { checkRig } from "./commands/check.js";
 import { changeFeature, listFeatureViews } from "./commands/feature.js";
 import { installRig } from "./commands/install.js";
 import { setLanguage, showLanguage } from "./commands/language.js";
-import { createRealRuntime } from "./commands/real-runtime.js";
-import { readLanguage } from "./commands/shared.js";
+import { createRealRuntime, readRealLanguage } from "./commands/real-runtime.js";
 import { formatStatus, readStatus } from "./commands/status.js";
 import { runUpdateStep, updateRig } from "./commands/update.js";
 import { DEFAULT_LANGUAGE, isLanguage, messagesFor } from "./messages.js";
+import { ok } from "./result.js";
 
 const SUCCESS_EXIT_CODE = 0;
 const FAILURE_EXIT_CODE = 1;
@@ -74,30 +74,38 @@ const parseUpdateStep = (args: string[]): ParsedCommand | null => {
 	return { ok: true, command: { name: "update-step", step, owner } };
 };
 
-export const runCli = async (args: string[], writeLine: (line: string) => void, suppliedRuntime?: RuntimePorts): Promise<number> => {
-	const runtimeResult = suppliedRuntime === undefined ? await createRealRuntime() : { ok: true as const, value: suppliedRuntime };
-	// The language is read from state.json once, here, and travels in the runtime; nothing below reads it from disk again.
-	// Without a runtime (or without a readable state) the default language is used.
-	const language = runtimeResult.ok ? await readLanguage(runtimeResult.value) : DEFAULT_LANGUAGE;
-	if (runtimeResult.ok) runtimeResult.value.language = language;
-	const messages = messagesFor(language);
+// Where the runtime comes from. `readLanguage` reads only the language (state.json), for the commands that need no
+// runtime (`rig help`, usage errors); `create` builds the runtime, which reads the language itself.
+export type RuntimeFactory = { readLanguage: () => Promise<Language>; create: () => Promise<Result<RuntimePorts>> };
+
+const realRuntimeFactory: RuntimeFactory = { readLanguage: readRealLanguage, create: () => createRealRuntime() };
+
+export const runCli = async (
+	args: string[],
+	writeLine: (line: string) => void,
+	suppliedRuntime?: RuntimePorts,
+	factory: RuntimeFactory = realRuntimeFactory,
+): Promise<number> => {
+	const source: RuntimeFactory = suppliedRuntime === undefined
+		? factory
+		: { readLanguage: async () => suppliedRuntime.language, create: async () => ok(suppliedRuntime) };
 	const parsed = parseCommand(args);
-	if (!parsed.ok) {
-		writeLine(parsed.error(messages));
-		return FAILURE_EXIT_CODE;
+	if (!parsed.ok || parsed.command.name === "help") {
+		const messages = messagesFor(await source.readLanguage());
+		writeLine(parsed.ok ? messages.cli.help() : parsed.error(messages));
+		return parsed.ok ? SUCCESS_EXIT_CODE : FAILURE_EXIT_CODE;
 	}
-	if (parsed.command.name === "help") {
-		writeLine(messages.cli.help());
-		return SUCCESS_EXIT_CODE;
-	}
+	// The runtime reads the language from state.json once, when it is built, and carries it; nothing below reads it again.
+	// If the runtime cannot be built, the error is printed in the default language.
+	const runtimeResult = await source.create();
 	if (!runtimeResult.ok) {
-		writeLine(messages.cli.rigError(runtimeResult.error));
+		writeLine(messagesFor(DEFAULT_LANGUAGE).cli.rigError(runtimeResult.error));
 		return FAILURE_EXIT_CODE;
 	}
 	try {
 		return await execute(parsed.command, runtimeResult.value, writeLine);
 	} catch (error) {
-		writeLine(messages.cli.rigError(error instanceof Error ? error.message : String(error)));
+		writeLine(messagesFor(runtimeResult.value.language).cli.rigError(error instanceof Error ? error.message : String(error)));
 		return FAILURE_EXIT_CODE;
 	}
 };
@@ -128,7 +136,7 @@ const execute = async (command: Command, runtime: RuntimePorts, writeLine: (line
 	}
 	if (command.name === "language") {
 		const result = command.value === null
-			? showLanguage(runtime, command.json, writeLine)
+			? await showLanguage(runtime, command.json, writeLine)
 			: await setLanguage(runtime, command.value, command.json, writeLine);
 		return report(result, messages, writeLine);
 	}

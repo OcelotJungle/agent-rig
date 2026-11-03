@@ -1,8 +1,10 @@
 {
   "name": "codex",
-  "description": {
-    "en": "Task delegation through Codex.",
-    "ru": "Делегирование задач через Codex."
+  "description": "Task delegation through Codex.",
+  "translations": {
+    "ru": {
+      "description": "Делегирование задач через Codex."
+    }
   },
   "enabledByDefault": true,
   "platforms": [

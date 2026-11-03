@@ -71,8 +71,10 @@ substituting paths and the interpreter in place of `C:/Users/...`.
 
 The `feature.json` manifest sets: name, description, whether it is on at install, platforms, dependencies on other
 features, rule pieces with a target (`shared` or `claude`), hooks, settings keys, plugins, agents, skills, hub commands,
-programs that must be on the machine, and how to install them without root. The description is an object
-`{ "en": "...", "ru": "..." }`; `rig` shows the one in the current language (see "Language").
+programs that must be on the machine, and how to install them without root. The description is a plain English string;
+the optional field `translations` holds the texts in the other languages,
+`{ "ru": { "description": "..." } }`, and `rig` shows the one in the current language, or the English one when the
+language has no translation (see "Language").
 
 In the current format `rules` refers by the `path` field to a file relative to the part; the order of pieces is the order
 of the array. `platform`, `whenEnabled` and `whenDisabled` restrict rules. `hooks` holds `event`, `matcher` and `command`;
@@ -238,13 +240,18 @@ means `"en"`. `rig` and the hub are English by default and switch to Russian tog
 
 - `rig language` prints the current language; `rig language en|ru` sets it under the rig lock and emits the event
   `language-changed` whose text is in the new language. Setting the value that is already set is a no-op, with no event.
-  `rig language --json` prints `{"language":"en"}`.
+  `rig language --json` prints `{"language":"en"}`. Without `state.json` rig is not installed: `rig language` and
+  `rig language en|ru` fail with a message to run `rig install` first. A `language` value that is not `en` or `ru` does not
+  make `state.json` invalid: it is read as English everywhere, and `rig language en|ru` replaces it with a valid value
+  (a repair, without an event).
 - Every string that `rig` shows the human (command output, the waiting line, event texts, the text the hub shows from `rig`)
   comes from one message catalog with the languages `en` and `ru`; the catalog is typed so that `ru` carries every key of
   `en`, and there is no Russian text in the code outside the `ru` catalog. An event text is written in the language that is
   current when the event is emitted.
-- Feature descriptions in `feature.json` are objects `{ "en", "ru" }`. `rig feature --json` prints the description in the
-  current language as a plain string, so the contract field stays a string.
+- A feature description in `feature.json` is a plain English string; the other languages go into the optional
+  `translations` field, keyed by language: `{ "ru": { "description": "..." } }`. `rig feature` and `rig feature --json`
+  print the description in the current language, falling back to the English string, and always as a plain string, so the
+  contract field stays a string.
 - `rig status` in text form shows the language on its own line. `rig status --json` is unchanged: it has no language field,
   because the hub validates this object with a strict schema. The hub learns the language from `rig language --json`.
 - Agent replies (Claude, Codex) are not tied to the setting: the rules tell agents to reply in the user's language. The rule
@@ -272,7 +279,8 @@ success it prints nothing, so that `update.log` does not grow every 5 minutes.
    parent that holds the lock.
 6. Failure: return both repositories to the remembered commits, `rig apply` again, record the pair as bad, send an event.
    The rollback is done by the parent, that is, the old code; the previous `settings.json` and rules are restored by its
-   repeated `apply`. A child process that crashed or failed to start also ends in a rollback. A `check` that could not poll
+   repeated `apply`. A rollback to a release before 0.3 drops the `language` setting from `state.json` (the old parser does
+   not know the field), so the language falls back to English. A child process that crashed or failed to start also ends in a rollback. A `check` that could not poll
    the environment (for example, a service bus failure) also rolls back, but does not record the pair as bad. `badPairs`
    stores only the last bad pair. The update event is delivered exactly once, even through a failure: it is first written to
    the state as `pendingEvent`, sent, then cleared.
@@ -287,6 +295,10 @@ success it prints nothing, so that `update.log` does not grow every 5 minutes.
    applied as usual. The pending restart stores the last pair on which the hub confirmed startup: the rollback returns it,
    and the last tried pair is recorded as bad. If `telegram` is off, no restart is awaited.
 8. A feature appeared that is not in `state.json`: it is recorded as off and an event with the enable command is sent.
+
+The parent process of an update is the previous release, and it reads the manifests of the new commit. So the formats of
+`feature.json` and `state.json` must stay readable by the parser of the previous release: a field it requires keeps its
+type, and new data goes into new optional fields that the old parser ignores.
 
 Claude Code on the server is on the `stable` channel: it lags by about 8 days. In development mode it is on `latest`, so a
 breakage of the internal mechanisms the hub relies on is most likely seen there earlier.
@@ -420,7 +432,8 @@ Done when everything passed:
     follows the switch (at start and on the event) and accepts `/rig language en|ru` from `allowFrom` users only.
 14. `rig status --json` and `rig feature --json` keep the contract (the same fields and key order in both languages; no new
     field in `rig status --json`; `description` is a string).
-15. No Russian text in the code outside the `ru` catalog and the `ru` feature descriptions.
+15. No Russian text in the code outside the `ru` catalog and the `translations` of the manifests.
+16. Every `feature.json` in the repository has a string `description` (the previous release must be able to read it).
 
 Item 9 requires the developer to create a test bot and sign in to Claude once in the container.
 

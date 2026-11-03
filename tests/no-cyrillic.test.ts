@@ -22,18 +22,13 @@ const trackedFiles = (): string[] => {
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-// Drops every `description.ru` value, at any depth of the parsed document.
-const withoutRussianDescriptions = (value: unknown): unknown => {
-	if (Array.isArray(value)) return value.map(withoutRussianDescriptions);
+// Drops every value under `translations` (the translated texts of a manifest), at any depth of the parsed document.
+const withoutTranslations = (value: unknown): unknown => {
+	if (Array.isArray(value)) return value.map(withoutTranslations);
 	if (!isRecord(value)) return value;
 	const result: Record<string, unknown> = {};
 	for (const [key, child] of Object.entries(value)) {
-		if (key === "description" && isRecord(child)) {
-			const { ru: _russian, ...rest } = child;
-			result[key] = withoutRussianDescriptions(rest);
-		} else {
-			result[key] = withoutRussianDescriptions(child);
-		}
+		if (key !== "translations") result[key] = withoutTranslations(child);
 	}
 	return result;
 };
@@ -44,14 +39,14 @@ const checkedText = (path: string, bytes: Buffer): string | null => {
 	const text = bytes.toString("utf8");
 	if (!path.endsWith(JSON_SUFFIX)) return text;
 	try {
-		return JSON.stringify(withoutRussianDescriptions(JSON.parse(text)));
+		return JSON.stringify(withoutTranslations(JSON.parse(text)));
 	} catch {
 		return text;
 	}
 };
 
 describe("language of tracked files", () => {
-	test("no tracked text file has Cyrillic characters except the Russian catalog, the Russian switch test and description.ru", () => {
+	test("no tracked text file has Cyrillic characters except the Russian catalog, the Russian switch test and manifest translations", () => {
 		const offenders = trackedFiles()
 			.filter((path) => !ALLOWED_FILES.has(path))
 			.filter((path) => {
@@ -61,8 +56,12 @@ describe("language of tracked files", () => {
 		expect(offenders).toEqual([]);
 	});
 
-	test("the guard ignores description.ru but sees Cyrillic anywhere else in a manifest", () => {
-		const manifest = (extra: string): Buffer => Buffer.from(JSON.stringify({ description: { en: "Base", ru: "\u0411\u0430\u0437\u0430" }, note: extra }));
+	test("the guard ignores manifest translations but sees Cyrillic anywhere else in a manifest", () => {
+		const manifest = (extra: string): Buffer => Buffer.from(JSON.stringify({
+			description: "Base",
+			translations: { ru: { description: "\u0411\u0430\u0437\u0430" } },
+			note: extra,
+		}));
 		expect(checkedText("x/feature.json", manifest("plain"))).not.toBeNull();
 		expect(CYRILLIC.test(checkedText("x/feature.json", manifest("plain")) ?? "")).toBe(false);
 		expect(CYRILLIC.test(checkedText("x/feature.json", manifest("\u0422\u0435\u043a\u0441\u0442")) ?? "")).toBe(true);

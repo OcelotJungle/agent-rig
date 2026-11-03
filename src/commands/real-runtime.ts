@@ -1,5 +1,5 @@
 import type { FileSystem } from "../file-system.js";
-import type { Messages } from "../messages.js";
+import type { Language, Messages } from "../messages.js";
 import type { RuntimePorts, ProcessOptions, ProcessOutput, ProcessPorts } from "../ports.js";
 import type { HostPlatform } from "../node-file-operations.js";
 import type { Result } from "../result.js";
@@ -16,7 +16,7 @@ import { atomicWrite } from "../file-system.js";
 import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
 import { err, errorText, ok } from "../result.js";
-import { readState } from "../state.js";
+import { readStoredLanguage } from "../state.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { runProcess } from "./process-runner.js";
 import { parseVersion, VERSION_PATHS } from "../version-manifest.js";
@@ -40,13 +40,17 @@ type ReleaseAsset = { name: string; url: string };
 
 type RealRuntimeOptions = { hostName?: NodeJS.Platform };
 
+const realHome = (): string => process.env.USERPROFILE ?? process.env.HOME ?? homedir();
+
+// Reads only the language (state.json), without building the runtime: for `rig help` and usage errors.
+export const readRealLanguage = async (): Promise<Language> => readStoredLanguage(createFileSystem(), realHome());
+
 export const createRealRuntime = async (options: RealRuntimeOptions = {}): Promise<Result<RuntimePorts>> => {
 	const fileSystem = createFileSystem();
-	const home = process.env.USERPROFILE ?? process.env.HOME ?? homedir();
-	// The language comes first, before anything that can fail and print: a missing or unreadable state.json means the
-	// default language.
-	const state = await readState(fileSystem, home);
-	const language = state.ok ? state.value.language ?? DEFAULT_LANGUAGE : DEFAULT_LANGUAGE;
+	const home = realHome();
+	// The language is read here, once per command run, before anything that can fail and print; it travels in the
+	// runtime from now on. A missing or unreadable state.json means the default language.
+	const language = await readStoredLanguage(fileSystem, home);
 	const startMessages = messagesFor(language);
 	const hostName = options.hostName ?? hostPlatform();
 	const platform = toPlatform(hostName);
@@ -329,7 +333,7 @@ export const serviceIsRunning = async (
 			"(Get-ScheduledTask -TaskName 'telegram-hub' -ErrorAction Stop).State -eq 'Running'",
 		]);
 		if (!result.ok) return result;
-		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || "Scheduled Task telegram-hub was not found");
+		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || messages.runtime.scheduledTaskNotFound());
 		return ok(result.value.stdout.trim().toLowerCase() === "true");
 	}
 	return err(messages.runtime.serviceCheckUnsupported(platform));

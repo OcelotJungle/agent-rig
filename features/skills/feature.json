@@ -1,8 +1,10 @@
 {
   "name": "skills",
-  "description": {
-    "en": "Reusable Claude Code skills.",
-    "ru": "Повторно используемые навыки Claude Code."
+  "description": "Reusable Claude Code skills.",
+  "translations": {
+    "ru": {
+      "description": "Повторно используемые навыки Claude Code."
+    }
   },
   "enabledByDefault": true,
   "platforms": [

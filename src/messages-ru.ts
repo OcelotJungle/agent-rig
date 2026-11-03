@@ -7,6 +7,7 @@ export const ru: Messages = {
 	language: {
 		line: (name: string): string => `Язык: ${name}.`,
 		usage: (): string => "Использование: rig language [en|ru] [--json]",
+		notInstalled: (): string => "rig ещё не установлен, поэтому настройки языка нет; сначала выполни rig install.",
 	},
 	cli: {
 		usageInstall: (): string => "Использование: rig install [--dev]",
@@ -53,6 +54,8 @@ export const ru: Messages = {
 		systemPackageMissingNoCommand: (name: string): string => `Не найден системный пакет ${name}; в манифесте нет команды установки.`,
 		systemPackageMissing: (name: string, command: string): string => `Не найден системный пакет ${name}. Выполни: ${command}`,
 		programMissing: (name: string): string => `Не найдена программа ${name}; выполни rig install.`,
+		noInstallCommand: (name: string): string => `Системный пакет ${name} не найден, и у него нет команды установки.`,
+		stillUnavailable: (name: string): string => `Программа ${name} недоступна даже после установки.`,
 	},
 	feature: {
 		baseCannotToggle: (): string => "Базовую фичу нельзя переключить.",
@@ -148,6 +151,7 @@ export const ru: Messages = {
 		serviceInactive: (exitCode: number, output: string): string =>
 			`systemctl --user is-active telegram-hub.service (код ${exitCode}): ${output.length > 0 ? output : "нет вывода"}`,
 		serviceCheckUnsupported: (platform: string): string => `Проверка службы не поддерживается на ${platform}.`,
+		scheduledTaskNotFound: (): string => "Задача планировщика telegram-hub не найдена.",
 		codexInstallLabel: (): string => "Не удалось установить Codex через Bun",
 		opencodeInstallLabel: (): string => "Не удалось установить OpenCode через npm",
 		noRootInstall: (name: string): string => `Для программы ${name} не задана установка без root.`,

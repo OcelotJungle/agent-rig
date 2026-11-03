@@ -9,7 +9,7 @@ cp "$HOME/.agent-rig/state.json" "$RIG_TEST_ROOT/state-before.json"
 
 new_feature="$RIG_TEST_RIG_UPSTREAM/features/docker-new/feature.json"
 mkdir -p "$(dirname "$new_feature")"
-printf '%s\n' '{"name":"docker-new","description":{"en":"Docker update fixture","ru":"Docker update fixture (ru)"},"enabledByDefault":true,"platforms":["linux"],"dependencies":[],"rules":[],"hooks":[],"settings":[],"plugins":[],"files":[],"agents":[],"skills":[],"hubCommands":[],"programs":[]}' > "$new_feature"
+printf '%s\n' '{"name":"docker-new","description":"Docker update fixture","translations":{"ru":{"description":"Docker update fixture (ru)"}},"enabledByDefault":true,"platforms":["linux"],"dependencies":[],"rules":[],"hooks":[],"settings":[],"plugins":[],"files":[],"agents":[],"skills":[],"hubCommands":[],"programs":[]}' > "$new_feature"
 rig_test_push_rig "new feature fixture"
 rig update
 

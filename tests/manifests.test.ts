@@ -57,6 +57,9 @@ const MANAGED_OUTPUT_PREFIXES = [
 ] as const;
 const CLONE_PATH_PATTERN = /\{\{CLONE\}\}\/((?:base|features\/[a-z0-9-]+)\/[A-Za-z0-9._/-]+)/g;
 const SECTION_PATTERN = /claude-delegation-(\d\d)-/;
+const HEADING_LINE = /^#{1,6} /;
+const HEADING_MIN_LINES = 10;
+const HEADING_PREVIEW_LENGTH = 60;
 
 type IndexRow = string[];
 
@@ -82,6 +85,19 @@ describe("real feature manifests", () => {
 		expect(loaded.value.find((feature) => feature.name === "pwsh")?.dependencies).toEqual(["telegram"]);
 		expect(loaded.value.find((feature) => feature.name === "cmd")?.dependencies).toEqual(["telegram"]);
 		expect(loaded.value.find((feature) => feature.name === "telegram")?.hubCommands).toEqual(["bash"]);
+	});
+
+	test("every repository manifest keeps description a plain string and puts translations beside it", async () => {
+		// During `rig update` the parent process is the previous release and reads the NEW manifests.
+		// The 0.2.x parser requires `description` to be a string and ignores unknown keys, so a manifest
+		// that stores the description as an object would make every update fail.
+		const manifestPaths = ["base", ...(await readdir(join(REPOSITORY_ROOT, "features"))).map((name) => join("features", name))]
+			.map((directory) => join(REPOSITORY_ROOT, directory, "feature.json"));
+		expect(manifestPaths.length).toBeGreaterThan(1);
+		for (const path of manifestPaths) {
+			const value: unknown = JSON.parse(await readFile(path, "utf8"));
+			expect(typeof value === "object" && value !== null && "description" in value && typeof value.description === "string").toBe(true);
+		}
 	});
 
 	test("base and telegram declare git, cron and tmux as system packages, cron and tmux on Linux only", async () => {
@@ -284,6 +300,38 @@ describe("real feature manifests", () => {
 				expect(settings).toContain("windows-only-command");
 				expect(harness.fs.files.has(`${HOME_PATH}/.claude/hooks/project-tmp-settings.ps1`)).toBe(false);
 			}
+		}
+	});
+
+	test("the assembled rules put a blank line before every heading and keep the bullets apart", async () => {
+		const harness = createMemoryRuntime("windows");
+		await seedRepository(harness.fs);
+		const loaded = await loadFeatures(harness.fs, REPOSITORY_PATH);
+		expect(loaded.ok).toBe(true);
+		if (!loaded.ok) return;
+		const features: Record<string, boolean> = {};
+		for (const feature of loaded.value) {
+			if (feature.name !== "base") features[feature.name] = feature.platforms.includes("windows");
+		}
+		seedHubManifest(harness.fs, "/hub", "telegram-hub-local");
+		const applied = await applyRig(harness.runtime, {
+			state: { mode: "dev", paths: { repo: REPOSITORY_PATH, hub: "/hub" }, features, records: {}, badPairs: [], pendingHubRestart: null },
+			mode: "apply",
+		});
+		expect(applied.ok).toBe(true);
+
+		for (const path of [`${HOME_PATH}/.agent-rig/generated/CLAUDE.md`, `${HOME_PATH}/.codex/AGENTS.md`]) {
+			const lines = (harness.fs.files.get(path) ?? "").split("\n");
+			expect(lines.length).toBeGreaterThan(HEADING_MIN_LINES);
+			const unseparated: string[] = [];
+			let insideFence = false;
+			for (const [index, line] of lines.entries()) {
+				if (line.startsWith("```")) insideFence = !insideFence;
+				if (!insideFence && HEADING_LINE.test(line) && index > FIRST_INDEX && !["", "<!-- rig:begin -->"].includes((lines[index - 1] ?? "").trim())) {
+					unseparated.push(`${path}:${index + 1}: ${line.slice(0, HEADING_PREVIEW_LENGTH)}`);
+				}
+			}
+			expect(unseparated).toEqual([]);
 		}
 	});
 });

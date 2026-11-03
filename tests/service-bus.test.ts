@@ -4,6 +4,8 @@ import type { Result } from "../src/result.js";
 import { describe, expect, test } from "bun:test";
 
 import { runService, serviceIsRunning, userBusEnvironment } from "../src/commands/real-runtime.js";
+import { en } from "../src/messages.js";
+import { ru } from "../src/messages-ru.js";
 import { ok } from "../src/result.js";
 
 const USER_ID = 1001;
@@ -65,6 +67,18 @@ describe("systemctl --user under cron", () => {
 
 		expect(await serviceIsRunning(fakeRunner(ACTIVE_EXIT_CODE), "linux", source)).toEqual(ok(true));
 		expect(await serviceIsRunning(fakeRunner(INACTIVE_EXIT_CODE), "linux", source)).toEqual(ok(false));
+	});
+
+	test("a missing Scheduled Task is reported from the catalog in the current language", async () => {
+		const source = { environment: {}, uid: USER_ID };
+		const missing = fakeRunner(BUS_FAILURE_EXIT_CODE);
+
+		const english = await serviceIsRunning(missing, "windows", source, en);
+		const russian = await serviceIsRunning(missing, "windows", source, ru);
+
+		expect(english).toEqual({ ok: false, error: en.runtime.scheduledTaskNotFound() });
+		expect(russian).toEqual({ ok: false, error: ru.runtime.scheduledTaskNotFound() });
+		expect(en.runtime.scheduledTaskNotFound()).not.toBe(ru.runtime.scheduledTaskNotFound());
 	});
 
 	test("a bus connection failure is an error with systemctl's message, not a stopped service", async () => {

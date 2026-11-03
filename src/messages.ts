@@ -11,11 +11,16 @@ export const DEFAULT_LANGUAGE: Language = "en";
 
 export const isLanguage = (value: unknown): value is Language => LANGUAGES.some((language) => language === value);
 
+// A language other than the default one: the languages that texts are translated into (feature manifests keep their English text in plain fields).
+export type TranslatedLanguage = Exclude<Language, "en">;
+export const isTranslatedLanguage = (value: unknown): value is TranslatedLanguage => isLanguage(value) && value !== DEFAULT_LANGUAGE;
+
 export const en = {
 	languageNames: { en: "English", ru: "Russian" },
 	language: {
 		line: (name: string): string => `Language: ${name}.`,
 		usage: (): string => "Usage: rig language [en|ru] [--json]",
+		notInstalled: (): string => "rig is not installed yet, so there is no language setting; run rig install first.",
 	},
 	cli: {
 		usageInstall: (): string => "Usage: rig install [--dev]",
@@ -62,6 +67,8 @@ export const en = {
 		systemPackageMissingNoCommand: (name: string): string => `The system package ${name} was not found; the manifest has no install command.`,
 		systemPackageMissing: (name: string, command: string): string => `The system package ${name} was not found. Run: ${command}`,
 		programMissing: (name: string): string => `The program ${name} was not found; run rig install.`,
+		noInstallCommand: (name: string): string => `The system package ${name} is missing and has no install command.`,
+		stillUnavailable: (name: string): string => `The program ${name} is still unavailable after installation.`,
 	},
 	feature: {
 		baseCannotToggle: (): string => "The base feature cannot be switched.",
@@ -157,6 +164,7 @@ export const en = {
 		serviceInactive: (exitCode: number, output: string): string =>
 			`systemctl --user is-active telegram-hub.service (code ${exitCode}): ${output.length > 0 ? output : "no output"}`,
 		serviceCheckUnsupported: (platform: string): string => `The service check is not supported on ${platform}.`,
+		scheduledTaskNotFound: (): string => "The Scheduled Task telegram-hub was not found.",
 		codexInstallLabel: (): string => "Could not install Codex through Bun",
 		opencodeInstallLabel: (): string => "Could not install OpenCode through npm",
 		noRootInstall: (name: string): string => `No install without root is defined for the program ${name}.`,
