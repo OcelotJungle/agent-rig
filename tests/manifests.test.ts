@@ -87,6 +87,18 @@ describe("real feature manifests", () => {
 		expect(loaded.value.find((feature) => feature.name === "telegram")?.hubCommands).toEqual(["bash"]);
 	});
 
+	test("the rtk hook is the single command string rtk itself looks for in settings.json", async () => {
+		// rtk 0.48 (`rtk init --show`) finds its hook only by the command text `rtk hook claude`; written as command `rtk`
+		// with args, the hook runs but rtk reports "No hook installed" on every rewritten command.
+		const fileSystem = new MemoryFileSystem();
+		await seedRepository(fileSystem);
+		const loaded = await loadFeatures(fileSystem, REPOSITORY_PATH);
+		expect(loaded.ok).toBe(true);
+		if (!loaded.ok) return;
+		const hooks =loaded.value.find((feature) => feature.name === "rtk")?.hooks ?? [];
+		expect(hooks.map((hook) => [hook.command, hook.args])).toEqual([["rtk hook claude", undefined]]);
+	});
+
 	test("every repository manifest keeps description a plain string and puts translations beside it", async () => {
 		// During `rig update` the parent process is the previous release and reads the NEW manifests.
 		// The 0.2.x parser requires `description` to be a string and ignores unknown keys, so a manifest

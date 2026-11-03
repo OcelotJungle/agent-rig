@@ -347,7 +347,6 @@ const hookSettingValue = (
 };
 
 const hookScriptName = (hook: HookManifest): string => {
-	if (hook.command === "rtk" && hook.args?.join(" ") === "hook claude") return "rtk hook claude";
 	const script = hook.args?.find((argument) => /\.(?:py|sh|ps1)(?:$|["'])/.test(argument));
 	if (script === undefined) return hook.command;
 	const normalized = script.replaceAll("\\", "/").replaceAll('"', "");

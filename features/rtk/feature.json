@@ -18,11 +18,7 @@
     {
       "event": "PreToolUse",
       "matcher": "Bash",
-      "command": "rtk",
-      "args": [
-        "hook",
-        "claude"
-      ]
+      "command": "rtk hook claude"
     }
   ],
   "settings": [],
