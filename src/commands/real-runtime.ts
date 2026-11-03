@@ -16,6 +16,7 @@ import { atomicWrite } from "../file-system.js";
 import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
 import { err, errorText, ok } from "../result.js";
+import { readState } from "../state.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { runProcess } from "./process-runner.js";
 import { parseVersion, VERSION_PATHS } from "../version-manifest.js";
@@ -37,14 +38,19 @@ const SYSTEMCTL_INACTIVE_EXIT_CODE = 3;
 
 type ReleaseAsset = { name: string; url: string };
 
-export const createRealRuntime = async (): Promise<Result<RuntimePorts>> => {
+type RealRuntimeOptions = { hostName?: NodeJS.Platform };
+
+export const createRealRuntime = async (options: RealRuntimeOptions = {}): Promise<Result<RuntimePorts>> => {
 	const fileSystem = createFileSystem();
 	const home = process.env.USERPROFILE ?? process.env.HOME ?? homedir();
-	// The language is not known yet: runCli reads it from state.json after the runtime exists. Errors raised while the
-	// runtime is being built are in the default language.
-	const startMessages = messagesFor(DEFAULT_LANGUAGE);
-	const platform = toPlatform(hostPlatform());
-	if (platform === null) return err(startMessages.runtime.platformUnsupported(hostPlatform()));
+	// The language comes first, before anything that can fail and print: a missing or unreadable state.json means the
+	// default language.
+	const state = await readState(fileSystem, home);
+	const language = state.ok ? state.value.language ?? DEFAULT_LANGUAGE : DEFAULT_LANGUAGE;
+	const startMessages = messagesFor(language);
+	const hostName = options.hostName ?? hostPlatform();
+	const platform = toPlatform(hostName);
+	if (platform === null) return err(startMessages.runtime.platformUnsupported(hostName));
 	const pathSeparator = platform === "windows" ? ";" : ":";
 	const additionalPaths = [join(home, ".local", "bin"), join(home, ".bun", "bin")];
 	const pathEnvironment = [...additionalPaths, process.env.PATH ?? ""].join(pathSeparator);
@@ -75,7 +81,7 @@ export const createRealRuntime = async (): Promise<Result<RuntimePorts>> => {
 		pythonCommand,
 		pathEnvironment,
 		platform,
-		language: DEFAULT_LANGUAGE,
+		language,
 		clock: {
 			now: () => new Date(),
 			nowText: () => new Date().toISOString(),

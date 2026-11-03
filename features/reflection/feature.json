@@ -23,7 +23,7 @@
         "{{CLONE}}/features/reflection/hooks/reflect.py"
       ],
       "timeout": 330,
-      "statusMessage": "Рефлексия хода",
+      "statusMessage": "Reflecting on the turn",
       "asyncRewake": true
     }
   ],

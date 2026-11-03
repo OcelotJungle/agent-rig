@@ -212,7 +212,7 @@ const routeChildren = (
 		if (command === harness.runtime.executablePath && args[1] === "update-step") {
 			delegated.push([...args]);
 			if (failure === "apply-spawn-error" && args[2] === "apply") return err("spawn failed");
-			if (failure === "check" && args[2] === "check") return ok({ stdout: "Ошибка rig: broken", stderr: "", exitCode: FAILURE_EXIT_CODE });
+			if (failure === "check" && args[2] === "check") return ok({ stdout: "rig error: broken", stderr: "", exitCode: FAILURE_EXIT_CODE });
 			const lines: string[] = [];
 			const exitCode = await runCli(args.slice(1), (line) => lines.push(line), harness.runtime);
 			outputLines.push(...lines);

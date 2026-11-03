@@ -98,16 +98,16 @@ describe("events", () => {
 		const dependencies: EventDependencies = {
 			fs, home: "/home/test", now: () => "2026-10-30T00:00:00.000Z", createId: () => "event-1",
 		};
-		await appendEvent(dependencies, { level: "info", type: "update-ok", text: "готово" });
+		await appendEvent(dependencies, { level: "info", type: "update-ok", text: "prêt" });
 		const eventPath = "/home/test/.agent-rig/events.jsonl";
-		expect(fs.files.get(eventPath)).toBe('{"id":"event-1","time":"2026-10-30T00:00:00.000Z","level":"info","type":"update-ok","text":"готово"}\n');
+		expect(fs.files.get(eventPath)).toBe('{"id":"event-1","time":"2026-10-30T00:00:00.000Z","level":"info","type":"update-ok","text":"prêt"}\n');
 	});
 
 	test("keeps the file byte-identical when the offset leaves an unread tail", async () => {
 		const fs = new MemoryFileSystem();
 		const dependencies: EventDependencies = { fs, home: "/home/test", now: () => "", createId: () => "" };
 		const eventPath = "/home/test/.agent-rig/events.jsonl";
-		const eventText = `${"x".repeat(TEST_EVENT_FILE_THRESHOLD_BYTES + 1)} хвост`;
+		const eventText = `${"x".repeat(TEST_EVENT_FILE_THRESHOLD_BYTES + 1)} queue-é`;
 		fs.files.set(eventPath, eventText);
 		fs.files.set("/home/test/.agent-rig/events.offset", "4");
 

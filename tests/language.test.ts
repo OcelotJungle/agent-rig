@@ -215,11 +215,11 @@ describe("output follows the stored language", () => {
 
 		await run(harness, ["language", "ru"]);
 		const russian = await run(harness, ["feature"]);
-		expect(russian.output).toContain("demo: выключена — Фича demo");
+		expect(russian.output).toContain("demo: выключена — Feature demo (ru)");
 		const russianJson = await run(harness, ["feature", "--json"]);
 		expect(JSON.parse(russianJson.output[0] ?? "")).toEqual([
-			{ name: "demo", description: "Фича demo", enabled: false, platformAllowed: true },
-			{ name: "windows-only", description: "Фича windows-only", enabled: false, platformAllowed: false },
+			{ name: "demo", description: "Feature demo (ru)", enabled: false, platformAllowed: true },
+			{ name: "windows-only", description: "Feature windows-only (ru)", enabled: false, platformAllowed: false },
 		]);
 	});
 

@@ -10,7 +10,7 @@ import { en } from "../src/messages.js";
 
 const manifest = (overrides: Partial<FeatureManifest> = {}): FeatureManifest => ({
 	name: "codex",
-	description: { en: "Codex integration", ru: "Интеграция Codex" },
+	description: { en: "Codex integration", ru: "Codex integration (ru)" },
 	enabledByDefault: false,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],

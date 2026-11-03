@@ -374,7 +374,7 @@ export const seedFeature = (fs: MemoryFileSystem, repo: string, feature: Record<
 
 export const baseManifest = (): Record<string, unknown> => ({
 	name: "base",
-	description: { en: "Base", ru: "Базовая" },
+	description: { en: "Base", ru: "Base (ru)" },
 	enabledByDefault: true,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],
@@ -391,7 +391,7 @@ export const baseManifest = (): Record<string, unknown> => ({
 
 export const featureManifest = (name: string, options: Record<string, unknown> = {}): Record<string, unknown> => ({
 	name,
-	description: { en: `Feature ${name}`, ru: `Фича ${name}` },
+	description: { en: `Feature ${name}`, ru: `Feature ${name} (ru)` },
 	enabledByDefault: false,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],

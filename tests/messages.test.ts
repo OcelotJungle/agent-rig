@@ -9,7 +9,7 @@ import { ru } from "../src/messages-ru.js";
 
 const SOURCE_ROOT = join(import.meta.dir, "..", "src");
 const RUSSIAN_CATALOG = "messages-ru.ts";
-const CYRILLIC = /[Ѐ-ӿ]/;
+const CYRILLIC = new RegExp("[\u0400-\u04FF]");
 
 // Compile-time proof: the Russian catalog is assignable to the type of the English one, so a key missing from `ru`
 // (or a message whose parameters differ) fails `tsc --noEmit`.
