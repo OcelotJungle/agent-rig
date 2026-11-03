@@ -12,6 +12,9 @@ const WINDOWS_PLATFORM = "win32";
 const EXECUTABLE_MODE = 0o755;
 const PROCESS_SUCCESS = 0;
 const PROCESS_FAILURE = 1;
+// Each test runs the real script through Git Bash, one to two runs with stand-in tools: about 1 s alone on Windows,
+// over the 5 s default under the full suite's parallel load (measured 5.2 s), so the limit has a wide margin.
+const SCRIPT_TEST_TIMEOUT_MS = 30_000;
 const TOOLS = ["apt-get", "systemctl", "loginctl"];
 const SETTINGS = '{"channelsEnabled":true,"allowedChannelPlugins":[{"plugin":"telegram-hub","marketplace":"telegram-hub"}]}\n';
 const OWN_FILE_TEXT = '{"permissions":{}}\n';
@@ -62,14 +65,14 @@ describe("prepare-server.sh", () => {
 			"loginctl enable-linger rig",
 		]);
 		expect(readFileSync(settings, "utf8")).toBe(SETTINGS);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 
 	test("it can run again over its own settings file", () => {
 		expect(run(["rig"]).status).toBe(PROCESS_SUCCESS);
 
 		expect(run(["rig"]).status).toBe(PROCESS_SUCCESS);
 		expect(readFileSync(settings, "utf8")).toBe(SETTINGS);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 
 	test("it changes nothing when the settings file belongs to someone else", () => {
 		expect(run(["rig"]).status).toBe(PROCESS_SUCCESS);
@@ -82,7 +85,7 @@ describe("prepare-server.sh", () => {
 		expect(result.stderr).toContain("allowedChannelPlugins");
 		expect(readFileSync(settings, "utf8")).toBe(OWN_FILE_TEXT);
 		expect(loggedCalls()).toEqual([]);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 
 	test("it keeps a file the owner edited to allow the channel", () => {
 		expect(run(["rig"]).status).toBe(PROCESS_SUCCESS);
@@ -90,19 +93,19 @@ describe("prepare-server.sh", () => {
 
 		expect(run(["rig"]).status).toBe(PROCESS_SUCCESS);
 		expect(readFileSync(settings, "utf8")).toBe(EDITED_FILE_TEXT);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 
 	test("it stops at a failed step and does not grant the channel", () => {
 		const result = run(["rig"], "loginctl");
 
 		expect(result.status).not.toBe(PROCESS_SUCCESS);
 		expect(existsSync(settings)).toBe(false);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 
 	test("it asks for the user name", () => {
 		const result = run([]);
 
 		expect(result.status).not.toBe(PROCESS_SUCCESS);
 		expect(loggedCalls()).toEqual([]);
-	});
+	}, SCRIPT_TEST_TIMEOUT_MS);
 });
