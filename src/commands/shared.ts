@@ -1,4 +1,5 @@
 import type { FeatureManifest } from "../feature.js";
+import type { Language } from "../messages.js";
 import type { RigState } from "../state.js";
 import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
@@ -7,14 +8,19 @@ import { loadFeatures } from "../feature-graph.js";
 import { acquireLock } from "../lock.js";
 import { appendEvent } from "../events.js";
 import { joinPath } from "../file-system.js";
+import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { readState } from "../state.js";
 import { err, errorText, ok } from "../result.js";
 
-// Printed once, before a command waits for a lock that another rig process holds. The hub shows it as plain output.
-const RIG_LOCK_WAIT_LINE = "Другая команда rig работает, жду её конца.";
-
 export const readRigState = async (runtime: RuntimePorts): Promise<Result<RigState>> =>
 	readState(runtime.fs, runtime.home);
+
+// Read once per command run, before the command is parsed. A missing, unreadable or invalid state.json means the
+// default language: the command itself reports that problem later, in the default language.
+export const readLanguage = async (runtime: RuntimePorts): Promise<Language> => {
+	const state = await readRigState(runtime);
+	return state.ok ? state.value.language ?? DEFAULT_LANGUAGE : DEFAULT_LANGUAGE;
+};
 
 export const readFeatureManifests = async (runtime: RuntimePorts, repoPath: string): Promise<Result<FeatureManifest[]>> =>
 	loadFeatures(runtime.fs, repoPath);
@@ -40,7 +46,8 @@ export const withRigLock = async <T>(
 	operation: () => Promise<Result<T>>,
 	keepLockForProcessExit = false,
 ): Promise<Result<T>> => {
-	const acquired = await acquireLock(runtime.lock, () => writeLine(RIG_LOCK_WAIT_LINE));
+	// Printed once, before a command waits for a lock that another rig process holds. The hub shows it as plain output.
+	const acquired = await acquireLock(runtime.lock, () => writeLine(messagesFor(runtime.language).lock.waiting()));
 	if (!acquired.ok) return acquired;
 	let result: Result<T>;
 	try {

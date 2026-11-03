@@ -1,5 +1,6 @@
 import type { FeatureManifest, Platform } from "./feature.js";
 import type { FileSystem } from "./file-system.js";
+import type { Messages } from "./messages.js";
 import type { Result } from "./result.js";
 
 import { readFeature } from "./feature.js";
@@ -7,6 +8,7 @@ import { joinPath } from "./file-system.js";
 import { err, errorText, ok } from "./result.js";
 
 export type FeatureChange = {
+	messages: Messages;
 	features: FeatureManifest[];
 	enabled: string[];
 	name: string;
@@ -80,17 +82,17 @@ export const resolveFeatureChange = (change: FeatureChange): Result<string[]> =>
 	const byName = new Map<string, FeatureManifest>();
 	for (const feature of change.features) byName.set(feature.name, feature);
 	const selected = byName.get(change.name);
-	if (selected === undefined) return err(`Unknown feature ${change.name}`);
+	if (selected === undefined) return err(change.messages.feature.unknown(change.name));
 	if (change.action === "enable") {
-		if (!selected.platforms.includes(change.platform)) return err(`Feature ${selected.name} is available only on ${selected.platforms.map((platform) => platform === "windows" ? "Windows" : platform).join(", ")}`);
+		if (!selected.platforms.includes(change.platform)) return err(change.messages.feature.platformOnly(selected.name, selected.platforms.map((platform) => platform === "windows" ? "Windows" : platform).join(", ")));
 		for (const dependency of selected.dependencies) {
-			if (!change.enabled.includes(dependency)) return err(`Enable feature ${dependency} before ${selected.name}`);
+			if (!change.enabled.includes(dependency)) return err(change.messages.feature.enableFirst(dependency, selected.name));
 			const dependencyFeature = byName.get(dependency);
-			if (dependencyFeature !== undefined && !dependencyFeature.platforms.includes(change.platform)) return err(`Feature ${dependency} required by ${selected.name} is unavailable on ${change.platform}`);
+			if (dependencyFeature !== undefined && !dependencyFeature.platforms.includes(change.platform)) return err(change.messages.feature.dependencyUnavailable(dependency, selected.name, change.platform));
 		}
 		return ok([...new Set([...change.enabled, selected.name])]);
 	}
 	const dependent = change.features.find((feature) => change.enabled.includes(feature.name) && feature.dependencies.includes(selected.name));
-	if (dependent !== undefined) return err(`Cannot disable ${selected.name}; enabled feature ${dependent.name} depends on it`);
+	if (dependent !== undefined) return err(change.messages.feature.cannotDisable(selected.name, dependent.name));
 	return ok(change.enabled.filter((name) => name !== selected.name));
 };

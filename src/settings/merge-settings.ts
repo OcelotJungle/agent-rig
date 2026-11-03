@@ -1,3 +1,5 @@
+import type { Messages } from "../messages.js";
+
 const JSON_CONTROL_LIMIT = 0x20;
 const JSON_SPACE_CODE = 0x20;
 const JSON_TAB_CODE = 0x09;
@@ -119,6 +121,7 @@ export type SettingsMergeRequest = {
   ownershipRecords: readonly unknown[];
   mode: "install" | "apply";
   backupPath: string;
+  messages: Messages;
 };
 
 export type SettingKeptEvent = {
@@ -264,6 +267,7 @@ type HookMatch = {
 };
 
 type MergeWork = {
+  messages: Messages;
   text: string;
   events: SettingKeptEvent[];
   backupValues: SettingsBackupValue[];
@@ -1081,34 +1085,34 @@ const recordChangeHash = (record: SettingsOwnershipRecord, value: JsonValue): st
   hashText(record.kind + "\u0000" + record.id + "\u0000" + canonicalJsonValue(value));
 
 function appendKeptEvent(
-  events: SettingKeptEvent[],
+  work: MergeWork,
   record: ValueOwnershipRecord,
   hash: string,
   backupPath: string,
 ): ValueOwnershipRecord;
 function appendKeptEvent(
-  events: SettingKeptEvent[],
+  work: MergeWork,
   record: ListEntryOwnershipRecord,
   hash: string,
   backupPath: string,
 ): ListEntryOwnershipRecord;
 function appendKeptEvent(
-  events: SettingKeptEvent[],
+  work: MergeWork,
   record: HookOwnershipRecord,
   hash: string,
   backupPath: string,
 ): HookOwnershipRecord;
 function appendKeptEvent(
-  events: SettingKeptEvent[],
+  work: MergeWork,
   record: SettingsOwnershipRecord,
   hash: string,
   backupPath: string,
 ): SettingsOwnershipRecord {
   if (record.seenHash !== hash) {
-    events.push({
+    work.events.push({
       type: "setting-kept",
       level: "warn",
-      text: "Rig сохранил изменённую настройку \"" + record.id + "\". Копия: " + backupPath,
+      text: work.messages.settings.keptChangedSetting(record.id, backupPath),
     });
   }
   if (record.kind === "value") {
@@ -1199,14 +1203,14 @@ const processValueSetting = (
     }
     const blockedHash = hashText("missing:" + desired.path.join("\u0000"));
     const base = previous ?? makeValueRecord(desired, desired.value, false);
-    return appendKeptEvent(work.events, base, blockedHash, backupPath);
+    return appendKeptEvent(work, base, blockedHash, backupPath);
   }
 
   if (lookup.kind === "blocked") {
     const blockedValue = nodeToJsonValue(lookup.node);
     const conflictHash = hashText(lookup.prefix.join("\u0000") + "\u0000" + canonicalJsonValue(blockedValue));
     const base = previous ?? makeValueRecord(desired, desired.value, false);
-    const tracked = appendKeptEvent(work.events, base, conflictHash, backupPath);
+    const tracked = appendKeptEvent(work, base, conflictHash, backupPath);
     return {
       id: desired.id,
       feature: desired.feature,
@@ -1224,14 +1228,14 @@ const processValueSetting = (
       return makeValueRecord(desired, currentValue);
     }
     const record = makeValueRecord(desired, desired.value, false);
-    return appendKeptEvent(work.events, record, recordChangeHash(record, currentValue), backupPath);
+    return appendKeptEvent(work, record, recordChangeHash(record, currentValue), backupPath);
   }
 
   if (!recordIsOwned(previous)) {
     if (jsonValuesEqual(currentValue, desired.value)) {
       return makeValueRecord(desired, currentValue);
     }
-    const conflict = appendKeptEvent(work.events, previous, recordChangeHash(previous, currentValue), backupPath);
+    const conflict = appendKeptEvent(work, previous, recordChangeHash(previous, currentValue), backupPath);
     return { ...conflict, value: cloneJsonValue(desired.value), owned: false };
   }
 
@@ -1245,7 +1249,7 @@ const processValueSetting = (
     return makeValueRecord(desired, desired.value);
   }
 
-  const changed = appendKeptEvent(work.events, previous, recordChangeHash(previous, currentValue), backupPath);
+  const changed = appendKeptEvent(work, previous, recordChangeHash(previous, currentValue), backupPath);
   return { ...changed, path: [...desired.path], feature: desired.feature };
 };
 
@@ -1279,7 +1283,7 @@ const processListEntry = (
       value: desired.value,
       owned: false,
     };
-    const tracked = appendKeptEvent(work.events, base, conflictHash, backupPath);
+    const tracked = appendKeptEvent(work, base, conflictHash, backupPath);
     return { ...tracked, feature: desired.feature, owned: previous === undefined ? false : recordIsOwned(previous) };
   }
 
@@ -1294,7 +1298,7 @@ const processListEntry = (
       owned: false,
     };
     const currentHash = recordChangeHash(base, currentValue);
-    const tracked = appendKeptEvent(work.events, base, currentHash, backupPath);
+    const tracked = appendKeptEvent(work, base, currentHash, backupPath);
     return { ...tracked, feature: desired.feature, owned: previous === undefined ? false : recordIsOwned(previous) };
   }
 
@@ -1370,13 +1374,13 @@ const processListEntry = (
 
   if (observation.kind === "changed") {
     const changedHash = recordChangeHash(previous, observation.value);
-    const tracked = appendKeptEvent(work.events, previous, changedHash, backupPath);
+    const tracked = appendKeptEvent(work, previous, changedHash, backupPath);
     return { ...tracked, feature: desired.feature, path: [...desired.path] };
   }
 
   if (observation.kind === "ambiguous") {
     const changedHash = recordChangeHash(previous, observation.value);
-    const tracked = appendKeptEvent(work.events, previous, changedHash, backupPath);
+    const tracked = appendKeptEvent(work, previous, changedHash, backupPath);
     return { ...tracked, feature: desired.feature, path: [...desired.path] };
   }
 
@@ -1800,7 +1804,7 @@ const processHookSetting = (
       const valueMatches = jsonValuesEqual(recorded.value, previous.value);
       if (!locationMatches || !valueMatches) {
         const changedHash = recordChangeHash(previous, makeHookChangeValue(recorded));
-        return appendKeptEvent(work.events, previous, changedHash, backupPath);
+        return appendKeptEvent(work, previous, changedHash, backupPath);
       }
       const removed = removeHookMatch(work.text, recorded);
       if (removed !== undefined) {
@@ -1830,7 +1834,7 @@ const processHookSetting = (
         };
       }
       const blockedHash = hashText("blocked-hook:" + desired.event + "\u0000" + desired.matcher);
-      return appendKeptEvent(work.events, previous, blockedHash, backupPath);
+      return appendKeptEvent(work, previous, blockedHash, backupPath);
     }
     work.text = inserted;
     return desiredHookRecordAfterInsert(work.text, desired, acceptDesired);
@@ -1854,7 +1858,7 @@ const processHookSetting = (
     const allMatches = matches.map((match) => makeHookChangeValue(match));
     const observed: JsonValue = allMatches;
     const changedHash = recordChangeHash(previous, observed);
-    return appendKeptEvent(work.events, previous, changedHash, backupPath);
+    return appendKeptEvent(work, previous, changedHash, backupPath);
   }
 
   const match = matches[0];
@@ -1865,7 +1869,7 @@ const processHookSetting = (
 
   if (!locationMatches || !valueMatches) {
     const changedHash = recordChangeHash(previous, makeHookChangeValue(match));
-    return appendKeptEvent(work.events, previous, changedHash, backupPath);
+    return appendKeptEvent(work, previous, changedHash, backupPath);
   }
 
   const desiredLocationMatches = match.event === desired.event && match.matcher === desired.matcher;
@@ -1892,7 +1896,7 @@ const processHookSetting = (
   }
 
   const unchangedHash = recordChangeHash(previous, makeHookChangeValue(match));
-  return appendKeptEvent(work.events, previous, unchangedHash, backupPath);
+  return appendKeptEvent(work, previous, unchangedHash, backupPath);
 };
 
 const recordKindMatchesDesired = (
@@ -1927,7 +1931,7 @@ const removeStaleValueRecord = (
     work.events.push({
       type: "setting-kept",
       level: "warn",
-      text: "Rig удалил изменённую настройку \"" + record.id + "\"; значение сохранено в копии: " + backupPath,
+      text: work.messages.settings.removedChangedSetting(record.id, backupPath),
     });
   }
   const index = lookup.parent.properties.indexOf(lookup.property);
@@ -1958,7 +1962,7 @@ const removeStaleListRecord = (
     work.events.push({
       type: "setting-kept",
       level: "warn",
-      text: "Rig удалил изменённую настройку \"" + record.id + "\"; значение сохранено в копии: " + backupPath,
+      text: work.messages.settings.removedChangedSetting(record.id, backupPath),
     });
     const property = lookup.property;
     const index = lookup.parent.properties.indexOf(property);
@@ -1974,12 +1978,12 @@ const removeStaleListRecord = (
     work.events.push({
       type: "setting-kept",
       level: "warn",
-      text: "Rig удалил изменённую настройку \"" + record.id + "\"; значение сохранено в копии: " + backupPath,
+      text: work.messages.settings.removedChangedSetting(record.id, backupPath),
     });
     work.text = removeArrayItem(work.text, lookup.property.value, observation.index);
   } else if (observation.kind === "ambiguous") {
     const hash = recordChangeHash(record, observation.value);
-    appendKeptEvent(work.events, record, hash, backupPath);
+    appendKeptEvent(work, record, hash, backupPath);
     return;
   } else {
     return;
@@ -2017,7 +2021,7 @@ const removeStaleHookRecord = (
       work.events.push({
         type: "setting-kept",
         level: "warn",
-        text: "Rig удалил изменённый хук \"" + record.id + "\"; значение сохранено в копии: " + backupPath,
+        text: work.messages.settings.removedChangedHook(record.id, backupPath),
       });
     }
     const removed = removeHookMatch(work.text, recorded);
@@ -2030,7 +2034,7 @@ const removeStaleHookRecord = (
   let chosen: HookMatch | undefined;
   if (recorded !== undefined && !hookMatchesIdentity(recorded.entryNode, record.scriptName)) {
     const observed: JsonValue = [makeHookChangeValue(recorded), ...matches.map((match) => makeHookChangeValue(match))];
-    appendKeptEvent(work.events, record, recordChangeHash(record, observed), backupPath);
+    appendKeptEvent(work, record, recordChangeHash(record, observed), backupPath);
     return;
   }
   if (matches.length === 1) {
@@ -2054,7 +2058,7 @@ const removeStaleHookRecord = (
   if (chosen === undefined) {
     const observed = matches.map((match) => makeHookChangeValue(match));
     const hash = recordChangeHash(record, observed);
-    appendKeptEvent(work.events, record, hash, backupPath);
+    appendKeptEvent(work, record, hash, backupPath);
     return;
   }
 
@@ -2067,7 +2071,7 @@ const removeStaleHookRecord = (
     work.events.push({
       type: "setting-kept",
       level: "warn",
-      text: "Rig удалил изменённый хук \"" + record.id + "\"; значение сохранено в копии: " + backupPath,
+      text: work.messages.settings.removedChangedHook(record.id, backupPath),
     });
   }
 
@@ -2191,6 +2195,7 @@ const runMerge = (request: SettingsMergeRequest): SettingsMergeResult => {
   }
 
   const work: MergeWork = {
+    messages: request.messages,
     text: request.currentText,
     events: [],
     backupValues: [],

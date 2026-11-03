@@ -1,3 +1,4 @@
+import type { Messages } from "../messages.js";
 import type { Result } from "../result.js";
 
 const HOURLY_SCHEDULE = "0 * * * *";
@@ -13,12 +14,12 @@ export type CronOptions = { bunPath: string; rigPath: string; path: string; logP
 // Environment lines go to the top of the crontab (cron applies them to the jobs below), jobs go to the bottom.
 export type CronEntries = { environment: string[]; jobs: string[] };
 
-export function buildCronEntries(options: CronOptions): Result<CronEntries> {
+export function buildCronEntries(options: CronOptions, messages: Messages): Result<CronEntries> {
   if (!options.bunPath.startsWith("/") || !options.rigPath.startsWith("/")) {
-    return { ok: false, error: "Пути к bun и rig должны быть абсолютными путями сервера." };
+    return { ok: false, error: messages.cron.absolutePaths() };
   }
   if (/["\r\n]/.test(options.path)) {
-    return { ok: false, error: "PATH для cron не должен содержать кавычки и переводы строк." };
+    return { ok: false, error: messages.cron.pathQuotes() };
   }
   const bun = quoteShellWord(options.bunPath);
   const rig = quoteShellWord(options.rigPath);

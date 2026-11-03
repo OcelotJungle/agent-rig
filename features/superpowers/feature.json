@@ -1,6 +1,9 @@
 {
   "name": "superpowers",
-  "description": "Плагин Superpowers.",
+  "description": {
+    "en": "The Superpowers plugin.",
+    "ru": "Плагин Superpowers."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

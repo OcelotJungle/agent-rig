@@ -12,10 +12,12 @@ import type {
 	UpdateTransaction,
 } from "../update/update.js";
 import type { LockOwner } from "../lock.js";
+import type { Messages } from "../messages.js";
 import type { RuntimePorts } from "../ports.js";
 
 import { appendEvent, trimEvents } from "../events.js";
 import { loadFeatures } from "../feature-graph.js";
+import { messagesFor } from "../messages.js";
 import { joinPath } from "../file-system.js";
 import { err, errorText, ok } from "../result.js";
 import { runPending, runUpdate } from "../update/update.js";
@@ -64,7 +66,7 @@ export const updateRig = async (
 			createId: () => runtime.ids.next(),
 		});
 		if (!trimmed.ok) return trimmed;
-		writeLine("Обновление rig завершено.");
+		writeLine(messagesFor(runtime.language).updateCommand.complete());
 		return ok(undefined);
 	};
 	if (!pendingOnly) return withRigLock(runtime, writeLine, operation);
@@ -72,7 +74,7 @@ export const updateRig = async (
 	const acquired = await tryAcquireLock(runtime.lock);
 	if (!acquired.ok) return acquired;
 	if (acquired.value === null) {
-		writeLine("Другая команда rig уже работает; проверка отложена.");
+		writeLine(messagesFor(runtime.language).updateCommand.checkDeferred());
 		return ok(undefined);
 	}
 	let result: Result<void>;
@@ -95,39 +97,40 @@ export const runUpdateStep = async (
 	writeLine: (line: string) => void,
 ): Promise<number> => {
 	const held = await parentHoldsLock(runtime, parent);
-	if (!held.ok) return reportStepError(held.error, writeLine);
+	if (!held.ok) return reportStepError(runtime, held.error, writeLine);
 	if (step === "apply") {
 		const applied = await applyInstalledPrograms(runtime, writeLine);
-		return applied.ok ? UPDATE_STEP_SUCCESS_EXIT_CODE : reportStepError(applied.error, writeLine);
+		return applied.ok ? UPDATE_STEP_SUCCESS_EXIT_CODE : reportStepError(runtime, applied.error, writeLine);
 	}
 	const inspection = await inspectRig(runtime);
-	if (!inspection.ok) return reportStepError(inspection.error, writeLine);
+	if (!inspection.ok) return reportStepError(runtime, inspection.error, writeLine);
 	const { problems, environmentProblems } = inspection.value;
 	if (problems.length === 0 && environmentProblems.length === 0) return UPDATE_STEP_SUCCESS_EXIT_CODE;
-	reportStepError([...problems, ...environmentProblems].join("\n"), writeLine);
+	reportStepError(runtime, [...problems, ...environmentProblems].join("\n"), writeLine);
 	return problems.length === 0 ? UPDATE_STEP_ENVIRONMENT_EXIT_CODE : UPDATE_STEP_FAILURE_EXIT_CODE;
 };
 
-const reportStepError = (message: string, writeLine: (line: string) => void): number => {
-	writeLine(`Ошибка rig: ${message}`);
+const reportStepError = (runtime: RuntimePorts, message: string, writeLine: (line: string) => void): number => {
+	writeLine(messagesFor(runtime.language).cli.rigError(message));
 	return UPDATE_STEP_FAILURE_EXIT_CODE;
 };
 
 const parentHoldsLock = async (runtime: RuntimePorts, parent: LockOwner): Promise<Result<void>> => {
+	const messages = messagesFor(runtime.language);
 	const lockPath = runtime.lock.lockPath ?? joinPath(runtime.home, ".agent-rig", "rig.lock");
 	let owner: unknown;
 	try {
 		owner = JSON.parse(await runtime.fs.readText(lockPath));
 	} catch {
-		return err("rig update-step запускается только из rig update: блокировка rig не найдена.");
+		return err(messages.updateCommand.stepLockMissing());
 	}
 	if (!isObject(owner) || owner.pid !== parent.pid || owner.startTime !== parent.startTime) {
-		return err("rig update-step запускается только из rig update: блокировка rig принадлежит другому процессу.");
+		return err(messages.updateCommand.stepLockOtherProcess());
 	}
 	const startTime = await runtime.lock.process.ownerStartTime(parent.pid);
 	if (!startTime.ok) return startTime;
 	if (startTime.value !== parent.startTime) {
-		return err("rig update-step запускается только из rig update: родительский процесс уже завершился.");
+		return err(messages.updateCommand.stepParentExited());
 	}
 	return ok(undefined);
 };
@@ -143,7 +146,7 @@ const applyInstalledPrograms = async (runtime: RuntimePorts, writeLine: (line: s
 	// Programs that need no root are installed here, so a good update is not rolled back for a missing tool.
 	const programs = await installMissingPrograms(runtime, features.value, new Set(enabled));
 	if (!programs.ok) return programs;
-	for (const missing of programs.value) writeLine(`Установи системный пакет ${missing.name}: ${missing.command}`);
+	for (const missing of programs.value) writeLine(messagesFor(runtime.language).programs.installPackage(missing.name, missing.command));
 	const result = await applyRig(runtime, { state: state.value, mode: "apply" });
 	return result.ok ? ok(undefined) : result;
 };
@@ -160,7 +163,7 @@ const runUpdateStepProcess = async (
 		[runtime.resolvePath(paths.repo, "src", "cli.ts"), "update-step", step, String(pid), String(startTime)],
 		{ cwd: paths.repo },
 	);
-	if (!launched.ok) return { ok: false, error: `Не удалось запустить новый код rig (${step}): ${launched.error}`, exitCode: null };
+	if (!launched.ok) return { ok: false, error: messagesFor(runtime.language).updateCommand.newCodeNotStarted(step, launched.error), exitCode: null };
 	const output = [launched.value.stdout, launched.value.stderr].map((text) => text.trim()).filter((text) => text.length > 0).join("\n");
 	if (launched.value.exitCode === PROCESS_SUCCESS_EXIT_CODE) {
 		for (const line of output.split(/\r?\n/)) if (line.length > 0) writeLine(line);
@@ -168,7 +171,7 @@ const runUpdateStepProcess = async (
 	}
 	return {
 		ok: false,
-		error: output.length > 0 ? output : `Новый код rig (${step}) завершился с кодом ${launched.value.exitCode}.`,
+		error: output.length > 0 ? output : messagesFor(runtime.language).updateCommand.newCodeExitCode(step, launched.value.exitCode),
 		exitCode: launched.value.exitCode,
 	};
 };
@@ -188,6 +191,7 @@ const makeUpdatePorts = (
 	writeLine: (line: string) => void,
 	environmentFailures: Pair[],
 ): UpdatePorts => ({
+	messages: messagesFor(runtime.language),
 	git: createRealGitAdapter(runtime.process, paths),
 	apply: async () => {
 		const update = await readUpdateState(runtime, paths, !pendingOnly);
@@ -231,7 +235,7 @@ const readUpdateState = async (runtime: RuntimePorts, paths: RigState["paths"], 
 	if (!rigState.ok) return rigState;
 	const stored = parseStoredUpdateState(rigState.value.records[UPDATE_STATE_RECORD]);
 	if (!stored.ok) return stored;
-	const pendingResult = parsePending(rigState.value.pendingHubRestart);
+	const pendingResult = parsePending(rigState.value.pendingHubRestart, messagesFor(runtime.language));
 	if (!pendingResult.ok) return pendingResult;
 	const pending = pendingResult.value;
 	if (stored.value !== null) {
@@ -309,15 +313,15 @@ const parseStoredUpdateState = (text: string | undefined): Result<PersistedUpdat
 	return ok({ confirmed: value.confirmed, transaction: value.transaction, lastFailure, pendingEvent });
 };
 
-const parsePending = (text: string | null): Result<PendingRestart | null> => {
+const parsePending = (text: string | null, messages: Messages): Result<PendingRestart | null> => {
 	if (text === null) return ok(null);
 	let value: unknown;
 	try {
 		value = JSON.parse(text);
 	} catch {
-		return err("Запись об ожидающем перезапуске хаба повреждена: это не JSON.");
+		return err(messages.updateCommand.pendingNotJson());
 	}
-	return isPending(value) ? ok(value) : err("Запись об ожидающем перезапуске хаба повреждена: неверная форма.");
+	return isPending(value) ? ok(value) : err(messages.updateCommand.pendingBadShape());
 };
 
 const readHubSignals = async (runtime: RuntimePorts): Promise<Result<HubFiles>> => {

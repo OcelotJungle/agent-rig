@@ -1,4 +1,5 @@
 import type { FileSystem } from "../file-system.js";
+import type { Messages } from "../messages.js";
 import type { RuntimePorts, ProcessOptions, ProcessOutput, ProcessPorts } from "../ports.js";
 import type { HostPlatform } from "../node-file-operations.js";
 import type { Result } from "../result.js";
@@ -12,6 +13,7 @@ import { join, resolve } from "node:path";
 
 import { createNodeAssetFileSystem } from "../assets/node-asset-file-system.js";
 import { atomicWrite } from "../file-system.js";
+import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
 import { err, errorText, ok } from "../result.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
@@ -38,15 +40,18 @@ type ReleaseAsset = { name: string; url: string };
 export const createRealRuntime = async (): Promise<Result<RuntimePorts>> => {
 	const fileSystem = createFileSystem();
 	const home = process.env.USERPROFILE ?? process.env.HOME ?? homedir();
+	// The language is not known yet: runCli reads it from state.json after the runtime exists. Errors raised while the
+	// runtime is being built are in the default language.
+	const startMessages = messagesFor(DEFAULT_LANGUAGE);
 	const platform = toPlatform(hostPlatform());
-	if (platform === null) return err(`Платформа ${hostPlatform()} не поддерживается.`);
+	if (platform === null) return err(startMessages.runtime.platformUnsupported(hostPlatform()));
 	const pathSeparator = platform === "windows" ? ";" : ":";
 	const additionalPaths = [join(home, ".local", "bin"), join(home, ".bun", "bin")];
 	const pathEnvironment = [...additionalPaths, process.env.PATH ?? ""].join(pathSeparator);
 	const processPorts = createProcessPorts(pathEnvironment);
 	const processStart = await ownerStartTime(process.pid, processPorts);
-	if (!processStart.ok) return err(`Не удалось определить время запуска процесса для блокировки rig: ${processStart.error}`);
-	if (processStart.value === null) return err("Не удалось определить время запуска процесса для блокировки rig: процесс не найден.");
+	if (!processStart.ok) return err(startMessages.runtime.processStartUnknown(processStart.error));
+	if (processStart.value === null) return err(startMessages.runtime.processNotFound());
 	const pythonCommand = platform === "windows" ? "python" : "python3";
 	const runtime: RuntimePorts = {
 		fs: fileSystem,
@@ -70,6 +75,7 @@ export const createRealRuntime = async (): Promise<Result<RuntimePorts>> => {
 		pythonCommand,
 		pathEnvironment,
 		platform,
+		language: DEFAULT_LANGUAGE,
 		clock: {
 			now: () => new Date(),
 			nowText: () => new Date().toISOString(),
@@ -77,10 +83,10 @@ export const createRealRuntime = async (): Promise<Result<RuntimePorts>> => {
 		},
 		ids: { next: () => randomUUID() },
 		service: {
-			start: () => runService(processPorts, platform, "start"),
-			stop: () => runService(processPorts, platform, "stop"),
-			isRunning: () => serviceIsRunning(processPorts, platform),
-			restart: () => runService(processPorts, platform, "restart"),
+			start: () => runService(processPorts, platform, "start", currentUserBusSource(), messagesFor(runtime.language)),
+			stop: () => runService(processPorts, platform, "stop", currentUserBusSource(), messagesFor(runtime.language)),
+			isRunning: () => serviceIsRunning(processPorts, platform, currentUserBusSource(), messagesFor(runtime.language)),
+			restart: () => runService(processPorts, platform, "restart", currentUserBusSource(), messagesFor(runtime.language)),
 		},
 		programs: { install: (name, binDirectory) => installProgram(name, binDirectory, runtime, platform) },
 		temporary: {
@@ -279,6 +285,7 @@ export const runService = async (
 	platform: RuntimePorts["platform"],
 	action: "start" | "stop" | "restart",
 	busSource: UserBusSource = currentUserBusSource(),
+	messages: Messages = messagesFor(DEFAULT_LANGUAGE),
 ): Promise<Result<void>> => {
 	if (platform === "linux") {
 		const result = await processPorts.run("systemctl", ["--user", action, "telegram-hub.service"], { environment: userBusEnvironment(busSource) });
@@ -287,19 +294,20 @@ export const runService = async (
 	if (platform === "windows") {
 		if (action === "restart") {
 			const stopped = await processPorts.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "Stop-ScheduledTask -TaskName 'telegram-hub' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName 'telegram-hub'"]);
-			return processSuccess(stopped, "Перезапуск задачи telegram-hub");
+			return processSuccess(stopped, messages.runtime.taskRestartLabel());
 		}
 		const command = action === "start" ? "Start-ScheduledTask -TaskName 'telegram-hub'" : "Stop-ScheduledTask -TaskName 'telegram-hub'";
 		const result = await processPorts.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command]);
 		return processSuccess(result, command);
 	}
-	return err(`Управление службой не поддерживается на ${platform}.`);
+	return err(messages.runtime.serviceUnsupported(platform));
 };
 
 export const serviceIsRunning = async (
 	processPorts: ProcessRunner,
 	platform: RuntimePorts["platform"],
 	busSource: UserBusSource = currentUserBusSource(),
+	messages: Messages = messagesFor(DEFAULT_LANGUAGE),
 ): Promise<Result<boolean>> => {
 	if (platform === "linux") {
 		const result = await processPorts.run("systemctl", ["--user", "is-active", "--quiet", "telegram-hub.service"], { environment: userBusEnvironment(busSource) });
@@ -307,7 +315,7 @@ export const serviceIsRunning = async (
 		if (result.value.exitCode === PROCESS_SUCCESS_EXIT_CODE) return ok(true);
 		// systemctl is-active exits 3 for an inactive unit; any other code (such as 1 for a bus failure) is an error, not "stopped".
 		if (result.value.exitCode === SYSTEMCTL_INACTIVE_EXIT_CODE) return ok(false);
-		return err(`systemctl --user is-active telegram-hub.service (код ${result.value.exitCode}): ${result.value.stderr.trim() || result.value.stdout.trim() || "нет вывода"}`);
+		return err(messages.runtime.serviceInactive(result.value.exitCode, result.value.stderr.trim() || result.value.stdout.trim()));
 	}
 	if (platform === "windows") {
 		const result = await processPorts.run("powershell.exe", [
@@ -318,7 +326,7 @@ export const serviceIsRunning = async (
 		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || "Scheduled Task telegram-hub was not found");
 		return ok(result.value.stdout.trim().toLowerCase() === "true");
 	}
-	return err(`Проверка службы не поддерживается на ${platform}.`);
+	return err(messages.runtime.serviceCheckUnsupported(platform));
 };
 
 const processSuccess = (result: Result<ProcessOutput>, description: string): Result<void> => {
@@ -334,20 +342,21 @@ const installProgram = async (
 ): Promise<Result<void>> => {
 	if (name === "codex") {
 		const result = await runProcess(runtime.pathEnvironment, runtime.executablePath, ["add", "--global", CODEX_PACKAGE]);
-		return processSuccess(result, "Не удалось установить Codex через Bun");
+		return processSuccess(result, messagesFor(runtime.language).runtime.codexInstallLabel());
 	}
 	if (name === "opencode") {
 		const command = platform === "windows" ? "npm.cmd" : "npm";
 		const result = await runProcess(runtime.pathEnvironment, command, ["install", "--global", "--prefix", binDirectory, OPENCODE_PACKAGE]);
-		return processSuccess(result, "Не удалось установить OpenCode через npm");
+		return processSuccess(result, messagesFor(runtime.language).runtime.opencodeInstallLabel());
 	}
 	if (name === "rtk") return installRtk(binDirectory, platform, runtime);
-	return err(`Для программы ${name} не задана установка без root.`);
+	return err(messagesFor(runtime.language).runtime.noRootInstall(name));
 };
 
 const installRtk = async (binDirectory: string, platform: RuntimePorts["platform"], runtime: RuntimePorts): Promise<Result<void>> => {
+	const messages = messagesFor(runtime.language);
 	const targetName = platform === "windows" ? `rtk${WINDOWS_EXECUTABLE_SUFFIX}` : "rtk";
-	const release = await fetchRtkRelease(platform);
+	const release = await fetchRtkRelease(platform, messages);
 	if (!release.ok) return release;
 	const temporary = await runtime.temporary.createDirectory("rig-rtk-");
 	if (!temporary.ok) return temporary;
@@ -356,14 +365,14 @@ const installRtk = async (binDirectory: string, platform: RuntimePorts["platform
 		const archive = await fetchBytes(release.value.asset.url);
 		if (!archive.ok) return archive;
 		const digest = createHash("sha256").update(archive.value).digest("hex");
-		if (digest !== release.value.checksum) return err(`Контрольная сумма релиза rtk не совпала для ${release.value.asset.name}.`);
+		if (digest !== release.value.checksum) return err(messages.runtime.rtkChecksumMismatch(release.value.asset.name));
 		await fs.writeFile(archivePath, archive.value);
 		const extracted = await runProcess(runtime.pathEnvironment, platform === "windows" ? "tar.exe" : "tar", ["-xf", archivePath, "-C", temporary.value]);
-		const extractedResult = processSuccess(extracted, "Не удалось распаковать релиз rtk");
+		const extractedResult = processSuccess(extracted, messages.runtime.rtkExtractLabel());
 		if (!extractedResult.ok) return extractedResult;
 		const sourcePath = join(temporary.value, targetName);
 		const binary = await readBytes(sourcePath);
-		if (!binary.ok) return err(`В архиве релиза rtk нет ${targetName}: ${binary.error}`);
+		if (!binary.ok) return err(messages.runtime.rtkBinaryMissing(targetName, binary.error));
 		await fs.mkdir(binDirectory, { recursive: true });
 		const targetPath = join(binDirectory, targetName);
 		const temporaryTarget = `${targetPath}.tmp-${randomUUID()}`;
@@ -372,26 +381,26 @@ const installRtk = async (binDirectory: string, platform: RuntimePorts["platform
 		if (platform !== "windows") await fs.chmod(targetPath, EXECUTABLE_FILE_MODE);
 		return ok(undefined);
 	} catch (error) {
-		return err(`Не удалось установить rtk: ${errorText(error)}`);
+		return err(messages.runtime.rtkInstallFailed(errorText(error)));
 	} finally {
 		await runtime.temporary.removeDirectory(temporary.value);
 	}
 };
 
-const fetchRtkRelease = async (platform: RuntimePorts["platform"]): Promise<Result<{ asset: ReleaseAsset; checksum: string }>> => {
+const fetchRtkRelease = async (platform: RuntimePorts["platform"], messages: Messages): Promise<Result<{ asset: ReleaseAsset; checksum: string }>> => {
 	const target = rtkTarget(platform);
-	if (target === null) return err(`Установка rtk не поддерживается на ${platform}.`);
+	if (target === null) return err(messages.runtime.rtkUnsupported(platform));
 	try {
 		const response = await fetch(RTK_RELEASE_API, { headers: { Accept: "application/vnd.github+json", "User-Agent": "agent-rig" } });
-		if (!response.ok) return err(`GitHub не вернул последний релиз rtk: HTTP ${response.status}.`);
+		if (!response.ok) return err(messages.runtime.githubStatus(response.status));
 		const text = await response.text();
 		let value: unknown;
 		try {
 			value = JSON.parse(text);
 		} catch {
-			return err("GitHub вернул некорректные данные последнего релиза rtk.");
+			return err(messages.runtime.githubBadRelease());
 		}
-		if (!isObject(value) || !Array.isArray(value.assets)) return err("В ответе GitHub нет списка файлов релиза rtk.");
+		if (!isObject(value) || !Array.isArray(value.assets)) return err(messages.runtime.githubNoAssetList());
 		const assets: ReleaseAsset[] = [];
 		for (const asset of value.assets) {
 			if (isObject(asset) && typeof asset.name === "string" && typeof asset.browser_download_url === "string") {
@@ -400,13 +409,13 @@ const fetchRtkRelease = async (platform: RuntimePorts["platform"]): Promise<Resu
 		}
 		const asset = assets.find((candidate) => candidate.name === target);
 		const checksums = assets.find((candidate) => candidate.name === "checksums.txt");
-		if (asset === undefined || checksums === undefined) return err(`В релизе rtk нет архива ${target} или checksums.txt.`);
+		if (asset === undefined || checksums === undefined) return err(messages.runtime.rtkAssetsMissing(target));
 		const checksumText = await fetchText(checksums.url);
 		if (!checksumText.ok) return checksumText;
 		const checksum = checksumText.value.split(/\r?\n/).map(parseChecksumLine).find((entry) => entry?.name === target)?.hash;
-		return checksum === undefined ? err(`В checksums.txt нет контрольной суммы ${target}.`) : ok({ asset, checksum });
+		return checksum === undefined ? err(messages.runtime.checksumMissing(target)) : ok({ asset, checksum });
 	} catch (error) {
-		return err(`Не удалось получить релиз rtk: ${errorText(error)}`);
+		return err(messages.runtime.rtkFetchFailed(errorText(error)));
 	}
 };
 

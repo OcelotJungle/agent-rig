@@ -1,6 +1,9 @@
 {
   "name": "telegram",
-  "description": "Интеграция с Telegram-хабом.",
+  "description": {
+    "en": "Integration with the Telegram hub.",
+    "ru": "Интеграция с Telegram-хабом."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

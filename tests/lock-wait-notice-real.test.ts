@@ -8,7 +8,7 @@ import { createRealRuntime } from "../src/commands/real-runtime.js";
 import { acquireLock } from "../src/lock.js";
 
 const TEMP_DIRECTORY_PREFIX = "agent-rig-wait-notice-";
-const WAIT_LINE = "Другая команда rig работает, жду её конца.";
+const WAIT_LINE = "Another rig command is running, waiting for it to finish.";
 // The child waits for the lock with real process checks on every poll, which is slow on Windows; the budget is generous.
 const CHILD_WAIT_BUDGET_MS = 120_000;
 // The whole test also waits for the child to exit after the lock is released, so its timeout is larger than the budget.

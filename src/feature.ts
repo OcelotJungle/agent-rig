@@ -52,7 +52,7 @@ export type AssetManifest = { sourcePath: string; targetPath: string };
 export type ProgramManifest = { name: string; command: string; installCommand: string | null; systemPackage: boolean; platform?: Platform };
 export type FeatureManifest = {
 	name: string;
-	description: string;
+	description: { en: string; ru: string };
 	enabledByDefault: boolean;
 	platforms: Platform[];
 	dependencies: string[];
@@ -122,8 +122,11 @@ const hasValidLists = (value: Record<string, unknown>): boolean => {
 	return REQUIRED_LISTS.every((key) => key in value);
 };
 
+const isDescription = (value: unknown): value is { en: string; ru: string } =>
+	isObject(value) && isString(value.en) && isString(value.ru);
+
 const isFeatureManifest = (value: unknown): value is FeatureManifest => isObject(value) &&
-	isString(value.name) && /^[a-z0-9][a-z0-9-]*$/.test(value.name) && isString(value.description) &&
+	isString(value.name) && /^[a-z0-9][a-z0-9-]*$/.test(value.name) && isDescription(value.description) &&
 	typeof value.enabledByDefault === "boolean" && hasValidLists(value);
 
 export const validateFeature = (value: unknown): Result<FeatureManifest> => {

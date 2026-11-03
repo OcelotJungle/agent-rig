@@ -1,6 +1,9 @@
 {
   "name": "js-ts-rules",
-  "description": "Конвенции JavaScript и TypeScript.",
+  "description": {
+    "en": "JavaScript and TypeScript conventions.",
+    "ru": "Конвенции JavaScript и TypeScript."
+  },
   "enabledByDefault": false,
   "platforms": [
     "linux",

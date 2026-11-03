@@ -18,6 +18,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { en } from "../../src/messages";
+import { ru } from "../../src/messages-ru";
 import { createRealGitAdapter } from "../../src/commands/real-runtime";
 import { updateRig } from "../../src/commands/update";
 import { runPending, runUpdate } from "../../src/update/update";
@@ -108,6 +110,7 @@ const makeFake = (initial: UpdateState = baseState()): Fake => {
     releaseVersions: {},
   };
   const ports: UpdatePorts = {
+    messages: en,
     git: {
       isClean: async () => ({ ok: true, value: control.clean }),
       branchProblem: async () => ({ ok: true, value: control.branchProblem }),
@@ -260,7 +263,7 @@ describe("C2: one message per failure cause", () => {
     const oks = fake.events.filter((event) => event.type === "update-ok");
     expect(oks).toHaveLength(1);
     expect(oks[0]?.level).toBe("info");
-    expect(oks[0]?.text).toBe("Обновление снова работает: клоны совпадают с main.");
+    expect(oks[0]?.text).toBe("Update works again: the clones match main.");
     expect(fake.state().lastFailure).toBe(null);
   });
 
@@ -341,7 +344,20 @@ describe("C3: a clone off main or ahead of origin", () => {
 
     expect(fake.calls).toEqual([]);
     expect(fake.events).toHaveLength(1);
-    expect(fake.events[0]?.text).toContain("локальные коммиты");
+    expect(fake.events[0]?.text).toContain("local commits");
+  });
+
+  test("update events are written in the language of the ports' messages", async () => {
+    const fake = makeFake();
+    fake.ports.messages = ru;
+    fake.control.remote = pair("r2", "h2");
+    fake.control.branchProblem = "local-commits";
+
+    await runUpdate(fake.ports);
+
+    expect(fake.events).toHaveLength(1);
+    expect(fake.events[0]?.text).toBe(ru.update.skippedLocalCommits("rig"));
+    expect(fake.events[0]?.text).not.toContain("local commits");
   });
 
   describe("real git adapter", () => {
@@ -463,7 +479,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig 0.1.0 → 0.2.0, хаб 1.0.0 → 1.1.0.",
+      "Updated: agent-rig 0.1.0 → 0.2.0, hub 1.0.0 → 1.1.0.",
     );
   });
 
@@ -475,7 +491,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig 0.2.0 (r1 → r2).",
+      "Updated: agent-rig 0.2.0 (r1 → r2).",
     );
   });
 
@@ -487,7 +503,7 @@ describe("the update-ok event names the versions", () => {
     expect((await runUpdate(fake.ports)).ok).toBe(true);
 
     expect(fake.events.find((event) => event.type === "update-ok")?.text).toBe(
-      "Обновлено: agent-rig r1 → abcdef0, хаб h1 → fedcba9.",
+      "Updated: agent-rig r1 → abcdef0, hub h1 → fedcba9.",
     );
   });
 

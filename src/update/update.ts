@@ -1,3 +1,4 @@
+import type { Messages } from "../messages.js";
 import type { Result } from "../result.js";
 
 const HUB_RESTART_TIMEOUT_MS = 5 * 60 * 1000;
@@ -5,7 +6,7 @@ const HUB_WAIT_WARNING_MS = 24 * 60 * 60 * 1000;
 const REPOSITORIES = ["rig", "hub"] as const;
 // The short form git itself prints.
 const SHORT_COMMIT_LENGTH = 7;
-const REPOSITORY_TITLES = { rig: "agent-rig", hub: "хаб" } as const;
+const MS_PER_MINUTE = 60 * 1000;
 
 export type RepositoryName = "rig" | "hub";
 export type Pair = { rig: string; hub: string };
@@ -50,6 +51,7 @@ export type TransactionPhase =
 const shortCommit = (commit: string): string => commit.slice(0, SHORT_COMMIT_LENGTH);
 
 const versionChanges = async (ports: UpdatePorts, before: Pair, target: Pair): Promise<string> => {
+  const titles = ports.messages.update.repositoryTitles;
   const changes = await Promise.all(REPOSITORIES
     .filter((name) => before[name] !== target[name])
     .map(async (name) => {
@@ -60,10 +62,10 @@ const versionChanges = async (ports: UpdatePorts, before: Pair, target: Pair): P
       const oldRelease = oldVersion.ok ? oldVersion.value : null;
       const newRelease = newVersion.ok ? newVersion.value : null;
       if (oldRelease !== null && newRelease !== null) {
-        if (oldRelease !== newRelease) return `${REPOSITORY_TITLES[name]} ${oldRelease} → ${newRelease}`;
-        return `${REPOSITORY_TITLES[name]} ${newRelease} (${shortCommit(before[name])} → ${shortCommit(target[name])})`;
+        if (oldRelease !== newRelease) return `${titles[name]} ${oldRelease} → ${newRelease}`;
+        return `${titles[name]} ${newRelease} (${shortCommit(before[name])} → ${shortCommit(target[name])})`;
       }
-      return `${REPOSITORY_TITLES[name]} ${shortCommit(before[name])} → ${shortCommit(target[name])}`;
+      return `${titles[name]} ${shortCommit(before[name])} → ${shortCommit(target[name])}`;
     }));
   return changes.join(", ");
 };
@@ -97,6 +99,7 @@ export type BranchProblem = "not-on-main" | "local-commits" | null;
 export type HubFiles = { restarting: RestartingSignal; ready: HubSignal };
 
 export type UpdatePorts = {
+  messages: Messages;
   git: {
     isClean: (repository: RepositoryName) => Promise<Result<boolean>>;
     // The clone must be on branch main with no commits that origin/main lacks.
@@ -125,7 +128,7 @@ export type UpdatePorts = {
 export async function runUpdate(ports: UpdatePorts): Promise<Result<void>> {
   const loaded = await ports.readState();
   if (!loaded.ok) return loaded;
-  if (loaded.value.mode === "dev") return failure("Обновление недоступно в режиме dev.");
+  if (loaded.value.mode === "dev") return failure(ports.messages.update.devUnavailable());
 
   const resolved = await resolvePendingEvent(ports, loaded.value);
   if (!resolved.ok) return resolved;
@@ -148,11 +151,11 @@ export async function runUpdate(ports: UpdatePorts): Promise<Result<void>> {
     ports.git.fetchMain("rig"),
     ports.git.fetchMain("hub"),
   ]);
-  if (!rigFetch.ok) return failWithEvent(ports, state, "update-failed", rigFetch.error, "error", "Не удалось получить main репозитория rig.");
-  if (!hubFetch.ok) return failWithEvent(ports, state, "update-failed", hubFetch.error, "error", "Не удалось получить main репозитория hub.");
+  if (!rigFetch.ok) return failWithEvent(ports, state, "update-failed", rigFetch.error, "error", ports.messages.update.fetchMainFailed("rig"));
+  if (!hubFetch.ok) return failWithEvent(ports, state, "update-failed", hubFetch.error, "error", ports.messages.update.fetchMainFailed("hub"));
 
   const currentResult = await readPair(ports);
-  if (!currentResult.ok) return failWithEvent(ports, state, "update-failed", currentResult.error, "error", "Не удалось прочитать версии клонов.");
+  if (!currentResult.ok) return failWithEvent(ports, state, "update-failed", currentResult.error, "error", ports.messages.update.readVersionsFailed());
   const current = currentResult.value;
   const targets: Pair = { rig: rigFetch.value, hub: hubFetch.value };
 
@@ -164,7 +167,7 @@ export async function runUpdate(ports: UpdatePorts): Promise<Result<void>> {
       `update-ok:${current.rig}:${current.hub}`,
       "update-ok",
       "info",
-      "Обновление снова работает: клоны совпадают с main.",
+      ports.messages.update.workingAgain(),
     );
     const emitted = await emitWithState(ports, { ...state, lastFailure: null }, recovered);
     return emitted.ok ? success(undefined) : emitted;
@@ -173,11 +176,11 @@ export async function runUpdate(ports: UpdatePorts): Promise<Result<void>> {
 
   for (const repository of REPOSITORIES) {
     const problem = await ports.git.branchProblem(repository);
-    if (!problem.ok) return failWithEvent(ports, state, "update-failed", problem.error, "error", `Не удалось проверить ветку клона ${repository}.`);
+    if (!problem.ok) return failWithEvent(ports, state, "update-failed", problem.error, "error", ports.messages.update.branchCheckFailed(repository));
     if (problem.value !== null) {
       const text = problem.value === "not-on-main"
-        ? `Обновление пропущено: клон ${repository} не на ветке main.`
-        : `Обновление пропущено: в клоне ${repository} есть локальные коммиты, которых нет в origin/main.`;
+        ? ports.messages.update.skippedNotOnMain(repository)
+        : ports.messages.update.skippedLocalCommits(repository);
       return failWithEvent(ports, state, "update-skipped", `${repository}:${problem.value}`, "warn", text, false);
     }
   }
@@ -186,10 +189,10 @@ export async function runUpdate(ports: UpdatePorts): Promise<Result<void>> {
     ports.git.isClean("rig"),
     ports.git.isClean("hub"),
   ]);
-  if (!rigClean.ok) return failWithEvent(ports, state, "update-failed", rigClean.error, "error", "Не удалось проверить локальные изменения в rig.");
-  if (!hubClean.ok) return failWithEvent(ports, state, "update-failed", hubClean.error, "error", "Не удалось проверить локальные изменения в hub.");
+  if (!rigClean.ok) return failWithEvent(ports, state, "update-failed", rigClean.error, "error", ports.messages.update.localChangesCheckFailed("rig"));
+  if (!hubClean.ok) return failWithEvent(ports, state, "update-failed", hubClean.error, "error", ports.messages.update.localChangesCheckFailed("hub"));
   if (!rigClean.value || !hubClean.value) {
-    return failWithEvent(ports, state, "update-skipped", "dirty-clone", "warn", "Обновление пропущено: в одном из клонов есть локальные изменения.", false);
+    return failWithEvent(ports, state, "update-skipped", "dirty-clone", "warn", ports.messages.update.skippedLocalChanges(), false);
   }
 
   const transaction: UpdateTransaction = {
@@ -211,7 +214,7 @@ export async function runPending(ports: UpdatePorts): Promise<Result<void>> {
   const loaded = await ports.readState();
   if (!loaded.ok) return loaded;
   if (loaded.value.pending === null && loaded.value.transaction === null && loaded.value.pendingEvent === null) return success(undefined);
-  if (loaded.value.mode === "dev") return failure("Проверка ожидающего перезапуска недоступна в режиме dev.");
+  if (loaded.value.mode === "dev") return failure(ports.messages.update.pendingDevUnavailable());
 
   const resolved = await resolvePendingEvent(ports, loaded.value);
   if (!resolved.ok) return resolved;
@@ -236,7 +239,7 @@ async function processPending(ports: UpdatePorts, state: UpdateState): Promise<R
   }
 
   const filesResult = await ports.readHubFiles();
-  if (!filesResult.ok) return failWithEvent(ports, state, "update-failed", filesResult.error, "error", "Не удалось проверить состояние перезапуска хаба.");
+  if (!filesResult.ok) return failWithEvent(ports, state, "update-failed", filesResult.error, "error", ports.messages.update.hubStateCheckFailed());
   const { restarting, ready } = filesResult.value;
   if (matchesCurrentReadySignal(ready, pending)) {
     const saved = await ports.writeState({ ...state, confirmed: pending.attempted, pending: null });
@@ -253,7 +256,7 @@ async function processPending(ports: UpdatePorts, state: UpdateState): Promise<R
         target: pending.attempted,
         phase: "rolling-back",
         kind: "pending-rollback",
-        failure: "Хаб не сообщил о готовности за 5 минут после начала перезапуска.",
+        failure: ports.messages.update.hubNotReady(HUB_RESTART_TIMEOUT_MS / MS_PER_MINUTE),
         failureReported: false,
         restartService: true,
         completion: null,
@@ -275,7 +278,7 @@ async function processPending(ports: UpdatePorts, state: UpdateState): Promise<R
       `hub-restart-waiting:${pending.hubCommit}:${pending.restartAfter}`,
       "hub-restart-waiting",
       "warn",
-      "Перезапуск хаба ждёт безопасного момента уже больше суток.",
+      ports.messages.update.hubWaitingLong(),
     );
     const emitted = await emitWithState(ports, { ...state, pending: updatedPending }, event);
     return emitted.ok ? success(undefined) : emitted;
@@ -324,11 +327,11 @@ async function recoverTransaction(ports: UpdatePorts, state: UpdateState): Promi
 
 async function advanceTransaction(ports: UpdatePorts, state: UpdateState): Promise<Result<void>> {
   const transaction = state.transaction;
-  if (transaction === null) return failure("Нет активной транзакции обновления.");
+  if (transaction === null) return failure(ports.messages.update.noActiveTransaction());
 
   for (const repository of REPOSITORIES) {
     const moved = await ports.git.fastForward(repository, transaction.target[repository]);
-    if (!moved.ok) return startRollback(ports, state, `Не удалось перемотать ${repository}: ${moved.error}`);
+    if (!moved.ok) return startRollback(ports, state, ports.messages.update.fastForwardFailed(repository, moved.error));
   }
 
   const applyingTransaction: UpdateTransaction = { ...transaction, phase: "applying" };
@@ -337,9 +340,9 @@ async function advanceTransaction(ports: UpdatePorts, state: UpdateState): Promi
   if (!applyingSaved.ok) return applyingSaved;
 
   const applied = await ports.apply();
-  if (!applied.ok) return startRollback(ports, applyingState, `rig apply завершился с ошибкой: ${applied.error}`);
+  if (!applied.ok) return startRollback(ports, applyingState, ports.messages.update.applyFailed(applied.error));
   const checked = await ports.check();
-  if (!checked.ok) return startRollback(ports, applyingState, `rig check завершился с ошибкой: ${checked.error}`);
+  if (!checked.ok) return startRollback(ports, applyingState, ports.messages.update.checkFailed(checked.error));
 
   const checkedTransaction: UpdateTransaction = { ...applyingTransaction, phase: "checked" };
   const checkedState: UpdateState = { ...applyingState, transaction: checkedTransaction };
@@ -354,7 +357,7 @@ async function completeSuccessfulUpdate(
   transaction: UpdateTransaction,
 ): Promise<Result<void>> {
   const discovered = await ports.discoverFeatures();
-  if (!discovered.ok) return failWithEvent(ports, state, "update-failed", discovered.error, "error", "Не удалось загрузить список фич.");
+  if (!discovered.ok) return failWithEvent(ports, state, "update-failed", discovered.error, "error", ports.messages.update.featureListFailed());
 
   const features = { ...state.features };
   const featureEvents: UpdateEvent[] = [];
@@ -368,18 +371,18 @@ async function completeSuccessfulUpdate(
       `feature-new:${transaction.target.rig}:${transaction.target.hub}:${name}`,
       "feature-new",
       "info",
-      `Новая фича «${name}» выключена. Включить: rig feature ${name} enable`,
+      ports.messages.update.newFeature(name),
     ));
   }
 
-  const pendingResult = nextPending(state, transaction, eventTime);
+  const pendingResult = nextPending(state, transaction, eventTime, ports.messages);
   const events = [
     createEvent(
       eventTime,
       `update-ok:${transaction.target.rig}:${transaction.target.hub}`,
       "update-ok",
       "info",
-      `Обновлено: ${await versionChanges(ports, transaction.before, transaction.target)}.`,
+      ports.messages.update.updated(await versionChanges(ports, transaction.before, transaction.target)),
     ),
     ...(pendingResult.event === null ? [] : [pendingResult.event]),
     ...featureEvents,
@@ -400,6 +403,7 @@ function nextPending(
   state: UpdateState,
   transaction: UpdateTransaction,
   now: string,
+  messages: Messages,
 ): { confirmed: Pair; pending: PendingRestart | null; event: UpdateEvent | null } {
   const telegramEnabled = state.features.telegram === true;
   const previous = state.pending;
@@ -424,7 +428,7 @@ function nextPending(
           `hub-restart-pending:${pending.hubCommit}:${pending.restartAfter}`,
           "hub-restart-pending",
           "info",
-          "Хаб должен перезапуститься после завершения текущих сессий.",
+          messages.update.hubWillRestart(),
         )
         : null,
     };
@@ -442,7 +446,7 @@ async function finishNotifications(
   transaction: UpdateTransaction,
 ): Promise<Result<void>> {
   const completion = transaction.completion;
-  if (completion === null) return failure("У транзакции отсутствуют данные завершения.");
+  if (completion === null) return failure(ports.messages.update.noCompletionData());
   let current = state;
   for (let index = completion.notified ?? 0; index < completion.events.length; index += 1) {
     const event = completion.events[index];
@@ -485,7 +489,7 @@ async function startRollback(ports: UpdatePorts, state: UpdateState, reason: str
 
 async function continueRollback(ports: UpdatePorts, state: UpdateState): Promise<Result<void>> {
   const transaction = state.transaction;
-  if (transaction === null) return failure("Нет активного отката.");
+  if (transaction === null) return failure(ports.messages.update.noActiveRollback());
 
   if (transaction.phase === "rolling-back") {
     let resetFailure = "";
@@ -494,7 +498,7 @@ async function continueRollback(ports: UpdatePorts, state: UpdateState): Promise
       if (!reset.ok && resetFailure === "") resetFailure = `${repository}: ${reset.error}`;
     }
     if (resetFailure !== "") {
-      const reported = await reportRollbackFailure(ports, state, `Не удалось выполнить git reset --keep: ${resetFailure}`);
+      const reported = await reportRollbackFailure(ports, state, ports.messages.update.resetKeepFailed(resetFailure));
       return reported.ok ? failure(resetFailure) : reported;
     }
     const applying: UpdateTransaction = { ...transaction, phase: "rollback-applying" };
@@ -507,7 +511,7 @@ async function continueRollback(ports: UpdatePorts, state: UpdateState): Promise
   if (transaction.phase === "rollback-applying") {
     const applied = await ports.apply();
     if (!applied.ok) {
-      const reported = await reportRollbackFailure(ports, state, `Повторный rig apply при откате завершился с ошибкой: ${applied.error}`);
+      const reported = await reportRollbackFailure(ports, state, ports.messages.update.rollbackApplyFailed(applied.error));
       return reported.ok ? failure(applied.error) : reported;
     }
     if (transaction.restartService) {
@@ -523,13 +527,13 @@ async function continueRollback(ports: UpdatePorts, state: UpdateState): Promise
   if (transaction.phase === "rollback-restarting") {
     const restarted = await ports.service.restart();
     if (!restarted.ok) {
-      const reported = await reportRollbackFailure(ports, state, `Не удалось перезапустить службу хаба после отката: ${restarted.error}`);
+      const reported = await reportRollbackFailure(ports, state, ports.messages.update.rollbackRestartFailed(restarted.error));
       return reported.ok ? failure(restarted.error) : reported;
     }
     return finishRollback(ports, state, transaction);
   }
 
-  return failure("Транзакция не находится в состоянии отката.");
+  return failure(ports.messages.update.notRollingBack());
 }
 
 async function reportRollbackFailure(ports: UpdatePorts, state: UpdateState, detail: string): Promise<Result<void>> {
@@ -542,7 +546,7 @@ async function reportRollbackFailure(ports: UpdatePorts, state: UpdateState, det
     `update-failed:${transaction.target.rig}:${transaction.target.hub}:${transaction.failure}`,
     "update-failed",
     "error",
-    `${transaction.failure} ${detail}`,
+    ports.messages.update.failureWithDetail(transaction.failure, detail),
   ));
   return emitted.ok ? success(undefined) : emitted;
 }
@@ -560,7 +564,7 @@ async function finishRollback(
       `update-failed:${transaction.target.rig}:${transaction.target.hub}:${transaction.failure}`,
       "update-failed",
       "error",
-      `${transaction.failure} Клоны возвращены к подтверждённым версиям.`,
+      ports.messages.update.failureWithRestored(transaction.failure),
     ));
     if (!emitted.ok) return emitted;
     current = emitted.value;
@@ -576,7 +580,7 @@ async function finishRollback(
     `rollback:${transaction.target.rig}:${transaction.target.hub}`,
     "rollback",
     "warn",
-    "Клоны возвращены к подтверждённым версиям.",
+    ports.messages.update.restored(),
   ));
   return rollbackEmitted.ok ? failure(transaction.failure) : rollbackEmitted;
 }

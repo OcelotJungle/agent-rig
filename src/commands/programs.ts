@@ -2,6 +2,7 @@ import type { FeatureManifest, ProgramManifest } from "../feature.js";
 import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
 
+import { messagesFor } from "../messages.js";
 import { err, ok } from "../result.js";
 import { pathJoin } from "./shared.js";
 
@@ -44,6 +45,7 @@ export const checkPrograms = async (
 	enabled: ReadonlySet<string>,
 ): Promise<Result<string[]>> => {
 	const errors: string[] = [];
+	const messages = messagesFor(runtime.language);
 	const checked = new Map<string, ProgramManifest>();
 	for (const feature of features) {
 		if (!enabled.has(feature.name) || !feature.platforms.includes(runtime.platform)) continue;
@@ -56,10 +58,10 @@ export const checkPrograms = async (
 		if (await runtime.process.isAvailable(program.command)) continue;
 		if (program.systemPackage) {
 			errors.push(program.installCommand === null
-				? `Не найден системный пакет ${program.name}; в манифесте нет команды установки.`
-				: `Не найден системный пакет ${program.name}. Выполни: ${program.installCommand}`);
+				? messages.programs.systemPackageMissingNoCommand(program.name)
+				: messages.programs.systemPackageMissing(program.name, program.installCommand));
 		} else {
-			errors.push(`Не найдена программа ${program.name}; выполни rig install.`);
+			errors.push(messages.programs.programMissing(program.name));
 		}
 	}
 	return errors.length > 0 ? { ok: false, error: errors.join("\n") } : ok([]);

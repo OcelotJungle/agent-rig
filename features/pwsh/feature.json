@@ -1,6 +1,9 @@
 {
   "name": "pwsh",
-  "description": "Команда PowerShell в Telegram-хабе.",
+  "description": {
+    "en": "The PowerShell command in the Telegram hub.",
+    "ru": "Команда PowerShell в Telegram-хабе."
+  },
   "enabledByDefault": false,
   "platforms": [
     "windows"

@@ -1,4 +1,5 @@
 import type { FeatureManifest } from "../feature.js";
+import type { Messages } from "../messages.js";
 import type { Result } from "../result.js";
 import type { RigState } from "../state.js";
 import type { RuntimePorts } from "../ports.js";
@@ -6,6 +7,7 @@ import type { RuntimePorts } from "../ports.js";
 import { ensureClaudeImports } from "../rules/assemble-rules.js";
 import { resolvePlaceholders } from "../placeholders.js";
 import { mergeSettings } from "../settings/merge-settings.js";
+import { messagesFor } from "../messages.js";
 import { err, errorText, ok } from "../result.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { checkPrograms } from "./programs.js";
@@ -50,6 +52,7 @@ export const inspectRig = async (runtime: RuntimePorts): Promise<Result<RigInspe
 	const stateResult = await readRigState(runtime);
 	if (!stateResult.ok) return stateResult;
 	const state = stateResult.value;
+	const messages = messagesFor(runtime.language);
 	const featuresResult = await readFeatureManifests(runtime, state.paths.repo);
 	if (!featuresResult.ok) return featuresResult;
 	const features = featuresResult.value;
@@ -62,51 +65,51 @@ export const inspectRig = async (runtime: RuntimePorts): Promise<Result<RigInspe
 	const claudePath = pathJoin(runtime.home, ".claude", "CLAUDE.md");
 	const settingsPath = pathJoin(runtime.home, ".claude", "settings.json");
 	const [codex, generated, claude, settings] = await Promise.all([
-		readText(runtime, codexPath),
-		readText(runtime, generatedPath),
-		readText(runtime, claudePath),
-		readText(runtime, settingsPath),
+		readText(runtime, codexPath, messages),
+		readText(runtime, generatedPath, messages),
+		readText(runtime, claudePath, messages),
+		readText(runtime, settingsPath, messages),
 	]);
 	if (!codex.ok) problems.push(codex.error);
-	else if (!hasRuleBlock(codex.value)) problems.push(`Не найден собранный блок правил: ${codexPath}`);
+	else if (!hasRuleBlock(codex.value)) problems.push(messages.check.ruleBlockMissing(codexPath));
 	if (!generated.ok) problems.push(generated.error);
 	if (!claude.ok) problems.push(claude.error);
 	else {
 		const imports = ensureClaudeImports(claude.value);
 		const importLines = claude.value.split(/\r?\n/).map((line) => line.replace(/^\uFEFF/, ""));
 		if (imports !== claude.value || !importLines.includes(CODEX_IMPORT_LINE) || !importLines.includes(GENERATED_IMPORT_LINE)) {
-			problems.push(`Не найдены импорты rig в ${claudePath}`);
+			problems.push(messages.check.importsMissing(claudePath));
 		}
 	}
 	if (!settings.ok) problems.push(settings.error);
 	else {
-		const parsed = mergeSettings({ currentText: settings.value, desiredEntries: [], ownershipRecords: [], mode: "apply", backupPath: "" });
-		if (!parsed.ok) problems.push(`settings.json недопустим: ${parsed.error}`);
-		else if (expectedHooks.ok) problems.push(...missingSettingsHooks(settings.value, expectedHooks.value));
+		const parsed = mergeSettings({ currentText: settings.value, desiredEntries: [], ownershipRecords: [], mode: "apply", backupPath: "", messages });
+		if (!parsed.ok) problems.push(messages.check.settingsInvalid(parsed.error));
+		else if (expectedHooks.ok) problems.push(...missingSettingsHooks(settings.value, expectedHooks.value, messages));
 	}
-	if (!await runtime.process.isAvailable(runtime.pythonCommand)) problems.push(`Не найден интерпретатор ${runtime.pythonCommand}.`);
+	if (!await runtime.process.isAvailable(runtime.pythonCommand)) problems.push(messages.check.interpreterMissing(runtime.pythonCommand));
 	const programs = await checkPrograms(runtime, features, enabled);
 	if (!programs.ok) problems.push(programs.error);
 	const temporary = await runtime.temporary.createDirectory("rig-check-");
-	if (!temporary.ok) problems.push(`Не удалось создать временную папку для проверки: ${temporary.error}`);
+	if (!temporary.ok) problems.push(messages.check.temporaryCreateFailed(temporary.error));
 	else {
 		try {
 			if (expectedHooks.ok) {
-				const hooks = await runExpectedHooks(runtime, expectedHooks.value, temporary.value);
+				const hooks = await runExpectedHooks(runtime, expectedHooks.value, temporary.value, messages);
 				if (!hooks.ok) problems.push(hooks.error);
 			}
-			const projectTmp = await checkProjectTmp(runtime, state, temporary.value);
+			const projectTmp = await checkProjectTmp(runtime, state, temporary.value, messages);
 			if (!projectTmp.ok) problems.push(projectTmp.error);
 		} finally {
 			const removed = await runtime.temporary.removeDirectory(temporary.value);
-			if (!removed.ok) problems.push(`Не удалось удалить временную папку ${temporary.value}: ${removed.error}`);
+			if (!removed.ok) problems.push(messages.check.temporaryRemoveFailed(temporary.value, removed.error));
 		}
 	}
 	const environmentProblems: string[] = [];
 	if (state.features.telegram === true) {
 		const service = await checkServiceRunning(runtime);
 		if (!service.ok) environmentProblems.push(service.error);
-		else if (!service.value) problems.push("Служба telegram-hub не запущена.");
+		else if (!service.value) problems.push(messages.check.serviceNotRunning());
 	}
 	return ok({ problems, environmentProblems });
 };
@@ -159,7 +162,7 @@ const resolveExpectedHooks = (
 	return ok(hooks);
 };
 
-const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedHook[], temporaryPath: string): Promise<Result<void>> => {
+const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedHook[], temporaryPath: string, messages: Messages): Promise<Result<void>> => {
 	for (const hook of hooks) {
 		const hookEvent: Record<string, unknown> = {
 			hook_event_name: hook.event,
@@ -174,9 +177,9 @@ const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedH
 			input: JSON.stringify(hookEvent),
 			environment: { CLAUDE_PROJECT_DIR: temporaryPath },
 		});
-		if (!invoked.ok) return err(`Хук ${hook.feature}/${hook.event} не запустился: ${invoked.error}`);
+		if (!invoked.ok) return err(messages.check.hookNotStarted(hook.feature, hook.event, invoked.error));
 		if (invoked.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) {
-			return err(`Хук ${hook.feature}/${hook.event} завершился с кодом ${invoked.value.exitCode}: ${invoked.value.stderr || invoked.value.stdout}`);
+			return err(messages.check.hookExitCode(hook.feature, hook.event, invoked.value.exitCode, invoked.value.stderr || invoked.value.stdout));
 		}
 	}
 	return ok(undefined);
@@ -187,28 +190,28 @@ const toolFields = (event: string): Record<string, unknown> => TOOL_EVENTS.some(
 	? { tool_name: TOOL_TEST_NAME, tool_input: { command: TOOL_TEST_COMMAND } }
 	: {};
 
-const checkProjectTmp = async (runtime: RuntimePorts, state: RigState, temporaryPath: string): Promise<Result<void>> => {
+const checkProjectTmp = async (runtime: RuntimePorts, state: RigState, temporaryPath: string, messages: Messages): Promise<Result<void>> => {
 	const scriptPath = pathJoin(state.paths.repo, "base", "hooks", "project-tmp.sh");
 	const bash = runtime.platform === "windows" ? GIT_BASH_PATH : "bash";
 	const bashAvailable = await runtime.process.isAvailable(bash);
-	if (!bashAvailable) return err(`Не найдена программа ${bash} для проверки project-tmp.sh.`);
+	if (!bashAvailable) return err(messages.check.bashMissing(bash));
 	const result = await runtime.process.run(bash, [scriptPath], {
 		cwd: temporaryPath,
 		environment: { TEMP: temporaryPath, TMP: temporaryPath, TMPDIR: temporaryPath, CLAUDE_PROJECT_DIR: temporaryPath },
 	});
-	if (!result.ok) return err(`Не удалось запустить project-tmp.sh: ${result.error}`);
+	if (!result.ok) return err(messages.check.projectTmpNotStarted(result.error));
 	return result.value.exitCode === PROCESS_SUCCESS_EXIT_CODE
 		? ok(undefined)
-		: err(`project-tmp.sh завершился с кодом ${result.value.exitCode}: ${result.value.stderr || result.value.stdout}`);
+		: err(messages.check.projectTmpExitCode(result.value.exitCode, result.value.stderr || result.value.stdout));
 };
 
 // Checks that settings.json records each expected hook with the same event, matcher, command and args.
-const missingSettingsHooks = (text: string, hooks: readonly ExpectedHook[]): string[] => {
+const missingSettingsHooks = (text: string, hooks: readonly ExpectedHook[], messages: Messages): string[] => {
 	const settings = parseJson(text);
-	if (!settings.ok) return [`settings.json не разобран как JSON, хуки не проверены: ${settings.error}`];
+	if (!settings.ok) return [messages.check.settingsNotJson(settings.error)];
 	return hooks
 		.filter((hook) => !isRecordedHook(settings.value, hook))
-		.map((hook) => `Хук ${hook.feature}/${hook.event} не записан в settings.json.`);
+		.map((hook) => messages.check.hookNotRecorded(hook.feature, hook.event));
 };
 
 const parseJson = (text: string): Result<unknown> => {
@@ -243,10 +246,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 
 const isUnknownArray = (value: unknown): value is unknown[] => Array.isArray(value);
 
-const readText = async (runtime: RuntimePorts, path: string): Promise<Result<string>> => {
+const readText = async (runtime: RuntimePorts, path: string, messages: Messages): Promise<Result<string>> => {
 	try {
 		return ok(await runtime.fs.readText(path));
 	} catch (error) {
-		return err(`Не удалось прочитать ${path}: ${errorText(error)}`);
+		return err(messages.check.readFailed(path, errorText(error)));
 	}
 };

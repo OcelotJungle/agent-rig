@@ -1,6 +1,7 @@
 import type { DesiredSettingEntry, ListEntryOwnershipRecord, SettingsMergeRequest, SettingsOwnershipRecord } from "../../src/settings/merge-settings";
 
 import { describe, expect, it } from "bun:test";
+import { en } from "../../src/messages";
 import { mergeSettings } from "../../src/settings/merge-settings";
 
 const AUTO_MODE_ENTRY_INDEX = 1;
@@ -16,6 +17,7 @@ const request = (
   ownershipRecords,
   mode,
   backupPath: "settings.json.bak-2026-10-30",
+  messages: en,
 });
 
 const permission = (value = "Bash(python tools/codex-run.py)"): DesiredSettingEntry => ({

@@ -1,7 +1,9 @@
 import type { FileSystem } from "./file-system.js";
+import type { Language } from "./messages.js";
 import type { Result } from "./result.js";
 
 import { atomicWrite, joinPath } from "./file-system.js";
+import { isLanguage } from "./messages.js";
 import { err, errorText, ok } from "./result.js";
 
 // A write-ahead journal of one `apply`. `entries` hold the record changes that count only when the file at `path`
@@ -23,6 +25,8 @@ export type RigState = {
 	records: Record<string, string>;
 	badPairs: Array<{ repo: string; hub: string }>;
 	pendingHubRestart: string | null;
+	// Missing means English (DEFAULT_LANGUAGE).
+	language?: Language;
 	journal?: Journal;
 };
 
@@ -61,6 +65,7 @@ export const parseState = (text: string): Result<RigState> => {
 		!isBooleanRecord(value.features) || !isStringRecord(value.records) ||
 		!isUnknownArray(value.badPairs) || !value.badPairs.every(isBadPair) ||
 		!(value.pendingHubRestart === null || typeof value.pendingHubRestart === "string") ||
+		!(value.language === undefined || isLanguage(value.language)) ||
 		!(value.journal === undefined || isJournal(value.journal))) {
 		return err("state.json has an invalid shape");
 	}
@@ -72,6 +77,7 @@ export const parseState = (text: string): Result<RigState> => {
 		badPairs: value.badPairs,
 		pendingHubRestart: value.pendingHubRestart,
 	};
+	if (value.language !== undefined) state.language = value.language;
 	if (value.journal !== undefined) state.journal = value.journal;
 	return ok(state);
 };

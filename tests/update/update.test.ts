@@ -16,6 +16,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { en } from "../../src/messages";
 import { buildCronEntries, mergeCronEntries } from "../../src/update/cron";
 import { runPending, runUpdate } from "../../src/update/update";
 
@@ -679,7 +680,7 @@ describe("feature discovery and cron", () => {
   });
 
   test("cron escapes percent signs, which crontab turns into newlines", () => {
-    const result = buildCronEntries({ bunPath: "/opt/bun/bin/bun", rigPath: "/home/100%rig/cli.ts", path: "/usr/bin", logPath: "/home/rig/log%1/update.log" });
+    const result = buildCronEntries({ bunPath: "/opt/bun/bin/bun", rigPath: "/home/100%rig/cli.ts", path: "/usr/bin", logPath: "/home/rig/log%1/update.log" }, en);
     if (!result.ok) throw new Error(result.error);
 
     for (const job of result.value.jobs) {
@@ -712,8 +713,8 @@ describe("feature discovery and cron", () => {
   });
 
   test("cron refuses relative bun or rig paths", () => {
-    const bunResult = buildCronEntries({ bunPath: "bun", rigPath: "/home/rig/rig-cli.ts", path: "/usr/bin", logPath: "/home/rig/.agent-rig/update.log" });
-    const rigResult = buildCronEntries({ bunPath: "/opt/bun/bin/bun", rigPath: "rig-cli.ts", path: "/usr/bin", logPath: "/home/rig/.agent-rig/update.log" });
+    const bunResult = buildCronEntries({ bunPath: "bun", rigPath: "/home/rig/rig-cli.ts", path: "/usr/bin", logPath: "/home/rig/.agent-rig/update.log" }, en);
+    const rigResult = buildCronEntries({ bunPath: "/opt/bun/bin/bun", rigPath: "rig-cli.ts", path: "/usr/bin", logPath: "/home/rig/.agent-rig/update.log" }, en);
 
     expect(bunResult.ok).toBe(false);
     expect(rigResult.ok).toBe(false);
@@ -776,6 +777,7 @@ function makeHarness(
   const events: UpdateEvent[] = [];
   const calls: string[] = [];
   const ports: UpdatePorts = {
+    messages: en,
     git: {
       branchProblem: async () => ok(null),
       isClean: async (repository) => {
@@ -994,7 +996,7 @@ function cronEntries(): CronEntries {
     rigPath: "/home/rig/.local/bin/rig-cli.ts",
     path: "/usr/local/bin:/usr/bin",
     logPath: "/home/rig/.agent-rig/update.log",
-  });
+  }, en);
   if (!result.ok) throw new Error(result.error);
   return result.value;
 }

@@ -1,4 +1,5 @@
 import type { FileSystem } from "./file-system.js";
+import type { Language } from "./messages.js";
 import type { LockDependencies } from "./lock.js";
 import type { Platform } from "./feature.js";
 import type { Result } from "./result.js";
@@ -36,6 +37,9 @@ export type RuntimePorts = {
 	pythonCommand: string;
 	pathEnvironment: string;
 	platform: Platform;
+	// The language of everything rig prints. runCli reads it from state.json once per command run and sets it here;
+	// code that builds a text takes it from this field (or from messagesFor(language)) and never reads the disk for it.
+	language: Language;
 	clock: {
 		now(): Date;
 		nowText(): string;

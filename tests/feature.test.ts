@@ -6,10 +6,11 @@ import { describe, expect, test } from "bun:test";
 import { ok } from "../src/result.js";
 import { validateFeature } from "../src/feature.js";
 import { loadFeatures, resolveFeatureChange } from "../src/feature-graph.js";
+import { en } from "../src/messages.js";
 
 const manifest = (overrides: Partial<FeatureManifest> = {}): FeatureManifest => ({
 	name: "codex",
-	description: "Codex integration",
+	description: { en: "Codex integration", ru: "Интеграция Codex" },
 	enabledByDefault: false,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],
@@ -56,6 +57,7 @@ describe("feature manifests", () => {
 
 	test("rejects enable when dependencies are missing", () => {
 		const result = resolveFeatureChange({
+			messages: en,
 			features: [manifest({ name: "telegram", dependencies: ["codex"] }), manifest()],
 			enabled: [],
 			name: "telegram",
@@ -67,6 +69,7 @@ describe("feature manifests", () => {
 
 	test("rejects disabling a required feature", () => {
 		const result = resolveFeatureChange({
+			messages: en,
 			features: [manifest({ name: "telegram", dependencies: ["codex"] }), manifest()],
 			enabled: ["telegram", "codex"],
 			name: "codex",
@@ -79,11 +82,13 @@ describe("feature manifests", () => {
 	test("explains platform mismatch and rejects dependency cycles", () => {
 		const windowsOnly = manifest({ name: "volunteers", platforms: ["windows"] });
 		const unavailable = resolveFeatureChange({
+			messages: en,
 			features: [windowsOnly], enabled: [], name: "volunteers", action: "enable", platform: "linux",
 		});
 		expect(unavailable).toEqual({ ok: false, error: expect.stringContaining("Windows") });
 
 		const cycle = resolveFeatureChange({
+			messages: en,
 			features: [manifest({ name: "a", dependencies: ["b"] }), manifest({ name: "b", dependencies: ["a"] })],
 			enabled: [], name: "a", action: "enable", platform: "linux",
 		});

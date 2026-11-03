@@ -1,6 +1,9 @@
 {
   "name": "rtk",
-  "description": "Сокращение вывода инструментов с RTK.",
+  "description": {
+    "en": "Shorter tool output with RTK.",
+    "ru": "Сокращение вывода инструментов с RTK."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

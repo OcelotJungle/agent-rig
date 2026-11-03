@@ -29,7 +29,7 @@ export FAKE_SYSTEMCTL_HUB_WONT_START
 if rig update --pending > "$RIG_TEST_ROOT/pending-timeout.log" 2>&1; then
 	rig_test_fail "rig update --pending succeeded although the hub did not start"
 fi
-grep -Fq "Хаб не сообщил о готовности за 5 минут" "$RIG_TEST_ROOT/pending-timeout.log" || rig_test_fail "hub timeout message was not reported"
+grep -Fq "The hub did not report ready within 5 minutes" "$RIG_TEST_ROOT/pending-timeout.log" || rig_test_fail "hub timeout message was not reported"
 
 [ "$(git -C "$RIG_TEST_REPO" rev-parse HEAD)" = "$rig_head_before" ] || rig_test_fail "rig repository did not roll back after hub timeout"
 [ "$(git -C "$RIG_TEST_HUB" rev-parse HEAD)" = "$hub_head_before" ] || rig_test_fail "hub repository did not roll back after hub timeout"

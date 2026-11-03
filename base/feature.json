@@ -1,6 +1,9 @@
 {
   "name": "base",
-  "description": "Базовые правила и хуки.",
+  "description": {
+    "en": "Base rules and hooks.",
+    "ru": "Базовые правила и хуки."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

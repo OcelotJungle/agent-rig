@@ -42,7 +42,7 @@ printf 'release\n' > "$gate_release"
 wait "$ACTIVE_RIG_PID"
 ACTIVE_RIG_PID=""
 wait "$second_pid"
-grep -qF "Другая команда rig работает, жду её конца." "$RIG_TEST_ROOT/second.log" || rig_test_fail "second command did not print the wait line"
+grep -qF "Another rig command is running, waiting for it to finish." "$RIG_TEST_ROOT/second.log" || rig_test_fail "second command did not print the wait line"
 unset FAKE_CLAUDE_GATE_ENTER FAKE_CLAUDE_GATE_RELEASE
 [ "$(rig_test_feature_flag superpowers)" = "false" ] || rig_test_fail "first feature transition was lost"
 [ "$(rig_test_feature_flag js-ts-rules)" = "true" ] || rig_test_fail "second feature transition was lost"

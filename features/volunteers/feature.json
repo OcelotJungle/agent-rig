@@ -1,6 +1,9 @@
 {
   "name": "volunteers",
-  "description": "Делегирование рядовой работы волонтёрским моделям.",
+  "description": {
+    "en": "Delegating routine work to volunteer models.",
+    "ru": "Делегирование рядовой работы волонтёрским моделям."
+  },
   "enabledByDefault": false,
   "platforms": [
     "windows"

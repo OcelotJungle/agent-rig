@@ -1,6 +1,9 @@
 {
   "name": "reflection",
-  "description": "Рефлексия после ходов Claude Code.",
+  "description": {
+    "en": "Reflection after Claude Code turns.",
+    "ru": "Рефлексия после ходов Claude Code."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

@@ -6,6 +6,7 @@ import type { RuntimePorts } from "../ports.js";
 import { applyRig } from "../apply.js";
 import { loadFeatures } from "../feature-graph.js";
 import { buildCronEntries, mergeCronEntries } from "../update/cron.js";
+import { messagesFor } from "../messages.js";
 import { parseState } from "../state.js";
 import { err, errorText, ok } from "../result.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
@@ -25,6 +26,7 @@ export const installRig = async (
 	dev: boolean,
 	writeLine: (line: string) => void,
 ): Promise<Result<void>> => withRigLock(runtime, writeLine, async () => {
+	const messages = messagesFor(runtime.language);
 	const paths = dev
 		? await resolveDevPaths(runtime)
 		: ok({ repo: pathJoin(runtime.home, SERVER_REPO_PATH), hub: pathJoin(runtime.home, SERVER_HUB_PATH) });
@@ -48,7 +50,7 @@ export const installRig = async (
 	const enabled = enabledNames(initialized, loaded.value);
 	const programs = await installMissingPrograms(runtime, loaded.value, new Set(enabled));
 	if (!programs.ok) return programs;
-	for (const missing of programs.value) writeLine(`Установи системный пакет ${missing.name}: ${missing.command}`);
+	for (const missing of programs.value) writeLine(messages.programs.installPackage(missing.name, missing.command));
 	const applied = await applyRig(runtime, { state: initialized, mode: "install" });
 	if (!applied.ok) return applied;
 	const shim = await installShim(runtime, paths.value.repo);
@@ -57,16 +59,17 @@ export const installRig = async (
 		const cron = await installCron(runtime, paths.value.repo);
 		if (!cron.ok) return cron;
 	}
-	writeLine(dev ? "Установка rig в режиме dev завершена." : "Установка rig на сервере завершена.");
+	writeLine(messages.install.done(dev));
 	return ok(undefined);
 });
 
 const resolveDevPaths = async (runtime: RuntimePorts): Promise<Result<{ repo: string; hub: string }>> => {
+	const messages = messagesFor(runtime.language);
 	const result = await runtime.process.run("git", ["rev-parse", "--show-toplevel"], { cwd: runtime.currentDirectory });
-	if (!result.ok) return err(`Не удалось определить клон agent-rig: ${result.error}`);
-	if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(`Текущая папка не является git-клоном: ${result.value.stderr || result.value.stdout}`);
+	if (!result.ok) return err(messages.install.cloneNotFound(result.error));
+	if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(messages.install.notGitClone(result.value.stderr || result.value.stdout));
 	const repo = result.value.stdout.trim();
-	if (repo.length === 0) return err("Не удалось определить путь текущего клона agent-rig.");
+	if (repo.length === 0) return err(messages.install.clonePathUnknown());
 	const normalized = repo.replaceAll("\\", "/");
 	const worktreeMarker = "/.worktrees/";
 	const worktreeIndex = normalized.lastIndexOf(worktreeMarker);
@@ -82,7 +85,7 @@ const readExistingState = async (runtime: RuntimePorts): Promise<Result<RigState
 		return parsed.ok ? ok(parsed.value) : parsed;
 	} catch (error) {
 		if (isNotFound(error)) return ok(null);
-		return err(`Не удалось прочитать state.json: ${errorText(error)}`);
+		return err(messagesFor(runtime.language).install.stateReadFailed(errorText(error)));
 	}
 };
 
@@ -101,20 +104,21 @@ const installShim = async (runtime: RuntimePorts, repoPath: string): Promise<Res
 };
 
 const installCron = async (runtime: RuntimePorts, repoPath: string): Promise<Result<void>> => {
+	const messages = messagesFor(runtime.language);
 	if (!await runtime.process.isAvailable("crontab")) {
-		return err(`Не найдена программа crontab. Установи пакет командой: ${CRON_INSTALL_COMMAND}`);
+		return err(messages.install.crontabMissing(CRON_INSTALL_COMMAND));
 	}
 	const entries = buildCronEntries({
 		bunPath: runtime.executablePath,
 		rigPath: runtime.resolvePath(repoPath, "src", "cli.ts"),
 		path: runtime.pathEnvironment,
 		logPath: pathJoin(runtime.home, UPDATE_LOG_PATH),
-	});
+	}, messages);
 	if (!entries.ok) return entries;
 	const listed = await runtime.process.run("crontab", ["-l"], { environment: { LC_ALL: CRON_LIST_LOCALE } });
 	if (!listed.ok) return listed;
 	if (listed.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE && !listed.value.stderr.toLowerCase().includes("no crontab for")) {
-		return err(`Не удалось прочитать crontab: ${listed.value.stderr || listed.value.stdout}`);
+		return err(messages.install.crontabReadFailed(listed.value.stderr || listed.value.stdout));
 	}
 	const existing = listed.value.exitCode === PROCESS_SUCCESS_EXIT_CODE ? listed.value.stdout : "";
 	const merged = mergeCronEntries(existing, entries.value);
@@ -122,7 +126,7 @@ const installCron = async (runtime: RuntimePorts, repoPath: string): Promise<Res
 	const updated = await runtime.process.run("crontab", ["-"], { input: merged });
 	return updated.ok && updated.value.exitCode === PROCESS_SUCCESS_EXIT_CODE
 		? ok(undefined)
-		: err(updated.ok ? `Не удалось записать crontab: ${updated.value.stderr || updated.value.stdout}` : updated.error);
+		: err(updated.ok ? messages.install.crontabWriteFailed(updated.value.stderr || updated.value.stdout) : updated.error);
 };
 
 const enabledNames = (state: RigState, features: readonly FeatureManifest[]): string[] =>

@@ -10,7 +10,7 @@ const OWN_PID = 1;
 const OWN_START = 2;
 const POLL_INTERVAL_MS = 1;
 const RELEASE_AFTER_SLEEPS = 3;
-const WAIT_LINE = "Другая команда rig работает, жду её конца.";
+const WAIT_LINE = "Another rig command is running, waiting for it to finish.";
 
 describe("CLI", () => {
 	test("parses foundation and later-task command forms", () => {

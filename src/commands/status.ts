@@ -1,8 +1,10 @@
 import type { FeatureView } from "./feature.js";
+import type { Language, Messages } from "../messages.js";
 import type { RigEvent } from "../events.js";
 import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
 
+import { messagesFor } from "../messages.js";
 import { err, ok } from "../result.js";
 import { listFeatureViews } from "./feature.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
@@ -59,21 +61,24 @@ export const readStatus = async (runtime: RuntimePorts): Promise<Result<StatusVi
 	});
 };
 
-export const formatStatus = (status: StatusView): string[] => {
+// The language is not part of StatusView (the hub validates its JSON strictly); the text form gets it as an argument.
+export const formatStatus = (status: StatusView, language: Language): string[] => {
+	const messages = messagesFor(language);
 	const lines = [
-		`Режим: ${status.mode}`,
-		`agent-rig: ${formatRepositoryVersion(status.releases.rig, status.versions.rig)}`,
-		`hub: ${formatRepositoryVersion(status.releases.hub, status.versions.hub)}`,
-		`Перезапуск хаба ожидается: ${status.pendingHubRestart === null ? "нет" : "да"}`,
+		messages.status.mode(status.mode),
+		`agent-rig: ${formatRepositoryVersion(status.releases.rig, status.versions.rig, messages)}`,
+		`hub: ${formatRepositoryVersion(status.releases.hub, status.versions.hub, messages)}`,
+		messages.status.hubRestartPending(status.pendingHubRestart !== null),
+		messages.status.language(messages.languageNames[language]),
 	];
-	for (const feature of status.features) lines.push(`Фича ${feature.name}: ${feature.enabled ? "включена" : "выключена"}${feature.platformAllowed ? "" : " (недоступна на этой платформе)"}`);
-	if (status.lastUpdate !== null) lines.push(`Последнее обновление: ${status.lastUpdate.time} — ${status.lastUpdate.text}`);
-	for (const error of status.errors) lines.push(`Ошибка ${error.type}: ${error.text}`);
+	for (const feature of status.features) lines.push(messages.status.featureLine(feature.name, feature.enabled, feature.platformAllowed));
+	if (status.lastUpdate !== null) lines.push(messages.status.lastUpdate(status.lastUpdate.time, status.lastUpdate.text));
+	for (const error of status.errors) lines.push(messages.status.errorLine(error.type, error.text));
 	return lines;
 };
 
-const formatRepositoryVersion = (release: string | null, commit: string | null): string => {
-	if (commit === null) return "неизвестно";
+const formatRepositoryVersion = (release: string | null, commit: string | null, messages: Messages): string => {
+	if (commit === null) return messages.status.unknownVersion();
 	return release === null ? commit : `${release} (${commit})`;
 };
 

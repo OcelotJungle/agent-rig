@@ -1,6 +1,6 @@
 {
 	"name": "example",
-	"description": "Example manifest used by schema tests",
+	"description": { "en": "Example manifest used by schema tests", "ru": "Пример манифеста для тестов схемы" },
 	"enabledByDefault": false,
 	"platforms": ["linux", "windows", "darwin"],
 	"dependencies": [],

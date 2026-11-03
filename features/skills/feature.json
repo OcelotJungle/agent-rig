@@ -1,6 +1,9 @@
 {
   "name": "skills",
-  "description": "Повторно используемые навыки Claude Code.",
+  "description": {
+    "en": "Reusable Claude Code skills.",
+    "ru": "Повторно используемые навыки Claude Code."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",

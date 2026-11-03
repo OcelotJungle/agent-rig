@@ -256,6 +256,7 @@ export const createMemoryRuntime = (platform: RuntimePorts["platform"] = "linux"
 		},
 	};
 	const runtime: RuntimePorts = {
+		language: "en",
 		fs,
 		assetFs,
 		process: {
@@ -373,7 +374,7 @@ export const seedFeature = (fs: MemoryFileSystem, repo: string, feature: Record<
 
 export const baseManifest = (): Record<string, unknown> => ({
 	name: "base",
-	description: "Base",
+	description: { en: "Base", ru: "Базовая" },
 	enabledByDefault: true,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],
@@ -390,7 +391,7 @@ export const baseManifest = (): Record<string, unknown> => ({
 
 export const featureManifest = (name: string, options: Record<string, unknown> = {}): Record<string, unknown> => ({
 	name,
-	description: `Feature ${name}`,
+	description: { en: `Feature ${name}`, ru: `Фича ${name}` },
 	enabledByDefault: false,
 	platforms: ["linux", "windows", "darwin"],
 	dependencies: [],

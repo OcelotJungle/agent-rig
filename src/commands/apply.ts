@@ -2,6 +2,7 @@ import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
 
 import { applyRig } from "../apply.js";
+import { messagesFor } from "../messages.js";
 import { ok } from "../result.js";
 import { readRigState, withRigLock } from "./shared.js";
 
@@ -11,6 +12,7 @@ export const applyCommand = async (runtime: RuntimePorts, writeLine: (line: stri
 		if (!state.ok) return state;
 		const applied = await applyRig(runtime, { state: state.value, mode: "apply" });
 		if (!applied.ok) return applied;
-		writeLine(applied.value.changedFiles.length === 0 ? "Конфигурация rig уже актуальна." : `Обновлено файлов: ${applied.value.changedFiles.length}.`);
+		const messages = messagesFor(runtime.language);
+		writeLine(applied.value.changedFiles.length === 0 ? messages.apply.upToDate() : messages.apply.updatedFiles(applied.value.changedFiles.length));
 		return ok(undefined);
 	});

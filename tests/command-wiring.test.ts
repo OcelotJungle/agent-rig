@@ -31,7 +31,7 @@ const REFLECT_TEST_TIMEOUT_SECONDS = 5;
 const NO_FILE_OPERATIONS = 0;
 // RestartSec=2 in the hub's install-hub-service.sh, plus the 1 s recheck margin in check.ts.
 const RESTART_WAIT_MS = 3000;
-const SERVICE_STOPPED_TEXT = "Служба telegram-hub не запущена.";
+const SERVICE_STOPPED_TEXT = "The telegram-hub service is not running.";
 const BUS_FAILURE_TEXT = "Failed to connect to bus: No medium found";
 const FIRST_ASK = 1;
 // The first question and the two rechecks.
@@ -255,7 +255,7 @@ describe("command wiring", () => {
 		const result = await checkRig(harness.runtime);
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
-		expect(result.error).toContain(`Не найден собранный блок правил: ${HOME}/.codex/AGENTS.md`);
+		expect(result.error).toContain(`The built rules block was not found: ${HOME}/.codex/AGENTS.md`);
 	});
 
 	test("check fails when settings.json does not carry an enabled feature's hook", async () => {
@@ -268,7 +268,7 @@ describe("command wiring", () => {
 		const result = await checkRig(harness.runtime);
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
-		expect(result.error).toContain("Хук reflection/Stop не записан в settings.json.");
+		expect(result.error).toContain("The hook reflection/Stop is not recorded in settings.json.");
 	});
 
 	test("check fails when settings.json records an enabled feature's hook under another matcher", async () => {
@@ -281,7 +281,7 @@ describe("command wiring", () => {
 		const result = await checkRig(harness.runtime);
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
-		expect(result.error).toContain("Хук reflection/Stop не записан в settings.json.");
+		expect(result.error).toContain("The hook reflection/Stop is not recorded in settings.json.");
 	});
 
 	test("a PreToolUse test event carries a tool name and a tool input so the hook logic runs", async () => {
@@ -396,7 +396,7 @@ describe("command wiring", () => {
 		expect(result.ok).toBe(false);
 		if (result.ok) return;
 		expect(result.error).toContain("settings.json");
-		expect(result.error).toContain("ничего не записал");
+		expect(result.error).toContain("apply wrote nothing");
 		expect(harness.fs.operations).toHaveLength(NO_FILE_OPERATIONS);
 		expect(harness.processCalls).toHaveLength(NO_FILE_OPERATIONS);
 	});
@@ -484,7 +484,7 @@ describe("command wiring", () => {
 		if (!status.ok) return;
 		expect(status.value.versions).toEqual({ rig: "rig-commit", hub: "rig-commit" });
 		expect(status.value.releases).toEqual({ rig: "0.2.0", hub: "1.4.0" });
-		const lines = formatStatus(status.value);
+		const lines = formatStatus(status.value, "en");
 		expect(lines).toContain("agent-rig: 0.2.0 (rig-commit)");
 		expect(lines).toContain("hub: 1.4.0 (rig-commit)");
 	});
@@ -499,7 +499,7 @@ describe("command wiring", () => {
 		expect(status.ok).toBe(true);
 		if (!status.ok) return;
 		expect(status.value.releases).toEqual({ rig: null, hub: null });
-		const lines = formatStatus(status.value);
+		const lines = formatStatus(status.value, "en");
 		expect(lines).toContain("agent-rig: old-commit");
 		expect(lines).toContain("hub: old-commit");
 	});
@@ -513,9 +513,9 @@ describe("command wiring", () => {
 		if (!status.ok) return;
 		const raw = '{"hubCommit":"abc"}';
 
-		expect(formatStatus(status.value)).toContain("Перезапуск хаба ожидается: нет");
-		const waiting = formatStatus({ ...status.value, pendingHubRestart: raw });
-		expect(waiting).toContain("Перезапуск хаба ожидается: да");
+		expect(formatStatus(status.value, "en")).toContain("Hub restart pending: no");
+		const waiting = formatStatus({ ...status.value, pendingHubRestart: raw }, "en");
+		expect(waiting).toContain("Hub restart pending: yes");
 		expect(waiting.join("\n")).not.toContain(raw);
 	});
 
@@ -529,7 +529,7 @@ describe("command wiring", () => {
 		expect(status.ok).toBe(true);
 		if (!status.ok) return;
 		expect(status.value.releases).toEqual({ rig: null, hub: null });
-		expect(formatStatus(status.value)).toContain("agent-rig: неизвестно");
+		expect(formatStatus(status.value, "en")).toContain("agent-rig: unknown");
 	});
 });
 

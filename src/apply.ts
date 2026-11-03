@@ -14,6 +14,7 @@ import { hashText } from "./content-hash.js";
 import { assembleRules, ensureClaudeImports, executeRuleFilePlan, planRuleFiles } from "./rules/assemble-rules.js";
 import { resolveJsonPlaceholders, resolvePlaceholders } from "./placeholders.js";
 import { mergeSettings } from "./settings/merge-settings.js";
+import { messagesFor } from "./messages.js";
 import { atomicWrite, joinPath } from "./file-system.js";
 import { err, errorText, ok } from "./result.js";
 import { loadFeatures } from "./feature-graph.js";
@@ -108,8 +109,8 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 	const desiredSettingsResult = buildDesiredSettings(manifests, enabled, runtime, placeholders, request.state.mode);
 	if (!desiredSettingsResult.ok) return desiredSettingsResult;
 	const settingRecords = parseSettingRecords(records);
-	const invalidSettings = (error: string): string =>
-		`settings.json недопустим: ${error}. Исправь файл ${settingsPath}; apply ничего не записал.`;
+	const messages = messagesFor(runtime.language);
+	const invalidSettings = (error: string): string => messages.apply.settingsInvalid(error, settingsPath);
 	// A first merge only checks that settings.json can be merged. Nothing is written until every plan is valid.
 	const draftMerge = mergeSettings({
 		currentText: settingsRead.value ?? EMPTY_SETTINGS_TEXT,
@@ -117,6 +118,7 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 		ownershipRecords: settingRecords,
 		mode: request.mode,
 		backupPath: settingsBackupBase,
+		messages,
 	});
 	if (!draftMerge.ok) return err(invalidSettings(draftMerge.error));
 	const pluginRecords = readPluginRecords(records);
@@ -174,6 +176,7 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 		ownershipRecords: settingRecords,
 		mode: request.mode,
 		backupPath: settingsBackup.value.path,
+		messages,
 	});
 	if (!settingsMerge.ok) return err(invalidSettings(settingsMerge.error));
 
@@ -187,11 +190,11 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 
 	const plannedEvents: PlannedEvent[] = [];
 	for (const repair of assembled.repairs) {
-		plannedEvents.push({ type: "block-restored", level: "warn", text: `Восстановлен блок правил rig в ${repair === "codex" ? codexPath : repair}.` });
+		plannedEvents.push({ type: "block-restored", level: "warn", text: messages.apply.blockRestored(repair === "codex" ? codexPath : repair) });
 	}
 	for (const event of settingsMerge.events) plannedEvents.push({ type: event.type, level: event.level, text: event.text });
 	for (const event of assetPlanned.value.events) {
-		plannedEvents.push({ type: event.type, level: "warn", text: `Изменённый файл сохранён: ${event.path}` });
+		plannedEvents.push({ type: event.type, level: "warn", text: messages.apply.changedFileSaved(event.path) });
 	}
 	const events = [...leftoverEvents, ...planEvents(journalDependencies, plannedEvents)];
 

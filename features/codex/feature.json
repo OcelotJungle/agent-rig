@@ -1,6 +1,9 @@
 {
   "name": "codex",
-  "description": "Делегирование задач через Codex.",
+  "description": {
+    "en": "Task delegation through Codex.",
+    "ru": "Делегирование задач через Codex."
+  },
   "enabledByDefault": true,
   "platforms": [
     "linux",
