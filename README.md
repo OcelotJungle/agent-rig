@@ -72,7 +72,6 @@ If the clone is in `.worktrees/`, the project root is the directory above `.work
 
 - `scripts/prepare-server.sh` does the only install step that needs root: packages, `cron`, linger, the channel permission.
 - `scripts/test-docker.sh` builds the Ubuntu 24.04 image `agent-rig-ubuntu-24.04-tests` and runs the scenarios from `tests/docker/` in it. One scenario runs by a prefix of its file name: `scripts/test-docker.sh 04`.
-- `scripts/verify-rules-verbatim.py` (run: `python -I -X utf8 scripts/verify-rules-verbatim.py`) compares the rule pieces of the enabled features with the live `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` when moving manual rules to rig entries. It compares against the English rule texts, so live rules written in another language are reported as differences.
 
 ## License
 
