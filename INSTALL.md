@@ -103,7 +103,7 @@ If some system packages are missing, the command prints lines of the form `Insta
 
 If there is no `crontab`, the command prints "The crontab program was not found. Install the package with: sudo apt-get install cron". Install the package and run the install again. By this moment the `rig` command has already been created.
 
-Success criterion: the last line of the output is "rig server install finished.", exit code 0. Also check `command -v rig` (it must find `~/.local/bin/rig`) and `crontab -l`: it has two lines with the marks `# agent-rig-update-hourly` and `# agent-rig-update-pending`.
+Success criterion: the last line of the output is "rig installation on the server is complete.", exit code 0. Also check `command -v rig` (it must find `~/.local/bin/rig`) and `crontab -l`: it has two lines with the marks `# agent-rig-update-hourly` and `# agent-rig-update-pending`.
 
 ### Step 7. Hub preparation
 
@@ -181,7 +181,7 @@ Success criterion: the last line is "rig checks passed." and the exit code is 0.
 
 `rig status`
 
-Success criterion: there is a line `Mode: server`, `agent-rig:` and `hub:` show versions and full commit hashes in parentheses (or only the hash if the version is unknown), and features have the status `enabled` or `disabled`. Lines `Error …` at the end mean errors from `~/.agent-rig/events.jsonl` recorded after the last successful update; older ones remain only in the file.
+Success criterion: there is a line `Mode: server`, `agent-rig:` and `hub:` show versions and full commit hashes in parentheses (or only the hash if the version is unknown), and features are listed as `Feature <name>: enabled` or `Feature <name>: disabled`. Lines `Error <type>: <text>` at the end mean errors from `~/.agent-rig/events.jsonl` recorded after the last successful update; older ones remain only in the file.
 
 ### Step 12. Codex login
 
@@ -205,13 +205,13 @@ If you want rig and the Telegram bot to talk Russian: `rig language ru` in the t
 
 ## If a step fails
 
-A system package is missing. It shows as the line `Install the system package <name>: <command>` during `rig install` or `rig feature <name> enable`, and in `rig check` as the line "System package <name> not found. Run: <command>". Run the given command and repeat the step.
+A system package is missing. It shows as the line `Install the system package <name>: <command>` during `rig install` or `rig feature <name> enable`, and in `rig check` as the line "The system package <name> was not found. Run: <command>". Run the given command and repeat the step.
 
-A program is not found. `rig check` writes "Program <name> not found; run rig install.". Run `rig install` again.
+A program is not found. `rig check` writes "The program <name> was not found; run rig install.". Run `rig install` again.
 
 `rig check` prints all problems as a list, one per line, not only the first. Fix all of them, run `rig check` again.
 
-A hook failed. The line "Hook <feature>/<event> exited with code …". Check that `python3` and `bash` are available in PATH.
+A hook failed. The line "The hook <feature>/<event> exited with code …". Check that `python3` and `bash` are available in PATH.
 
 "The telegram-hub service is not running." This is expected until step 9 is done (`rig install` does not run the check, and only step 9 installs the service). If the step is done, see `systemctl --user status telegram-hub.service`, `journalctl --user -u telegram-hub.service -n 50` and `~/.claude/channels/telegram-hub/hub.log`; the reading of log lines (`no TELEGRAM_BOT_TOKEN`, `bot token rejected` and others) is given in step 9.1.
 
