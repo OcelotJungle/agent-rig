@@ -1,369 +1,447 @@
-# agent-rig: обвязка для Claude Code и Codex как одно приложение
+# agent-rig: the harness for Claude Code and Codex as one application
 
-Спека живая: описывает, как система устроена сейчас, и меняется вместе с решениями.
+The spec is living: it describes how the system works now and changes together with the decisions.
 
-## Зачем
+## Why
 
-Обвязка агента обычно складывается из разрозненных хуков, правил и скриптов в `~/.claude`. Такой набор нельзя отдать
-другому человеку, у него нет истории и нет единого способа что-то включить или выключить. Нужно, чтобы обвязку можно
-было развернуть на сервере с Ubuntu, чтобы обновления приходили туда сами, без ручного вмешательства, а личные правила
-пользователя при этом не терялись.
+An agent's harness usually grows out of scattered hooks, rules and scripts in `~/.claude`. Such a set cannot be handed to
+another person, has no history and has no single way to turn something on or off. The harness has to be deployable on an
+Ubuntu server, updates have to arrive there by themselves, without manual work, and the user's personal rules must not be
+lost along the way.
 
-Успех: агент пользователя разворачивает всё по `INSTALL.md`, дальше обновления приходят сами, фичи переключаются из
-Телеграма, а разработчик `rig` работает из рабочей копии того же репозитория.
+Success: the user's agent deploys everything from `INSTALL.md`, updates then arrive by themselves, features are switched
+from Telegram, and the developer of `rig` works from a working copy of the same repository.
 
-## Термины
+## Terms
 
-- **Сервер:** машина пользователя с Ubuntu 24.04. Режим `server`, автообновление включено.
-- **Режим разработки:** для тех, кто разрабатывает сам `rig` на Windows с Git Bash: рабочая копия и рабочие ветки.
-  Режим `dev`, автообновления нет.
-- **Хаб:** Телеграм-хаб, репозиторий `claude-telegram-hub`. Это не приложение `rig`.
-- **Основные файлы:** `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.codex/AGENTS.md`.
-- **Общие правила:** текст для всех агентов, он лежит в блоке `AGENTS.md`.
-- **Правила Claude:** текст только для Claude, он лежит в собранном файле.
-- **Запись `rig`:** ключ настроек, запись хука, плагин, файл агента или навыка, которые поставил `rig`.
+- **Server:** the user's machine with Ubuntu 24.04. Mode `server`, auto-update on.
+- **Development mode:** for those who develop `rig` itself on Windows with Git Bash: a working copy and working
+  branches. Mode `dev`, no auto-update.
+- **Hub:** the Telegram hub, the `claude-telegram-hub` repository. It is not the `rig` application.
+- **Main files:** `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, `~/.codex/AGENTS.md`.
+- **Shared rules:** text for all agents, it lives in the `AGENTS.md` block.
+- **Claude rules:** text for Claude only, it lives in the generated file.
+- **`rig` entry:** a settings key, a hook entry, a plugin, an agent or skill file installed by `rig`.
 
-## Цели
+## Goals
 
-- Один публичный репозиторий `agent-rig` и команда `rig`: установка, фичи, обновление, статус.
-- База, которая работает с одним Claude Code, и отдельные фичи поверх неё.
-- Личные правила и настройки, которые не попадают в репозиторий и не меняются при обновлении.
-- Автообновление на сервере с откатом при сбое.
-- Хаб как надстройка: его команды передаются в `rig`, события `rig` приходят в Телеграм.
+- One public repository `agent-rig` and the `rig` command: install, features, update, status.
+- A base that works with Claude Code alone, and separate features on top of it.
+- Personal rules and settings that do not end up in the repository and do not change on update.
+- Auto-update on the server with rollback on failure.
+- The hub as an add-on: its commands are passed to `rig`, `rig` events arrive in Telegram.
+- English by default, Russian by one shared setting that `rig` owns and the hub follows.
 
-## Не цели
+## Non-goals
 
-- Задавать правила разработки. Цель — обвязка; конвенции JS/TS только опциональной фичей.
-- Постоянная служба `rig`. Падать должно быть нечему.
-- Работа хаба без `rig`: у хаба нет смысла работать в отрыве от остального.
-- Настройки фич отдельно на проект: фичи действуют на всю машину.
-- Перенос личных файлов на другую машину и их резервные копии.
+- Setting development rules. The goal is the harness; JS/TS conventions are only an optional feature.
+- A permanent `rig` service. There must be nothing to crash.
+- The hub working without `rig`: there is no point in the hub working apart from the rest.
+- Per-project feature settings: features apply to the whole machine.
+- Moving personal files to another machine and their backups.
 
-## Части и пути
+## Parts and paths
 
-| Часть | Что это | Где |
+| Part | What it is | Where |
 |---|---|---|
-| `rig` | Команда на Bun/TS без постоянного процесса | репозиторий `agent-rig`, вызов через `~/.local/bin/rig` |
-| Клон `agent-rig` | Код, база, фичи | сервер: `~/.agent-rig/repo`; разработчик: своя рабочая копия |
-| Клон хаба | Код хаба | сервер: `~/.agent-rig/hub`; разработчик: своя рабочая копия |
-| База | То же, что фича, но не выключается | `<клон>/base/` |
-| Фичи | Папки с манифестом, правилами, хуками, навыками | `<клон>/features/<name>/` |
-| Состояние | Режим, пути клонов, включённые фичи, записи `rig`, плохие коммиты | `~/.agent-rig/state.json` |
-| Собранные правила | Правила Claude, файл принадлежит `rig` | `~/.agent-rig/generated/CLAUDE.md` |
-| События | Файл для хаба, формат ниже | `~/.agent-rig/events.jsonl` |
-| Журнал | Вывод запусков по крону | `~/.agent-rig/update.log` |
+| `rig` | A Bun/TS command with no permanent process | the `agent-rig` repository, called through `~/.local/bin/rig` |
+| `agent-rig` clone | Code, base, features | server: `~/.agent-rig/repo`; developer: their own working copy |
+| Hub clone | Hub code | server: `~/.agent-rig/hub`; developer: their own working copy |
+| Base | The same as a feature, but cannot be turned off | `<clone>/base/` |
+| Features | Folders with a manifest, rules, hooks, skills | `<clone>/features/<name>/` |
+| State | Mode, clone paths, enabled features, `rig` entries, bad commits, language | `~/.agent-rig/state.json` |
+| Generated rules | Claude rules, the file belongs to `rig` | `~/.agent-rig/generated/CLAUDE.md` |
+| Events | A file for the hub, format below | `~/.agent-rig/events.jsonl` |
+| Log | Output of cron runs | `~/.agent-rig/update.log` |
 
-Пути клонов хранятся в `state.json`, код их не зашивает. Удалённый адрес берётся из `origin` клона, ветка всегда `main`.
+Clone paths are stored in `state.json`, the code does not hard-code them. The remote address is taken from the clone's
+`origin`, the branch is always `main`.
 
-Команды хуков в `settings.json` содержат абсолютный путь к клону и собираются при `rig apply`, поэтому повторный `apply`
-чинит их после переноса клона. Например, на сервере:
+Hook commands in `settings.json` contain the absolute path to the clone and are built at `rig apply`, so a repeated
+`apply` fixes them after a clone is moved. For example, on a server:
 `python3 "/home/<user>/.agent-rig/repo/base/hooks/compact_history.py"`.
 
-Готовые Python-скрипты остаются на Python, поэтому на машине нужен Python 3. Интерпретатор подставляет `rig`: `python3` на
-Linux, `python` на Windows. `rig check` проверяет, что интерпретатор запускается.
+Ready-made Python scripts stay on Python, so the machine needs Python 3. `rig` substitutes the interpreter: `python3` on
+Linux, `python` on Windows. `rig check` verifies that the interpreter starts.
 
-Хуки выполняются прямо из клона. Агенты и навыки Claude Code ищет в `~/.claude`, поэтому `rig` копирует их туда, подставляя
-пути и интерпретатор вместо `C:/Users/...`.
+Hooks run straight from the clone. Claude Code looks for agents and skills in `~/.claude`, so `rig` copies them there,
+substituting paths and the interpreter in place of `C:/Users/...`.
 
-## База и фичи
+## Base and features
 
-Манифест `feature.json` задаёт: имя, описание, включена ли при установке, платформы, зависимости от других фич, куски правил
-с целью (`shared` или `claude`), хуки, ключи настроек, плагины, агентов, навыки, команды хаба, программы, которые должны быть
-на машине, и как поставить их без root.
+The `feature.json` manifest sets: name, description, whether it is on at install, platforms, dependencies on other
+features, rule pieces with a target (`shared` or `claude`), hooks, settings keys, plugins, agents, skills, hub commands,
+programs that must be on the machine, and how to install them without root. The description is an object
+`{ "en": "...", "ru": "..." }`; `rig` shows the one in the current language (see "Language").
 
-В текущем формате `rules` ссылается полем `path` на файл относительно части; порядок кусков задаётся порядком массива.
-`platform`, `whenEnabled` и `whenDisabled` ограничивают правила. `hooks` содержит `event`, `matcher` и `command`; `args`,
-`platform`, `timeout`, `statusMessage`, `async`, `asyncRewake` и `shell` необязательны. Подстановки `{{CLONE}}`, `{{HUB}}`,
-`{{HOME}}` и `{{PYTHON}}` разрешаются одним механизмом при применении для правил, хуков, значений настроек, агентов,
-навыков и копируемых файлов. `settings` задаёт dotted key и значение; `id`, `kind` и `platform` необязательны. `kind` бывает `value`, `list-entry` или
-`install-default`; без `kind` списки разрешений `permissions.allow`, `permissions.deny` и `autoMode.allow` дополняются,
-остальные значения заменяются. `assets` содержит пары `sourcePath`/`targetPath`, относительные к клону фичи и `~/.claude`;
-пути не могут выходить из этих каталогов. `files` перечисляет дополнительные исходники, которые остаются в клоне;
-`agents` и `skills` перечисляют копируемые исходные файлы и каталоги. Программы могут ограничиваться `platform`.
-Плагины задаются
-селектором `plugin@marketplace`; локальный плагин хаба берётся из клона хаба. `hubCommands` — список имён команд,
-объявленных фичей для хаба.
+In the current format `rules` refers by the `path` field to a file relative to the part; the order of pieces is the order
+of the array. `platform`, `whenEnabled` and `whenDisabled` restrict rules. `hooks` holds `event`, `matcher` and `command`;
+`args`, `platform`, `timeout`, `statusMessage`, `async`, `asyncRewake` and `shell` are optional. The substitutions
+`{{CLONE}}`, `{{HUB}}`, `{{HOME}}` and `{{PYTHON}}` are resolved by one mechanism at apply time for rules, hooks, settings
+values, agents, skills and copied files. `settings` sets a dotted key and a value; `id`, `kind` and `platform` are
+optional. `kind` is `value`, `list-entry` or `install-default`; without `kind`, the permission lists `permissions.allow`,
+`permissions.deny` and `autoMode.allow` are extended, other values are replaced. `assets` holds `sourcePath`/`targetPath`
+pairs relative to the feature clone and to `~/.claude`; paths cannot leave these directories. `files` lists extra sources
+that stay in the clone; `agents` and `skills` list the source files and directories to copy. Programs can be restricted by
+`platform`. Plugins are given by the selector `plugin@marketplace`; the hub's local plugin is taken from the hub clone.
+`hubCommands` is a list of command names the feature declares for the hub.
 
-Если нужной программы нет при `enable` или обновлении, `rig` ставит её сам, когда root не нужен. Системные пакеты он не ставит:
-выводит команду, а при обновлении `rig check` падает, идёт откат и приходит событие с этой командой.
+If a needed program is missing at `enable` or update, `rig` installs it itself when root is not needed. It does not install
+system packages: it prints the command, and at update `rig check` fails, the rollback runs and an event with that command
+arrives.
 
-Состав базы и фич. Пути относительно `~/.claude`, разделы — заголовки `CLAUDE.md` и `~/.codex/AGENTS.md`.
+The composition of the base and features. Paths are relative to `~/.claude`, sections are headings in `CLAUDE.md` and
+`~/.codex/AGENTS.md`.
 
-| Часть | Вкл. при установке | Платформы | Файлы | Хук | Правила |
+| Part | On at install | Platforms | Files | Hook | Rules |
 |---|---|---|---|---|---|
-| база | всегда | все | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (только Windows), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `tools/patchlib.py`, `agents/explore.md`, `agents/general-purpose.md` | все три | см. ниже |
-| `reflection` | да | все | `hooks/reflect.py`, `hooks/reflect_prompt.md` | `Stop` | — |
-| `codex` | да | все | `tools/codex-run.py`, `agents/codex.md`, плагин `codex@openai-codex` | `SessionStart`: `codex-run.py session-hint` | «Делегирование Codex» |
-| `telegram` | да | все | плагин `telegram-hub` из клона хаба, служба хаба, включая `/bash` | хуки плагина | «Attention chime», строка про Telegram mode |
-| `rtk` | да | все | программа `rtk`, `RTK.md` | `PreToolUse`: `rtk hook claude` | — |
-| `superpowers` | да | все | плагин `superpowers@claude-plugins-official` | — | — |
-| `skills` | да | все | `skills/measurement-runs`, `skills/mutation-check-new-tests`, `skills/spec-drafting` | — | — |
-| `volunteers` | нет | Windows | программа `uvx`, `tools/volunteer-run.py`, `volunteer-models.py`, `volunteer-launch.ps1`, `volunteer-design.md`, `volunteer-probes.md`, `agents/volunteer.md` | — | «Делегирование волонтёрам» |
-| `pwsh`, `cmd` | нет | Windows | команды хаба, зависят от `telegram` | — | — |
-| `js-ts-rules` | нет | все | — | — | «JS/TS code conventions» |
+| base | always | all | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (Windows only), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `tools/patchlib.py`, `agents/explore.md`, `agents/general-purpose.md` | all three | see below |
+| `reflection` | yes | all | `hooks/reflect.py`, `hooks/reflect_prompt.md` | `Stop` | — |
+| `codex` | yes | all | `tools/codex-run.py`, `agents/codex.md`, plugin `codex@openai-codex` | `SessionStart`: `codex-run.py session-hint` | "Delegating to Codex" |
+| `telegram` | yes | all | plugin `telegram-hub` from the hub clone, the hub service, including `/bash` | plugin hooks | "Attention chime", the line about Telegram mode |
+| `rtk` | yes | all | the `rtk` program, `RTK.md` | `PreToolUse`: `rtk hook claude` | — |
+| `superpowers` | yes | all | plugin `superpowers@claude-plugins-official` | — | — |
+| `skills` | yes | all | `skills/measurement-runs`, `skills/mutation-check-new-tests`, `skills/spec-drafting` | — | — |
+| `volunteers` | no | Windows | the `uvx` program, `tools/volunteer-run.py`, `volunteer-models.py`, `volunteer-launch.ps1`, `volunteer-design.md`, `volunteer-probes.md`, `agents/volunteer.md` | — | "Delegating to volunteers" |
+| `pwsh`, `cmd` | no | Windows | hub commands, depend on `telegram` | — | — |
+| `js-ts-rules` | no | all | — | — | "JS/TS code conventions" |
 
-`tools/tests/` идут в репозиторий вместе со скриптами. Тесты `volunteers` живут в его фиче.
+`tools/tests/` go into the repository together with the scripts. The `volunteers` tests live in its feature.
 
-В репозитории нет личных путей и имён проектов. Папки, в которых работает волонтёр, перечислены в локальном файле
-`~/.agent-rig/volunteer-projects.json` (`{"allowed": ["<папка>"]}`). Без этого файла волонтёр отказывает во всех папках.
+The repository has no personal paths or project names. The folders in which a volunteer works are listed in the local file
+`~/.agent-rig/volunteer-projects.json` (`{"allowed": ["<folder>"]}`). Without this file the volunteer refuses all folders.
 
-Правила базы:
+Base rules:
 
-| Цель | Разделы |
+| Target | Sections |
 |---|---|
-| `shared` | «Addressing the user», «Временные файлы», «Tests and runs», «Specs are living documents» |
-| `claude` | «Compact instructions», «Global rules vs project memory», «Ask-driven development», «Every message gets an answer», «Writing to the user», «Fixing a sent answer», «BLOCKERS GO FIRST», «Review and engineering method», «Subagent models», «Delegation: keep the main context small», «Commits», «No heredocs», «Background tasks and monitors» |
-| `claude`, только Windows | «Windows commands go through Bash» |
-| Остаются личными | собственные разделы и строки человека: они не входят в базу и остаются в его основных файлах |
+| `shared` | "Addressing the user", "Temporary files", "Tests and runs", "Specs are living documents" |
+| `claude` | "Compact instructions", "Global rules vs project memory", "Ask-driven development", "Every message gets an answer", "Writing to the user", "Fixing a sent answer", "BLOCKERS GO FIRST", "Review and engineering method", "Subagent models", "Delegation: keep the main context small", "Commits", "No heredocs", "Background tasks and monitors" |
+| `claude`, Windows only | "Windows commands go through Bash" |
+| Stay personal | the person's own sections and lines: they are not part of the base and stay in their main files |
 
-Строка «Рядовую работу делает `volunteer`» и похожие в разделе делегирования
-зависят от фич: если нет `codex` и `volunteers`, работа идёт субагентам Claude. Текст строится так, чтобы не ссылаться на
-выключенное. Правила только про Windows, например про песочницу Codex и Bun, входят в куски только для Windows.
+The line saying that routine work is done by `volunteer` and similar lines in the delegation section depend on features: if
+`codex` and `volunteers` are absent, the work goes to Claude subagents. The text is built so that it does not refer to
+anything turned off. Rules that apply only to Windows, for example about the Codex sandbox and Bun, go into Windows-only
+pieces.
 
-Ключи `settings.json`, кроме хуков и плагинов:
+`settings.json` keys, other than hooks and plugins:
 
-| Часть | Ключи |
+| Part | Keys |
 |---|---|
-| база | `attribution` с пустыми `commit` и `pr` |
-| база, только Windows | `env.CLAUDE_CODE_USE_POWERSHELL_TOOL` = `0` |
-| `codex` | разрешение на `codex-run.py` в `permissions.allow`, запрет `Agent(codex:codex-rescue)` в `permissions.deny`, записи про обёртку в `autoMode.allow` и `autoMode.environment` |
-| Остаются личными | модель, effort, автокомпакт, правила `autoMode`, не относящиеся к фичам, тема, остальные `env` и запреты |
+| base | `attribution` with empty `commit` and `pr` |
+| base, Windows only | `env.CLAUDE_CODE_USE_POWERSHELL_TOOL` = `0` |
+| `codex` | permission for `codex-run.py` in `permissions.allow`, the `Agent(codex:codex-rescue)` deny in `permissions.deny`, entries about the wrapper in `autoMode.allow` and `autoMode.environment` |
+| Stay personal | model, effort, auto-compact, `autoMode` rules not related to features, theme, the other `env` and denies |
 
-Владение считается по отдельному значению: `rig` владеет строкой в списке и ключом в `env`, а не всем `permissions` или `env`.
+Ownership is counted per value: `rig` owns a line in a list and a key in `env`, not the whole of `permissions` or `env`.
 
-Правила переключения:
-- `disable` только отключает: убирает хуки, правила, команды, плагин. Программы, логины и данные остаются.
-- Фича с неподходящей платформой не включается, `rig` объясняет почему.
-- Нельзя выключить фичу, от которой зависит включённая, и включить фичу без её зависимостей.
-- Правила и настройки меняются сразу, окна подхватывают их при следующем запуске. Изменённый скрипт хука работает со
-  следующего вызова, в том числе в открытых окнах.
+Switching rules:
+- `disable` only turns off: it removes hooks, rules, commands, the plugin. Programs, logins and data stay.
+- A feature on an unsuitable platform does not turn on, `rig` explains why.
+- A feature that an enabled one depends on cannot be turned off, and a feature cannot be turned on without its dependencies.
+- Rules and settings change at once, windows pick them up at the next start. A changed hook script works from the next
+  call, including in open windows.
 
-## Сборка
+## Assembly
 
-Главное правило: основные файлы принадлежат человеку и его агенту, агент вправе их менять, и механизм переживает любую их
-правку. Всё, что в этих файлах написано не `rig`, и есть личный слой.
+The main rule: the main files belong to the person and their agent, the agent may change them, and the mechanism survives
+any edit of them. Everything in these files not written by `rig` is the personal layer.
 
-`rig apply` — единственный механизм записи, он идемпотентен. Перед записью основного файла создаётся копия `*.bak-<дата>`,
-если файл меняется. Вторая копия в тот же день с другим содержимым получает номер: `settings.json.bak-<дата>-2`, затем
-`-3` и так далее (`src/backup-path.ts`); копия с тем же содержимым не дублируется.
+`rig apply` is the only write mechanism, and it is idempotent. Before writing a main file a copy `*.bak-<date>` is made if
+the file changes. A second copy on the same day with different content gets a number: `settings.json.bak-<date>-2`, then
+`-3` and so on (`src/backup-path.ts`); a copy with the same content is not duplicated.
 
-`apply` работает как транзакция (`src/apply.ts`, `src/apply-journal.ts`):
-1. Всё считается чисто, без записи на диск.
-2. В `state.json` пишется журнал: ожидаемый хеш каждого файла и `settings.json` и новые записи владения.
-3. Идут записи на диск.
-4. Сохраняется итоговое состояние без журнала, затем отправляются события с устойчивыми идентификаторами.
+`apply` works as a transaction (`src/apply.ts`, `src/apply-journal.ts`):
+1. Everything is computed purely, with no disk writes.
+2. A journal is written to `state.json`: the expected hash of each file and of `settings.json`, and the new ownership
+   entries.
+3. The disk writes happen.
+4. The final state is saved without the journal, then the events with stable identifiers are sent.
 
-Следующий запуск сначала разбирает оставшийся журнал: файл с ожидаемым хешем считается записанным `rig`, запись владения
-берётся из журнала, иначе остаётся старая запись. Убитый `apply` не делает файлы `rig` чужими и не повторяет событий.
+The next run first processes a leftover journal: a file with the expected hash is considered written by `rig`, the
+ownership entry is taken from the journal, otherwise the old entry stays. A killed `apply` does not make `rig` files
+foreign and does not repeat events.
 
-1. **`~/.codex/AGENTS.md`.** `rig` обновляет только блок между строками `<!-- rig:begin -->` и `<!-- rig:end -->`. Туда идут
-   общие правила базы и включённых фич. Текст вне блока не меняется. Нет блока: он создаётся в начале файла. Есть только одна
-   метка: она убирается, блок создаётся в начале файла, отправляется событие.
-2. **`~/.agent-rig/generated/CLAUDE.md`.** Пересобирается целиком из правил Claude.
-3. **`~/.claude/CLAUDE.md`.** В нём должны быть обе строки импорта: `@../.codex/AGENTS.md` и
-   `@../.agent-rig/generated/CLAUDE.md`. Проверяется точная строка в любом месте файла. Если её нет, она добавляется в начало
-   файла. Остальной текст не меняется. Общие правила Claude читает через `AGENTS.md`, поэтому в собранный файл они не
-   попадают и не дублируются. Текст человека идёт после импортов и важнее их.
-4. **`~/.claude/settings.json`.** Сливается по правилам владения ниже.
-5. **Агенты, навыки, плагины.** Ставятся для включённых частей, убираются для выключенных. Плагины ставятся через
+1. **`~/.codex/AGENTS.md`.** `rig` updates only the block between the lines `<!-- rig:begin -->` and `<!-- rig:end -->`.
+   The shared rules of the base and of the enabled features go there. Text outside the block does not change. No block: it
+   is created at the start of the file. Only one marker present: it is removed, the block is created at the start of the
+   file, an event is sent.
+2. **`~/.agent-rig/generated/CLAUDE.md`.** Rebuilt entirely from the Claude rules.
+3. **`~/.claude/CLAUDE.md`.** It must contain both import lines: `@../.codex/AGENTS.md` and
+   `@../.agent-rig/generated/CLAUDE.md`. The exact line anywhere in the file is checked. If it is missing, it is added at
+   the start of the file. The rest of the text does not change. Claude reads the shared rules through `AGENTS.md`, so they
+   do not go into the generated file and are not duplicated. The person's text comes after the imports and outweighs them.
+4. **`~/.claude/settings.json`.** Merged by the ownership rules below.
+5. **Agents, skills, plugins.** Installed for enabled parts, removed for disabled ones. Plugins are installed through
    `claude plugin`.
 
-Правила владения: в `state.json` хранится каждая запись `rig` с записанным значением или хешем файла.
+Ownership rules: `state.json` stores every `rig` entry with the written value or the file hash.
 
-| Случай | Что делает `rig` |
+| Case | What `rig` does |
 |---|---|
-| Записи нет, совпадающей тоже | Добавляет, запоминает |
-| Такая же запись уже есть, но не `rig` | Принимает как свою, дубль не создаёт. Так работает переход существующего сетапа |
-| Значение или файл изменили | Оставляет изменённое, отправляет событие один раз |
-| Запись удалили, фича включена | Возвращает. Отключать надо через `/feature` |
-| Фичу выключили, запись не менялась | Удаляет |
-| Фичу выключили, запись менялась | Удаляет, изменённое значение остаётся в копии `*.bak-<дата>`, отправляет событие с её путём |
+| No entry, and no matching one either | Adds it, remembers it |
+| The same entry already exists, but not from `rig` | Accepts it as its own, creates no duplicate. This is how an existing setup is taken over |
+| The value or file was changed | Keeps the changed one, sends an event once |
+| The entry was deleted, the feature is on | Restores it. Turning off must be done through `/feature` |
+| The feature was turned off, the entry was not changed | Deletes it |
+| The feature was turned off, the entry was changed | Deletes it, the changed value stays in the copy `*.bak-<date>`, sends an event with its path |
 
-Запись хука опознаётся по имени скрипта в команде или команде `rtk hook claude`; хук пользователя с тем же скриптом и
-другими `args` своим не считается. Идентификатор записи настройки строится из ключа и значения записи списка, а не из её
-номера в манифесте, поэтому перестановка манифеста ничего не удаляет и не возвращает. Запись пользователя на месте
-записи `rig` сохраняется в копии с событием `setting-kept`.
+A hook entry is recognized by the script name in the command or by the command `rtk hook claude`; a user hook with the
+same script and different `args` does not count as its own. The identifier of a settings entry is built from the key and
+the value of the list entry, not from its number in the manifest, so reordering the manifest deletes and restores nothing.
+A user entry in the place of a `rig` entry is preserved in a copy with the event `setting-kept`.
 
-Личные навыки и хуки человека не входят в репозиторий и записями `rig` не считаются. Канал обновлений Claude Code `rig`
-ставит только при установке, если ключа нет, и дальше им не владеет.
+The person's personal skills and hooks are not part of the repository and do not count as `rig` entries. `rig` sets the
+Claude Code update channel only at install, if the key is absent, and does not own it afterwards.
 
-## Команды
+## Commands
 
-Команды, которые что-то меняют, берут одну блокировку. Если она занята, команда ждёт, пока та освободится. Блокировка снимается
-и при падении держащего её процесса, иначе ожидание станет вечным (`src/lock.ts`). Файл блокировки создаётся
-исключительно, с PID и временем старта владельца. Устаревшую блокировку забирает тот, кто исключительно создал файл
-`<lock>.takeover`: под ним блокировка читается заново и удаляется. Если время старта владельца узнать не удалось, блокировка
-считается занятой. Когда команда начинает ждать блокировку, она сразу, до ожидания, печатает одну строку `Другая команда rig работает, жду её конца.` (константа `RIG_LOCK_WAIT_LINE` в `src/commands/shared.ts`). Строка уходит в стандартный вывод сразу, а не в конце команды. Её печатают `rig update` (без `--pending`), `rig apply`, `rig feature <name> enable|disable` и `rig install`. Если блокировка свободна или устаревшая забирается сразу, строки нет. `rig update --pending` блокировку не ждёт: при занятой сразу выходит, строки ожидания не печатает. Код выхода 0 — успех, 1 — сбой. Вывод обычный текст; `--json` у `rig feature` и `rig status` для хаба.
+Commands that change something take one lock. If it is taken, the command waits until it is free. The lock is released
+also when the process holding it crashes, otherwise the wait would be eternal (`src/lock.ts`). The lock file is created
+exclusively, with the owner's PID and start time. A stale lock is taken over by whoever exclusively created the file
+`<lock>.takeover`: under it the lock is read again and deleted. If the owner's start time cannot be found out, the lock is
+considered taken. When a command starts waiting for the lock, it immediately, before waiting, prints one line `Another rig command is running, waiting for it to finish.` (the constant `RIG_LOCK_WAIT_LINE` in `src/commands/shared.ts`). The line goes to standard output at once, not at the end of the command. It is printed by `rig update` (without `--pending`), `rig apply`, `rig feature <name> enable|disable`, `rig language en|ru` and `rig install`. If the lock is free or a stale one is taken at once, there is no line. `rig update --pending` does not wait for the lock: if it is taken it exits at once and prints no waiting line. Exit code 0 is success, 1 is failure. The output is plain text; `--json` on `rig feature`, `rig status` and `rig language` is for the hub.
 
-Внешние команды (`git`, `claude plugin`, `systemctl`) идут через общий запуск процессов (`src/commands/process-runner.ts`):
-через 15 минут они останавливаются вместе со всем деревом процессов и считаются упавшими; `git` никогда не спрашивает
-логин (`GIT_TERMINAL_PROMPT=0`). Вызовы `systemctl --user` сами задают `XDG_RUNTIME_DIR` и `DBUS_SESSION_BUS_ADDRESS`, если
-их нет (так бывает под кроном). Код выхода `is-active` 0 значит «работает», 3 — «остановлена», любой другой — ошибка
-запроса, а не остановленная служба.
+External commands (`git`, `claude plugin`, `systemctl`) go through the common process runner
+(`src/commands/process-runner.ts`): after 15 minutes they are stopped together with the whole process tree and counted as
+failed; `git` never asks for a login (`GIT_TERMINAL_PROMPT=0`). The `systemctl --user` calls set `XDG_RUNTIME_DIR` and
+`DBUS_SESSION_BUS_ADDRESS` themselves if they are absent (this happens under cron). The `is-active` exit code 0 means
+"running", 3 means "stopped", any other is a query error, not a stopped service.
 
-- `rig install [--dev]`: проверяет программы, записывает состояние, включает фичи по умолчанию, делает `apply`, на сервере
-  добавляет задание крона. `--dev` включает режим разработчика и берёт пути клонов из текущего расположения.
-- `rig apply`: пересобрать всё по текущему состоянию.
-- `rig feature [--json]`: список фич и их состояние.
-- `rig feature <name> enable|disable`: переключить и применить. Если служба хаба при `rig feature telegram enable` не
-  запустилась, включение отменяется, а команда падает с ошибкой.
-- `rig update`: обновить оба репозитория, см. ниже. В режиме `dev` отказывает. Версии для сообщения об обновлении читаются из `package.json` коммита rig и `plugin/package.json` коммита хаба; они не берутся из рабочей копии.
-- `rig status [--json]`: версии, фичи, последнее обновление, ожидающий перезапуск хаба, ошибки. Человекочитаемый вывод показывает версию из `package.json` коммита rig и `plugin/package.json` коммита хаба вместе с полным хешем коммита; если версия неизвестна, показывает только хеш. В `errors` и в тексте идут
-  только ошибки, записанные после последнего `update-ok`; более старые остаются в `events.jsonl`.
-- `rig check`: собранные файлы и импорты на месте, `settings.json` разбирается, каждый записанный хук совпадает с
-  ожидаемым по событию, команде, `args` и `matcher`, хуки запускаются с тестовым событием (для событий инструментов оно
-  несёт `tool_name` и `tool_input`) при `CLAUDE_PROJECT_DIR` на временный каталог, интерпретатор и программы включённых фич
-  есть, служба хаба работает, если `telegram` включён. Если служба ответила «не запущена», проверка
-  спрашивает её ещё дважды, с паузой в один перезапуск systemd (2 с) и запасом 1 с: хаб, который как раз
-  перезапускается, не принимается за остановленный. На Windows `bash` берётся из Git Bash
-  (`C:/Program Files/Git/bin/bash.exe`), иначе проверка падает с понятным сообщением.
+- `rig install [--dev]`: checks programs, writes the state, enables the default features, runs `apply`, on a server adds
+  the cron job. `--dev` turns on developer mode and takes the clone paths from the current location.
+- `rig apply`: rebuild everything from the current state.
+- `rig feature [--json]`: the list of features and their state.
+- `rig feature <name> enable|disable`: switch and apply. If at `rig feature telegram enable` the hub service did not start,
+  the enabling is cancelled and the command fails with an error.
+- `rig language [en|ru] [--json]`: show or set the language, see "Language".
+- `rig update`: update both repositories, see below. Refuses in mode `dev`. The versions for the update message are read
+  from the `package.json` of the rig commit and the `plugin/package.json` of the hub commit; they are not taken from the
+  working copy.
+- `rig status [--json]`: versions, features, the last update, the pending hub restart, the language, errors. The human-readable
+  output shows the version from the `package.json` of the rig commit and the `plugin/package.json` of the hub commit
+  together with the full commit hash; if the version is unknown, it shows only the hash. `errors` and the text contain only
+  the errors recorded after the last `update-ok`; older ones stay in `events.jsonl`.
+- `rig check`: the generated files and imports are in place, `settings.json` parses, every recorded hook matches the
+  expected one by event, command, `args` and `matcher`, hooks are run with a test event (for tool events it carries
+  `tool_name` and `tool_input`) with `CLAUDE_PROJECT_DIR` pointing at a temporary directory, the interpreter and the
+  programs of the enabled features are present, the hub service is running if `telegram` is on. If the service answered
+  "not running", the check asks it twice more, with a pause of one systemd restart (2 s) plus a 1 s margin: a hub that is
+  just restarting is not taken for stopped. On Windows `bash` is taken from Git Bash (`C:/Program Files/Git/bin/bash.exe`),
+  otherwise the check fails with a clear message.
 
-## Обновление
+## Language
 
-Крон раз в час вызывает `rig update` на сервере, вывод идёт в `update.log`. Второе задание крона раз в 5 минут вызывает
-`rig update --pending`: оно выполняет только проверку ожидающего перезапуска хаба из шага 7 и без него сразу выходит. При
-успехе оно ничего не печатает, чтобы `update.log` не рос каждые 5 минут.
+One shared setting, owned by `rig`: `language` in `~/.agent-rig/state.json`, the value `"en"` or `"ru"`; a missing field
+means `"en"`. `rig` and the hub are English by default and switch to Russian together, only after the human asks.
 
-1. Взять блокировку. Обработать ожидающий перезапуск хаба, см. шаг 7.
-2. Получить `main` обоих репозиториев. Нового нет — выход.
-3. Если пара новых коммитов совпадает с плохой парой, выйти. Плохой считается ровно эта пара; каждый новый коммит поверх неё
-   пробуется однократно, поэтому исправление доходит само, а ручное разрешение не нужно.
-4. Если хотя бы в одном клоне есть локальные правки или локальные коммиты, либо клон не на `main`, обновление пропускается
-   целиком, клоны не трогаются, отправляется одно событие с причиной. Так не возникнет смеси новой и старой версии. Одна и
-   та же причина сбоя даёт одно сообщение; новое приходит только при смене причины или после того, как проблема исчезла.
-   Если сбой исчез без новых коммитов, одно событие `update-ok` сообщает об этом. Запомнить текущие коммиты и перейти только
-   перемоткой вперёд.
-5. `apply` и `check` нового кода выполняются в дочернем процессе
-   `bun <клон>/src/cli.ts update-step apply|check <pid> <время запуска>` под блокировкой родителя: так сломанный `cli.ts`
-   нового коммита не пройдёт проверку старым кодом. Служебная команда принимает только PID и время старта родителя,
-   державшего блокировку.
-6. Сбой: вернуть оба репозитория на запомненные коммиты, снова `rig apply`, записать пару как плохую, отправить событие.
-   Откат делает родитель, то есть старый код; прежние `settings.json` и правила восстанавливает его повторный `apply`.
-   Откатом заканчиваются и дочерний процесс, который упал или не запустился. `check`, который не смог опросить окружение
-   (например, сбой шины службы), тоже откатывает, но пару плохой не записывает. В `badPairs` хранится только последняя
-   плохая пара. Событие обновления доставляется ровно один раз и через сбой: оно сначала пишется в состояние как
-   `pendingEvent`, отправляется, затем очищается.
-7. Успех: правила и хуки уже действуют. Если изменился хаб, запоминается ожидающий перезапуск и отправляется событие
-   `hub-restart-pending`. Хаб ждёт, когда ни в одной сессии не идёт ход, пишет `~/.agent-rig/hub-restarting.json` и
-   завершается; systemd запускает его с новым кодом, и он пишет `~/.agent-rig/hub-ready.json` с коммитом. Отдельного сообщения о
-   перезапуске нет: обновление описывает одно событие `update-ok` с версиями. `rig update --pending` смотрит на эти файлы: через 5 минут после
-   `hub-restarting` нет готовности нового коммита — откат как в шаге 6. Предел в 5 минут, а проверка идёт по крону раз в
-   5 минут, поэтому откат происходит через 5-10 минут после перезапуска хаба. Простоя хаб ждёт без ограничения, работу агентов не
-   прерывает; через сутки ожидания приходит одно событие. Новые коммиты, пришедшие за время ожидания, применяются как
-   обычно. Ожидающий перезапуск хранит последнюю пару, на которой хаб подтвердил запуск: откат возвращает её, а плохой
-   записывается последняя испробованная пара. Если `telegram` выключен, перезапуск не ожидается.
-8. Появилась фича, которой нет в `state.json`: она записывается выключенной и отправляется событие с командой включения.
+- `rig language` prints the current language; `rig language en|ru` sets it under the rig lock and emits the event
+  `language-changed` whose text is in the new language. Setting the value that is already set is a no-op, with no event.
+  `rig language --json` prints `{"language":"en"}`.
+- Every string that `rig` shows the human (command output, the waiting line, event texts, the text the hub shows from `rig`)
+  comes from one message catalog with the languages `en` and `ru`; the catalog is typed so that `ru` carries every key of
+  `en`, and there is no Russian text in the code outside the `ru` catalog. An event text is written in the language that is
+  current when the event is emitted.
+- Feature descriptions in `feature.json` are objects `{ "en", "ru" }`. `rig feature --json` prints the description in the
+  current language as a plain string, so the contract field stays a string.
+- `rig status` in text form shows the language on its own line. `rig status --json` is unchanged: it has no language field,
+  because the hub validates this object with a strict schema. The hub learns the language from `rig language --json`.
+- Agent replies (Claude, Codex) are not tied to the setting: the rules tell agents to reply in the user's language. The rule
+  about addressing the user informally applies to any language with a formal and an informal "you".
+- The rule texts, the tool documentation and the repository documents are English.
 
-Claude Code на сервере стоит на канале `stable`: он отстаёт примерно на 8 дней. В режиме разработки стоит `latest`,
-поэтому поломка внутренних механизмов, на которых держится хаб, скорее всего видна там раньше.
+## Update
 
-Автообновление выполняет всё, что попало в `main`. Защита: аккаунт GitHub с двухфакторной проверкой и `rig check` с откатом.
+Cron calls `rig update` on the server once an hour, the output goes to `update.log`. A second cron job every 5 minutes calls
+`rig update --pending`: it performs only the check of the pending hub restart from step 7 and exits at once without one. On
+success it prints nothing, so that `update.log` does not grow every 5 minutes.
 
-## Связь с хабом
+1. Take the lock. Handle the pending hub restart, see step 7.
+2. Fetch `main` of both repositories. Nothing new — exit.
+3. If the pair of new commits equals the bad pair, exit. Exactly this pair is considered bad; each new commit on top of it is
+   tried once, so a fix arrives by itself and no manual resolution is needed.
+4. If at least one clone has local changes or local commits, or a clone is not on `main`, the update is skipped entirely,
+   the clones are not touched, and one event with the reason is sent. This way a mix of new and old versions cannot appear.
+   The same failure reason gives one message; a new one arrives only when the reason changes or after the problem is gone.
+   If the failure disappeared without new commits, one `update-ok` event reports it. Remember the current commits and move
+   only by fast-forward.
+5. `apply` and `check` of the new code run in a child process
+   `bun <clone>/src/cli.ts update-step apply|check <pid> <start time>` under the parent's lock: this way a broken `cli.ts`
+   of the new commit does not pass the check by the old code. The service command accepts only the PID and start time of the
+   parent that holds the lock.
+6. Failure: return both repositories to the remembered commits, `rig apply` again, record the pair as bad, send an event.
+   The rollback is done by the parent, that is, the old code; the previous `settings.json` and rules are restored by its
+   repeated `apply`. A child process that crashed or failed to start also ends in a rollback. A `check` that could not poll
+   the environment (for example, a service bus failure) also rolls back, but does not record the pair as bad. `badPairs`
+   stores only the last bad pair. The update event is delivered exactly once, even through a failure: it is first written to
+   the state as `pendingEvent`, sent, then cleared.
+7. Success: rules and hooks already work. If the hub changed, a pending restart is remembered and the event
+   `hub-restart-pending` is sent. The hub waits until no session has a turn in progress, writes
+   `~/.agent-rig/hub-restarting.json` and exits; systemd starts it with the new code, and it writes
+   `~/.agent-rig/hub-ready.json` with the commit. There is no separate restart message: one `update-ok` event with the
+   versions describes the update. `rig update --pending` looks at these files: 5 minutes after `hub-restarting` there is no
+   readiness of the new commit — rollback as in step 6. The limit is 5 minutes and the check runs from cron every 5 minutes,
+   so the rollback happens 5-10 minutes after the hub restart. The hub waits for idleness without limit and does not
+   interrupt the agents' work; after a day of waiting one event arrives. New commits that arrived during the wait are
+   applied as usual. The pending restart stores the last pair on which the hub confirmed startup: the rollback returns it,
+   and the last tried pair is recorded as bad. If `telegram` is off, no restart is awaited.
+8. A feature appeared that is not in `state.json`: it is recorded as off and an event with the enable command is sent.
 
-Хаб и `rig` — разные приложения. Хаб требует `rig` и не дублирует его логику. Договор ниже общий для обоих: `rig` и хаб могут
-строить разные агенты.
+Claude Code on the server is on the `stable` channel: it lags by about 8 days. In development mode it is on `latest`, so a
+breakage of the internal mechanisms the hub relies on is most likely seen there earlier.
 
-**Плагин `telegram-hub`.** Claude Code читает плагин прямо из клона хаба (в `plugin list --json` у него `readFromFolder`; проверено на Claude Code 2.1.314, `plugin update` отвечает «nothing to update. Edits there take effect at the next session start or /reload-plugins»). Новый коммит хаба доходит до новых сессий Claude без команды; уже открытое окно держит загруженный код, пока не перезапустится или не выполнит `/reload-plugins`. Откат работает так же. Версия хаба хранится в `plugin/package.json` и читается из проверяемого коммита; версия rig хранится в корневом `package.json` и также читается из коммита. Имя маркетплейса хаба `rig` берёт из `<хаб>/.claude-plugin/marketplace.json`, а не зашивает в код: хаб может его переименовать, и `rig` приводит состояние к новому имени, удаляя старый идентификатор и ставя новый.
+Auto-update applies everything that landed in `main`. The protection: a GitHub account with two-factor authentication and
+`rig check` with rollback.
 
-**Команды.** Хаб сам принимает `/feature`, `/feature <name> enable|disable` и `/rig status|update` от пользователей из `allowFrom`,
-вызывает `rig` и показывает вывод. Сообщения не проходят через агента. Если `rig` не найден, хаб отвечает, что его нет. Вывод `rig` хаб показывает по мере поступления. Строка ожидания блокировки (см. «Команды») приходит в момент начала ожидания, а не в конце команды. Хаб этот текст не разбирает и не отличает строку ожидания от остального вывода.
+## Hub connection
 
-**Состояние фич.** Хаб узнаёт его командой `rig feature --json` при старте и по событию `features-changed`. Конфигурацию хаба
-`rig` не трогает. Команды `/pwsh` и `/cmd` при выключенной фиче отвечают, как её включить.
+The hub and `rig` are different applications. The hub requires `rig` and does not duplicate its logic. The contract below
+is common to both: `rig` and the hub can be built by different agents.
 
-**JSON-контракт.** `rig feature --json` печатает массив фич; у каждой ровно поля `name`, `description`, `enabled` и
-`platformAllowed`. `enabled` — сохранённый флаг состояния, `platformAllowed` показывает доступность на текущей ОС.
-`rig status --json` печатает объект версии `schemaVersion: 1` с полями `mode`, `versions`, `releases`, `features`, `lastUpdate`,
-`pendingHubRestart` и `errors`. `versions` содержит `rig` и `hub` (строка коммита или `null`); `features` использует тот же
-формат массива, что `rig feature --json`; `releases` содержит `rig` и `hub` (строка версии из соответствующего коммита или `null`). Версия rig берётся из корневого `package.json`, версия хаба — из `plugin/package.json` в клоне хаба. `lastUpdate` — последнее событие обновления или `null`; `pendingHubRestart` —
-сохранённое значение состояния или `null`; `errors` — массив объектов `{type, time, text}`. Порядок элементов фич задаётся
-именем манифеста, а порядок ключей объектов фиксирован CLI. Хаб разбирает эти поля, а не человекочитаемый вывод.
+**The `telegram-hub` plugin.** Claude Code reads the plugin straight from the hub clone (in `plugin list --json` it has
+`readFromFolder`; verified on Claude Code 2.1.314, `plugin update` answers "nothing to update. Edits there take effect at
+the next session start or /reload-plugins"). A new hub commit reaches new Claude sessions without a command; an already
+open window holds the loaded code until it restarts or runs `/reload-plugins`. Rollback works the same way. The hub version
+is stored in `plugin/package.json` and read from the commit under check; the rig version is stored in the root
+`package.json` and is also read from the commit. `rig` takes the hub marketplace name from
+`<hub>/.claude-plugin/marketplace.json` and does not hard-code it: the hub may rename it, and `rig` brings the state to the
+new name by removing the old identifier and installing the new one.
 
-**События.** `rig` дописывает строки в `~/.agent-rig/events.jsonl` одной операцией записи. Одна строка — один JSON:
-`{"id":"...","time":"ISO 8601","level":"info|warn|error","type":"...","text":"текст для человека"}`.
-Типы: `update-ok`, `update-skipped`, `update-failed`, `rollback`, `feature-new`, `features-changed`, `setting-kept`,
-`block-restored`, `hub-restart-pending`, `hub-restart-waiting`. Хаб читает файл с места, записанного в `~/.agent-rig/events.offset`, отправляет `text` в
-общую тему, звук по `level`, и обновляет смещение. Служебные типы `features-changed` и `hub-restart-pending` он обрабатывает
-сам. Пока хаб выключен, события ждут в файле. Сокращать файл может только `rig`: он очищает его целиком, когда файл вырос и прочитан до конца. Блокировка с хабом для этого
-не нужна: смещение за концом файла хаб считает сокращением и читает с начала.
+**Commands.** The hub itself accepts `/feature`, `/feature <name> enable|disable`, `/rig status|update` and
+`/rig language en|ru` from users in `allowFrom`, calls `rig` and shows the output. The messages do not pass through an
+agent. If `rig` is not found, the hub answers that it is missing. The hub shows the `rig` output as it arrives. The lock
+waiting line (see "Commands") arrives at the moment the wait starts, not at the end of the command. The hub does not parse
+this text and does not tell the waiting line from the rest of the output.
 
-**Служба.** На Linux это служба systemd пользователя `telegram-hub.service`, на Windows задача Планировщика `telegram-hub`. Ставит её
-скрипт хаба, `rig` только запускает, останавливает и проверяет её. `~/.agent-rig/hub-restarting.json`: `{"time":"ISO 8601"}`. `~/.agent-rig/hub-ready.json`:
-`{"commit":"<полный хеш>","time":"ISO 8601"}`.
+**Feature state.** The hub learns it with the command `rig feature --json` at start and on the event `features-changed`.
+`rig` does not touch the hub configuration. The commands `/pwsh` and `/cmd`, when the feature is off, answer how to turn it
+on.
 
-**Выключение Телеграма.** `/feature telegram disable` разрешён, с подтверждением кнопкой. Хаб присылает команду для включения
-обратно (`rig feature telegram enable` на сервере) и запускает `rig`. Служба хаба останавливается последним шагом, поэтому
-`rig` должен дожить до конца, даже когда её родитель, хаб, завершается. Иначе выключение оборвётся на середине.
+**Language.** The hub reads the language with `rig language --json` at start and on the event `language-changed`, and shows
+its own messages (replies, buttons, prompts) in that language. `/rig language en|ru` from a user in `allowFrom` calls `rig`
+and shows its output, like `/rig status|update`. The hub does not store the language itself; the single owner is `rig`
+(see "Language").
 
-## Установка на сервер
+**JSON contract.** `rig feature --json` prints an array of features; each has exactly the fields `name`, `description`,
+`enabled` and `platformAllowed`. `description` is a plain string in the current language. `enabled` is the saved state flag,
+`platformAllowed` shows availability on the current OS. `rig status --json` prints an object of version `schemaVersion: 1`
+with the fields `mode`, `versions`, `releases`, `features`, `lastUpdate`, `pendingHubRestart` and `errors`. `versions`
+contains `rig` and `hub` (a commit string or `null`); `features` uses the same array format as `rig feature --json`;
+`releases` contains `rig` and `hub` (a version string from the corresponding commit or `null`). The rig version is taken
+from the root `package.json`, the hub version from `plugin/package.json` in the hub clone. `lastUpdate` is the last update
+event or `null`; `pendingHubRestart` is the saved state value or `null`; `errors` is an array of objects
+`{type, time, text}`. The order of feature elements is set by the manifest name, and the order of object keys is fixed by
+the CLI. The hub parses these fields, not the human-readable output. `rig language --json` prints the object
+`{"language":"en"}` with `"en"` or `"ru"`.
 
-Человек: заходит на сервер под пользователем без root, ставит Claude Code на канале `stable`, входит в аккаунт и пишет агенту
-«Разверни это тут» со ссылкой на репозиторий. Дальше выполняет один список от агента: бот, супергруппа с темами, токен, вход в
-Codex, сообщение в группе. Токены и логины вводит сам, в чат агента они не попадают.
+**Events.** `rig` appends lines to `~/.agent-rig/events.jsonl` in one write operation. One line is one JSON:
+`{"id":"...","time":"ISO 8601","level":"info|warn|error","type":"...","text":"text for the human"}`.
+Types: `update-ok`, `update-skipped`, `update-failed`, `rollback`, `feature-new`, `features-changed`, `language-changed`,
+`setting-kept`, `block-restored`, `hub-restart-pending`, `hub-restart-waiting`. The hub reads the file from the place
+recorded in `~/.agent-rig/events.offset`, sends `text` to the common topic, with a sound by `level`, and updates the offset.
+It handles the service types `features-changed`, `language-changed` and `hub-restart-pending` itself. While the hub is off,
+events wait in the file. Only `rig` may shrink the file: it clears it entirely when the file has grown and been read to the
+end. No lock with the hub is needed for this: an offset past the end of the file is treated by the hub as shrinking, and it
+reads from the start.
 
-Агент по `INSTALL.md`: готовит систему скриптом `scripts/prepare-server.sh` (пакеты, `cron`, linger, разрешение канала; если
-`sudo` спрашивает пароль, скрипт запускает человек), клонирует оба репозитория в `~/.agent-rig`, выполняет `rig install`,
-готовит конфиг хаба и выдаёт человеку один список; до него останавливается, только если `sudo` спрашивает пароль или файл
-разрешения канала уже занят. Хаб не запускается без токена, поэтому службу агент запускает после списка. ID группы и ID человека
-берёт из журнала хаба, по случайному названию группы из списка: посторонний с ботом в своей группе его не знает. В конце
-проверяет `rig status` и отчитывается: готово или что осталось сделать человеку, точными командами.
+**Service.** On Linux it is the systemd user service `telegram-hub.service`, on Windows the Task Scheduler task
+`telegram-hub`. It is installed by the hub script; `rig` only starts, stops and checks it.
+`~/.agent-rig/hub-restarting.json`: `{"time":"ISO 8601"}`. `~/.agent-rig/hub-ready.json`:
+`{"commit":"<full hash>","time":"ISO 8601"}`.
 
-tmux — программа, которая держит терминал на сервере после обрыва SSH. Хаб запускает в нём сессии из темы.
+**Turning Telegram off.** `/feature telegram disable` is allowed, with confirmation by a button. The hub sends the command
+to turn it back on (`rig feature telegram enable` on the server) and runs `rig`. The hub service is stopped by the last
+step, so `rig` must live to the end even when its parent, the hub, exits. Otherwise the turn-off would break off in the
+middle.
 
-## Режим разработки
+## Server install
 
-Режим `dev` для того, кто разрабатывает сам `rig` на Windows с Git Bash: рабочая копия служит и живой установкой. Хуки
-выполняются из неё, поэтому смена ветки сразу меняет живой сетап: это осознанное решение. Обновление здесь — обычный
-`git pull` и `rig apply`, автообновления нет, хаб перезапускается скриптом хаба `scripts/restart-hub.ps1`.
+The human: logs into the server as a non-root user, installs Claude Code on the `stable` channel, signs in to the account
+and tells the agent "Deploy this here" with a link to the repository. Then follows the one list from the agent: the bot, the
+supergroup with topics, the token, the Codex login, a message in the group. The human enters tokens and logins themselves;
+they do not reach the agent's chat.
 
-`rig install --dev` включает режим `dev` и берёт пути клонов из текущего каталога; при желании в нём включаются
-`volunteers`, `pwsh`, `cmd`.
+The agent, following `INSTALL.md`: prepares the system with the script `scripts/prepare-server.sh` (packages, `cron`,
+linger, the channel permission; if `sudo` asks for a password, the human runs the script), clones both repositories into
+`~/.agent-rig`, runs `rig install`, prepares the hub config and gives the human one list; it stops before that only if
+`sudo` asks for a password or the channel permission file is already taken. The hub does not start without a token, so the
+agent starts the service after the list. The group ID and the human's ID it takes from the hub log, by a random group name
+from the list: a stranger with the bot in their own group does not know it. At the end it checks `rig status` and reports:
+done, or what the human still has to do, with exact commands.
 
-Если правила и хуки уже написаны вручную, их переносят на записи `rig` так:
-1. Копия `~/.claude` и `~/.codex`.
-2. Из основных файлов убирается текст, который теперь приносит `rig`, по таблицам выше. Личное остаётся.
-3. `rig install --dev`; записи, совпадающие с `rig`, принимаются как свои по правилам владения.
-4. Сравнение до и после: набор разделов правил и нормализованный `settings.json`. Все отличия выводятся списком, и
-   человек подтверждает их.
+The install agent talks to the human in the human's language. `rig` itself stays English after install; the final list
+tells how to switch it: `rig language ru` in the terminal or `/rig language ru` in Telegram.
 
-## Публикация
+tmux is a program that keeps the terminal on the server after an SSH disconnect. The hub starts sessions from a topic in it.
 
-Оба репозитория публичные, лицензия MIT.
+## Development mode
 
-## Проверка
+Mode `dev` is for the one who develops `rig` itself on Windows with Git Bash: the working copy is also the live install.
+Hooks run from it, so switching a branch changes the live setup at once: this is a deliberate decision. The update here is
+an ordinary `git pull` and `rig apply`, there is no auto-update, and the hub is restarted by the hub script
+`scripts/restart-hub.ps1`.
 
-Готово, когда прошло всё:
-1. Docker, чистая Ubuntu 24.04: `rig install` с нуля, `rig check` зелёный.
-2. Включение и выключение каждой фичи: правила, хуки и настройки меняются, повторный `apply` ничего не меняет.
-3. Чужие ключи `settings.json`, текст `CLAUDE.md` и текст `AGENTS.md` вне блока не меняются ни при `apply`, ни при обновлении.
-   Удалённая строка импорта возвращается, изменённое значение остаётся, сломанные метки чинятся без потери текста.
-4. Обновление: новый коммит применяется; сломанный откатывается, больше не применяется; исправление поверх него применяется.
-5. Новая фича приходит выключенной, включённые остаются включёнными.
-6. Хаб не поднялся после перезапуска: оба репозитория откатываются.
-7. Две команды одновременно: вторая ждёт конца первой, файлы не портятся. Убитый процесс блокировку не оставляет.
-8. Рефлексия и Codex-обёртка запускаются на Linux с поддельным `claude` и `codex`.
-9. Настоящий Claude в контейнере, тестовый бот: тема, ответ, `/bash`, `/feature`, запуск сессии из темы, событие обновления.
-10. Сканирование всей истории обоих репозиториев чистое.
-11. После переноса существующих ручных правил и хуков на записи `rig` правила и настройки совпадают с прежними, кроме
-    подтверждённых отличий.
+`rig install --dev` turns on mode `dev` and takes the clone paths from the current directory; if desired, `volunteers`,
+`pwsh`, `cmd` are enabled in it.
 
-Пункт 9 требует от разработчика создать тестового бота и один раз войти в Claude в контейнере.
+If rules and hooks are already written by hand, they are moved to `rig` entries like this:
+1. A copy of `~/.claude` and `~/.codex`.
+2. The text that `rig` now brings is removed from the main files, by the tables above. The personal stays.
+3. `rig install --dev`; entries matching `rig` are accepted as its own by the ownership rules.
+4. A before-and-after comparison: the set of rule sections and the normalized `settings.json`. All differences are printed
+   as a list, and the human confirms them.
 
-## Решения
+## Publication
 
-Принятые решения: один репозиторий, `rig` без службы, хаб зависит от `rig`, состав базы и фич, волонтёры выключены в общем
-репозитории, личные правила локально, обновления из `main`, раз в час, откат при сбое, новые фичи выключены, оба репозитория
-публичные, события в общей теме, фичи на всю машину, `disable` только отключает, в режиме `dev` рабочая копия служит живой установкой,
-русский без настройки языка, MIT, `stable` на сервере, правки в одном клоне останавливают обновление целиком, откат
-возвращает оба репозитория, неподнявшийся хаб считается сбоем, собранные правила подключаются через `@` и переживают правку
-основных файлов, `/feature telegram disable` из Телеграма разрешён, личные навыки, хуки и статусная
-строка не входят в `rig`, простоя хаб ждёт без ограничения, `rig` ставит программы без root сам, удалённая запись возвращается,
-разделы правил, не вошедшие в базу, остаются личными, проверка хаба раз в 5 минут, каждый новый коммит
-пробуется однократно, команды ждут конца обновления, при `disable` изменённая запись убирается с сохранением копии, минимальный
-набор ключей `settings.json`, обращение на «ты» в общих правилах базы, новые коммиты применяются и пока хаб ждёт простоя, хаб называется telegram-hub везде, короткого имени нет.
+Both repositories are public, license MIT.
 
-Реализация: Bun/TS для `rig`; пути и формат файлов в `~/.agent-rig`; события через файл; `/bash` входит в `telegram`; блок с
-метками в `AGENTS.md`; общие правила остаются в `AGENTS.md`, чтобы Claude не читал их дважды; 5 минут на подъём хаба;
-копирование агентов и навыков в `~/.claude`; изменённая запись включённой фичи остаётся за человеком; принятие совпадающих
-записей.
+## Checks
+
+Done when everything passed:
+1. Docker, clean Ubuntu 24.04: `rig install` from scratch, `rig check` green.
+2. Turning each feature on and off: rules, hooks and settings change, a repeated `apply` changes nothing.
+3. Foreign `settings.json` keys, the `CLAUDE.md` text and the `AGENTS.md` text outside the block do not change at either
+   `apply` or update. A deleted import line returns, a changed value stays, broken markers are repaired without losing text.
+4. Update: a new commit is applied; a broken one is rolled back and no longer applied; a fix on top of it is applied.
+5. A new feature arrives off, enabled ones stay enabled.
+6. The hub did not come up after a restart: both repositories roll back.
+7. Two commands at once: the second waits for the end of the first, files are not corrupted. A killed process leaves no lock.
+8. Reflection and the Codex wrapper start on Linux with a fake `claude` and `codex`.
+9. Real Claude in a container, a test bot: a topic, a reply, `/bash`, `/feature`, a session started from a topic, the update
+   event.
+10. A scan of the whole history of both repositories is clean.
+11. After moving existing manual rules and hooks to `rig` entries, rules and settings match the previous ones, apart from the
+    confirmed differences.
+12. Default English: on a fresh state (no `language` field) `rig status`, `rig feature`, `rig language` and the event texts are
+    English, and `rig language --json` prints `{"language":"en"}`.
+13. Language switch: `rig language ru` changes the output, feature descriptions and the text of the new event to Russian and
+    emits `language-changed`; `rig language ru` again emits nothing; `rig language en` returns everything to English; the hub
+    follows the switch (at start and on the event) and accepts `/rig language en|ru` from `allowFrom` users only.
+14. `rig status --json` and `rig feature --json` keep the contract (the same fields and key order in both languages; no new
+    field in `rig status --json`; `description` is a string).
+15. No Russian text in the code outside the `ru` catalog and the `ru` feature descriptions.
+
+Item 9 requires the developer to create a test bot and sign in to Claude once in the container.
+
+## Decisions
+
+Decisions made: one repository, `rig` without a service, the hub depends on `rig`, the composition of the base and features,
+volunteers off in the common repository, personal rules local, updates from `main`, once an hour, rollback on failure, new
+features off, both repositories public, events in the common topic, features for the whole machine, `disable` only turns
+off, in mode `dev` the working copy is the live install, English by default, Russian by one shared setting, MIT, `stable`
+on the server, changes in one clone stop the update entirely, the rollback returns both repositories, a hub that did not
+come up counts as a failure, the generated rules are attached through `@` and survive an edit of the main files,
+`/feature telegram disable` from Telegram is allowed, personal skills, hooks and the status line are not part of `rig`, the
+hub waits for idleness without limit, `rig` installs programs without root itself, a deleted entry returns, rule sections
+not included in the base stay personal, the hub check every 5 minutes, each new commit is tried once, commands wait for the
+end of an update, at `disable` a changed entry is removed with a copy kept, a minimal set of `settings.json` keys,
+addressing the user informally in the shared base rules (in any language with a formal and an informal "you"), new commits are applied while the hub
+waits for idleness, the hub is called telegram-hub everywhere, there is no short name, agent replies follow the user's
+language and not the setting, the install agent talks to the human in the human's language, and `rig` stays English after
+install.
+
+Implementation: Bun/TS for `rig`; paths and the file format in `~/.agent-rig`; events through a file; `/bash` is part of
+`telegram`; a block with markers in `AGENTS.md`; the shared rules stay in `AGENTS.md` so that Claude does not read them
+twice; 5 minutes for the hub to come up; copying agents and skills into `~/.claude`; a changed entry of an enabled feature
+stays with the human; accepting matching entries; one message catalog with `en` and `ru` for everything `rig` shows the human.

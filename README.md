@@ -1,78 +1,79 @@
 # agent-rig
 
-`rig` собирает рабочее окружение для Claude Code и Codex: общие правила, хуки, плагины и программы. Окружение складывается из фич (feature): каждую можно включить или выключить одной командой.
+`rig` assembles a working environment for Claude Code and Codex: shared rules, hooks, plugins and programs. The environment is built from features: each one can be turned on or off with one command.
 
-Репозиторий нужен тому, кто работает с Claude Code и Codex на нескольких машинах и хочет, чтобы настройки на них совпадали и обновлялись сами. Личные правила при этом остаются твоими.
+The repository is for anyone who works with Claude Code and Codex on several machines and wants their settings to match and to update themselves. Your personal rules stay yours.
 
-`rig` не держит фоновый процесс. Это команда на Bun и TypeScript, у неё нет зависимостей времени выполнения (в `package.json` только dev-пакеты для проверки типов). Все пути и настройки лежат в `~/.agent-rig/`.
+`rig` does not keep a background process. It is a command on Bun and TypeScript with no runtime dependencies (`package.json` has only dev packages for type checking). All paths and settings live in `~/.agent-rig/`.
 
-Установка на сервер описана в [INSTALL.md](INSTALL.md). Агент, тебя попросили развернуть это здесь: прочитай `INSTALL.md` и выполняй его раздел «Что делает агент».
+Installing on a server is described in [INSTALL.md](INSTALL.md). Agent, you were asked to deploy this here: read `INSTALL.md` and follow its section "What the agent does".
 
-## Фичи
+## Features
 
-Фича это набор правил, хуков, плагинов и программ с общим названием. Фича `base` включена всегда и не выключается. Описания взяты из манифестов `base/feature.json` и `features/*/feature.json`.
+A feature is a set of rules, hooks, plugins and programs under one name. The feature `base` is always on and cannot be turned off. The descriptions come from the manifests `base/feature.json` and `features/*/feature.json`.
 
-| Фича | По умолчанию | Платформы | Что делает |
+| Feature | Default | Platforms | What it does |
 | --- | --- | --- | --- |
-| `base` | всегда включена | Linux, Windows, macOS | Базовые правила и хуки. |
-| `reflection` | включена | Linux, Windows, macOS | Рефлексия после ходов Claude Code. |
-| `codex` | включена | Linux, Windows, macOS | Делегирование задач через Codex. |
-| `telegram` | включена | Linux, Windows, macOS | Интеграция с Telegram-хабом. |
-| `rtk` | включена | Linux, Windows, macOS | Сокращение вывода инструментов с RTK. |
-| `superpowers` | включена | Linux, Windows, macOS | Плагин Superpowers. |
-| `skills` | включена | Linux, Windows, macOS | Повторно используемые навыки Claude Code. |
-| `js-ts-rules` | выключена | Linux, Windows, macOS | Конвенции JavaScript и TypeScript. |
-| `volunteers` | выключена | только Windows | Делегирование рядовой работы волонтёрским моделям. Разрешённые папки перечисляются в `~/.agent-rig/volunteer-projects.json`: `{"allowed": ["<папка>"]}`. |
-| `pwsh` | выключена | только Windows | Команда PowerShell в Telegram-хабе (нужна `telegram`). |
-| `cmd` | выключена | только Windows | Команда Command Prompt в Telegram-хабе (нужна `telegram`). |
+| `base` | always on | Linux, Windows, macOS | Base rules and hooks. |
+| `reflection` | on | Linux, Windows, macOS | Reflection after Claude Code turns. |
+| `codex` | on | Linux, Windows, macOS | Delegating tasks through Codex. |
+| `telegram` | on | Linux, Windows, macOS | Integration with the Telegram hub. |
+| `rtk` | on | Linux, Windows, macOS | Shortening tool output with RTK. |
+| `superpowers` | on | Linux, Windows, macOS | The Superpowers plugin. |
+| `skills` | on | Linux, Windows, macOS | Reusable Claude Code skills. |
+| `js-ts-rules` | off | Linux, Windows, macOS | JavaScript and TypeScript conventions. |
+| `volunteers` | off | Windows only | Delegating routine work to volunteer models. Allowed folders are listed in `~/.agent-rig/volunteer-projects.json`: `{"allowed": ["<folder>"]}`. |
+| `pwsh` | off | Windows only | PowerShell command in the Telegram hub (needs `telegram`). |
+| `cmd` | off | Windows only | Command Prompt command in the Telegram hub (needs `telegram`). |
 
-Значения по умолчанию действуют только при первой установке. Новые фичи, которые появятся в обновлениях, остаются выключенными, пока ты их не включишь.
+Default values apply only at the first install. New features that appear in updates stay off until you turn them on.
 
-## Команды
+## Commands
 
-- `rig install [--dev]` ставит rig: фичи, программы, плагины, команду `rig`. На сервере ещё две записи в crontab. С `--dev` ставит режим разработчика.
-- `rig apply` заново собирает правила, хуки и настройки из включённых фич.
-- `rig feature` показывает список фич и их состояние; `rig feature --json` то же в JSON.
-- `rig feature <имя> enable` и `rig feature <имя> disable` включают и выключают фичу. Выключение убирает хуки, правила, настройки, плагины, а также скопированные в `~/.claude` файлы агентов и навыков; если ты менял запись, изменённое значение остаётся в копии `*.bak-<дата>`. Программы, логины и данные остаются.
-- `rig update` получает свежий `main` обоих репозиториев и применяет его. `rig update --pending` проверяет, перезапустился ли хаб после обновления.
-- `rig status` показывает режим, версии, состояние фич, последнее обновление и ошибки; `rig status --json` то же в JSON.
-- `rig check` проверяет, что установка цела и хуки запускаются.
-- `rig help` печатает список команд.
+- `rig install [--dev]` installs rig: features, programs, plugins, the `rig` command. On a server also two crontab entries. With `--dev` it installs developer mode.
+- `rig apply` rebuilds the rules, hooks and settings from the enabled features.
+- `rig feature` shows the list of features and their state; `rig feature --json` does the same in JSON.
+- `rig feature <name> enable` and `rig feature <name> disable` turn a feature on and off. Turning off removes hooks, rules, settings, plugins, and also the agent and skill files copied into `~/.claude`; if you changed an entry, the changed value stays in a `*.bak-<date>` copy. Programs, logins and data stay.
+- `rig update` fetches the fresh `main` of both repositories and applies it. `rig update --pending` checks whether the hub restarted after an update.
+- `rig status` shows the mode, versions, the state of features, the last update and errors; `rig status --json` does the same in JSON.
+- `rig check` verifies that the install is intact and the hooks run.
+- `rig language` shows the current language; `rig language en|ru` switches rig and the Telegram bot between English and Russian. English is the default.
+- `rig help` prints the list of commands.
 
-## Обновления и откат
+## Updates and rollback
 
-На сервере cron раз в час запускает `rig update`. Он забирает `main` репозиториев `agent-rig` и хаба и применяет их как одну пару. Если после применения `rig check` не проходит, `rig` возвращает оба клона на прошлую пару, запоминает неудачную и пишет событие в `~/.agent-rig/events.jsonl`. Эту пару он повторно не пробует.
+On a server cron runs `rig update` every hour. It fetches `main` of the `agent-rig` and hub repositories and applies them as one pair. If `rig check` fails after applying, `rig` returns both clones to the previous pair, remembers the failed one and writes an event to `~/.agent-rig/events.jsonl`. It does not try that pair again.
 
-Если в одном из клонов есть локальные изменения или локальные коммиты, либо клон не на `main`, обновление пропускается, клон не трогается, приходит одно сообщение с причиной. Если хаб не подтвердил перезапуск за 5 минут, `rig` откатывается: проверка идёт по cron раз в 5 минут, поэтому откат наступает через 5-10 минут после перезапуска хаба. `rig apply` и `rig check` нового кода идут отдельным процессом: если он упал или не запустился, `rig` тоже откатывается. Внешние команды (`git`, `claude plugin`) останавливаются через 15 минут. В режиме разработчика обновление недоступно.
+If one of the clones has local changes or local commits, or a clone is not on `main`, the update is skipped, the clone is not touched, and one message with the reason arrives. If the hub did not confirm the restart within 5 minutes, `rig` rolls back: the check runs by cron every 5 minutes, so the rollback happens 5-10 minutes after the hub restart. `rig apply` and `rig check` of the new code run in a separate process: if it crashed or failed to start, `rig` rolls back too. External commands (`git`, `claude plugin`) are stopped after 15 minutes. In developer mode the update is unavailable.
 
-Журнал cron: `~/.agent-rig/update.log`.
+Cron log: `~/.agent-rig/update.log`.
 
-## Личные правила
+## Personal rules
 
-Свои правила пиши в `~/.claude/CLAUDE.md` и `~/.codex/AGENTS.md`, как обычно. Rig управляет только своими кусками:
+Write your own rules in `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` as usual. Rig manages only its own pieces:
 
-- в `~/.codex/AGENTS.md` это блок между `<!-- rig:begin -->` и `<!-- rig:end -->`;
-- в `~/.claude/CLAUDE.md` это две строки импорта: `@../.codex/AGENTS.md` и `@../.agent-rig/generated/CLAUDE.md`;
-- в `~/.claude/settings.json` rig меняет только ключи, которые записал сам.
+- in `~/.codex/AGENTS.md` it is the block between `<!-- rig:begin -->` and `<!-- rig:end -->`;
+- in `~/.claude/CLAUDE.md` it is two import lines: `@../.codex/AGENTS.md` and `@../.agent-rig/generated/CLAUDE.md`;
+- in `~/.claude/settings.json` rig changes only the keys it wrote itself.
 
-Всё остальное в этих файлах rig не трогает и сохраняет при каждом применении и обновлении.
+Everything else in these files rig does not touch and keeps on every apply and update.
 
-## Разработка
+## Development
 
-1. Клонируй `agent-rig` и рядом `claude-telegram-hub` (хаб должен лежать в `../claude-telegram-hub` относительно корня проекта).
-2. В клоне `agent-rig` запусти `bun install`, затем `bun run src/cli.ts install --dev`.
-3. Проверь установку: `rig check`.
+1. Clone `agent-rig` and next to it `claude-telegram-hub` (the hub must be at `../claude-telegram-hub` relative to the project root).
+2. In the `agent-rig` clone run `bun install`, then `bun run src/cli.ts install --dev`.
+3. Check the install: `rig check`.
 
-Версию в `package.json` повышай в том же коммите, который меняет то, что видит пользователь.
+Raise the version in `package.json` in the same commit that changes what the user sees.
 
-Если клон лежит в `.worktrees/`, корнем проекта считается каталог выше `.worktrees/`. Тесты запускаются командой `bun test`, типы проверяет `bun run typecheck`. Тесты в Docker запускает `scripts/test-docker.sh`.
+If the clone is in `.worktrees/`, the project root is the directory above `.worktrees/`. Tests run with `bun test`, types are checked by `bun run typecheck`. Tests in Docker are run by `scripts/test-docker.sh`.
 
-## Скрипты
+## Scripts
 
-- `scripts/prepare-server.sh` делает единственный шаг установки, которому нужен root: пакеты, `cron`, linger, разрешение канала.
-- `scripts/test-docker.sh` собирает образ Ubuntu 24.04 `agent-rig-ubuntu-24.04-tests` и запускает в нём сценарии из `tests/docker/`. Один сценарий запускается по префиксу имени файла: `scripts/test-docker.sh 04`.
-- `scripts/verify-rules-verbatim.py` (запуск: `python -I -X utf8 scripts/verify-rules-verbatim.py`) сверяет куски правил включённых фич с живыми `~/.claude/CLAUDE.md` и `~/.codex/AGENTS.md` при переносе ручных правил на записи rig.
+- `scripts/prepare-server.sh` does the only install step that needs root: packages, `cron`, linger, the channel permission.
+- `scripts/test-docker.sh` builds the Ubuntu 24.04 image `agent-rig-ubuntu-24.04-tests` and runs the scenarios from `tests/docker/` in it. One scenario runs by a prefix of its file name: `scripts/test-docker.sh 04`.
+- `scripts/verify-rules-verbatim.py` (run: `python -I -X utf8 scripts/verify-rules-verbatim.py`) compares the rule pieces of the enabled features with the live `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` when moving manual rules to rig entries.
 
-## Лицензия
+## License
 
-MIT. Текст в файле [LICENSE](LICENSE).
+MIT. The text is in the file [LICENSE](LICENSE).
