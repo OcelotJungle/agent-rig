@@ -247,7 +247,8 @@ means `"en"`. `rig` and the hub are English by default and switch to Russian tog
 - Every string that `rig` shows the human (command output, the waiting line, event texts, the text the hub shows from `rig`)
   comes from one message catalog with the languages `en` and `ru`; the catalog is typed so that `ru` carries every key of
   `en`, and there is no Russian text in the code outside the `ru` catalog. An event text is written in the language that is
-  current when the event is emitted.
+  current when the event is emitted. The exception is rare low-level diagnostics raised deep in the code (an unreadable
+  `state.json`, a failed file operation, a failed process read): they are always English, with the system's own text.
 - A feature description in `feature.json` is a plain English string; the other languages go into the optional
   `translations` field, keyed by language: `{ "ru": { "description": "..." } }`. `rig feature` and `rig feature --json`
   print the description in the current language, falling back to the English string, and always as a plain string, so the
