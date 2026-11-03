@@ -24,13 +24,5 @@
   "hubCommands": [
     "pwsh"
   ],
-  "programs": [
-    {
-      "name": "pwsh",
-      "command": "pwsh.exe",
-      "installCommand": "winget install --id Microsoft.PowerShell --exact",
-      "systemPackage": true,
-      "platform": "windows"
-    }
-  ]
+  "programs": []
 }

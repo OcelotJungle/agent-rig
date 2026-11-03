@@ -157,6 +157,18 @@ describe("real feature manifests", () => {
 		expect(uvx.map((program) => program.installCommand)).toEqual(["winget install --id astral-sh.uv --exact"]);
 	});
 
+	test("pwsh and cmd declare no program, because the hub falls back to the built-in Windows PowerShell", async () => {
+		const fileSystem = new MemoryFileSystem();
+		await seedRepository(fileSystem);
+		const loaded = await loadFeatures(fileSystem, REPOSITORY_PATH);
+		expect(loaded.ok).toBe(true);
+		if (!loaded.ok) return;
+
+		for (const name of ["pwsh", "cmd"]) {
+			expect(loaded.value.find((feature) => feature.name === name)?.programs ?? []).toEqual([]);
+		}
+	});
+
 	test("uses live Codex permissions and autoMode launcher sentences", async () => {
 		const fileSystem = new MemoryFileSystem();
 		await seedRepository(fileSystem);
