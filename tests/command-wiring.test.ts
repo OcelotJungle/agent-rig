@@ -338,6 +338,51 @@ describe("command wiring", () => {
 		expect(harness.processCalls.some((call) => call.command === GIT_BASH_PATH)).toBe(true);
 	});
 
+	test("a hook without args runs as a shell command string through bash -c, a hook with args runs directly", async () => {
+		const harness = createMemoryRuntime();
+		const shellHook = { event: "PreToolUse", matcher: "Bash", command: "rtk hook claude" };
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedFeature(harness.fs, REPO, featureManifest("rtk", { hooks: [shellHook] }));
+		seedFeature(harness.fs, REPO, featureManifest("reflection", { hooks: [REFLECT_HOOK] }));
+		seedState(harness.fs, { rtk: true, reflection: true });
+		seedCheckableRig(harness.fs, settingsWithHooks({
+			PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "rtk hook claude" }] }],
+			Stop: [{ matcher: "", hooks: [{ type: "command", command: "python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
+		}));
+
+		const result = await checkRig(harness.runtime);
+		expect(result.ok).toBe(true);
+		const shellCall = harness.processCalls.find((call) => call.args.includes("rtk hook claude"));
+		expect(shellCall?.command).toBe("bash");
+		expect(shellCall?.args).toEqual(["-c", "rtk hook claude"]);
+		expect(harness.processCalls.some((call) => call.command === "rtk hook claude")).toBe(false);
+		expect(harness.processCalls.some((call) => call.command === "python3" && call.args[0]?.endsWith("reflect.py"))).toBe(true);
+	});
+
+	test("a shell hook names its shell, and an unknown shell fails the check clearly", async () => {
+		const harness = createMemoryRuntime("windows");
+		const hook = { event: "Stop", matcher: "", command: "echo hi", shell: "powershell" };
+		seedFeature(harness.fs, REPO, baseManifest());
+		seedFeature(harness.fs, REPO, featureManifest("shelly", { hooks: [hook] }));
+		seedState(harness.fs, { shelly: true });
+		const settings = (shell: string): string => settingsWithHooks({ Stop: [{ matcher: "", hooks: [{ type: "command", command: "echo hi", shell }] }] });
+		seedCheckableRig(harness.fs, settings("powershell"));
+
+		const ran = await checkRig(harness.runtime);
+		expect(ran.ok).toBe(true);
+		expect(harness.processCalls.some((call) => call.command === "powershell" && call.args.at(-1) === "echo hi")).toBe(true);
+
+		const unknown = createMemoryRuntime("windows");
+		seedFeature(unknown.fs, REPO, baseManifest());
+		seedFeature(unknown.fs, REPO, featureManifest("shelly", { hooks: [{ ...hook, shell: "zsh" }] }));
+		seedState(unknown.fs, { shelly: true });
+		seedCheckableRig(unknown.fs, settings("zsh"));
+		const failed = await checkRig(unknown.runtime);
+		expect(failed.ok).toBe(false);
+		if (failed.ok) return;
+		expect(failed.error).toContain("zsh");
+	});
+
 	test("a running hub is asked once and needs no restart pause", async () => {
 		const harness = createMemoryRuntime();
 		seedTelegramRig(harness.fs);

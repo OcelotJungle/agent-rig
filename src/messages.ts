@@ -102,6 +102,7 @@ export const en = {
 		temporaryRemoveFailed: (path: string, error: string): string => `Could not remove the temporary folder ${path}: ${error}`,
 		serviceNotRunning: (): string => "The telegram-hub service is not running.",
 		hookNotStarted: (feature: string, event: string, error: string): string => `The hook ${feature}/${event} did not start: ${error}`,
+		hookShellUnknown: (feature: string, event: string, shell: string): string => `The hook ${feature}/${event} names the unknown shell "${shell}"; rig check knows bash and powershell.`,
 		hookExitCode: (feature: string, event: string, exitCode: number, output: string): string =>
 			`The hook ${feature}/${event} exited with code ${exitCode}: ${output}`,
 		bashMissing: (bash: string): string => `The program ${bash} was not found, so project-tmp.sh cannot be checked.`,

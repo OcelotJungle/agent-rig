@@ -238,7 +238,9 @@ failed; `git` never asks for a login (`GIT_TERMINAL_PROMPT=0`). The `systemctl -
   together with the full commit hash; if the version is unknown, it shows only the hash. `errors` and the text contain only
   the errors recorded after the last `update-ok`; older ones stay in `events.jsonl`.
 - `rig check`: the generated files and imports are in place, `settings.json` parses, every recorded hook matches the
-  expected one by event, command, `args` and `matcher`, hooks are run with a test event (for tool events it carries
+  expected one by event, command, `args` and `matcher`, hooks are run the way Claude Code runs them (a hook with `args`
+  is executed directly; a hook without `args` is a command string run through its shell: `bash -c`, or `powershell`
+  when the hook's `shell` says so; any other `shell` fails the check) with a test event (for tool events it carries
   `tool_name` and `tool_input`) with `CLAUDE_PROJECT_DIR` pointing at a temporary directory, the interpreter and the
   programs of the enabled features are present, the hub service is running if `telegram` is on. If the service answered
   "not running", the check asks it twice more, with a pause of one systemd restart (2 s) plus a 1 s margin: a hub that is

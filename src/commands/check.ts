@@ -36,7 +36,19 @@ type ExpectedHook = {
 	event: string;
 	matcher: string;
 	command: string;
-	args: string[];
+	// Absent for a shell-form hook (a command string run through a shell); present for a direct exec.
+	args: string[] | undefined;
+	shell: string | undefined;
+};
+
+// Claude Code runs a hook with no `args` through its shell: bash by default, or the hook's `shell` field.
+const DEFAULT_HOOK_SHELL = "bash";
+const POWERSHELL_SHELL = "powershell";
+
+const shellInvocation = (shell: string, platform: RuntimePorts["platform"]): { program: string; flags: string[] } | undefined => {
+	if (shell === DEFAULT_HOOK_SHELL) return { program: platform === "windows" ? GIT_BASH_PATH : "bash", flags: ["-c"] };
+	if (shell === POWERSHELL_SHELL) return { program: platform === "windows" ? "powershell" : "pwsh", flags: ["-NoProfile", "-Command"] };
+	return undefined;
 };
 
 // `environmentProblems` are failures to ask the environment (such as the service manager), not defects of the installed rig.
@@ -151,13 +163,16 @@ const resolveExpectedHooks = (
 			if (hook.platform !== undefined && hook.platform !== runtime.platform) continue;
 			const command = resolvePlaceholders(hook.command, placeholders, `${feature.name}/${hook.event} command`);
 			if (!command.ok) return command;
-			const args: string[] = [];
-			for (const [index, argument] of (hook.args ?? []).entries()) {
-				const resolved = resolvePlaceholders(argument, placeholders, `${feature.name}/${hook.event} arg ${index}`);
-				if (!resolved.ok) return resolved;
-				args.push(resolved.value);
+			let args: string[] | undefined;
+			if (hook.args !== undefined) {
+				args = [];
+				for (const [index, argument] of hook.args.entries()) {
+					const resolved = resolvePlaceholders(argument, placeholders, `${feature.name}/${hook.event} arg ${index}`);
+					if (!resolved.ok) return resolved;
+					args.push(resolved.value);
+				}
 			}
-			hooks.push({ feature: feature.name, event: hook.event, matcher: hook.matcher, command: command.value, args });
+			hooks.push({ feature: feature.name, event: hook.event, matcher: hook.matcher, command: command.value, args, shell: hook.shell });
 		}
 	}
 	return ok(hooks);
@@ -173,7 +188,15 @@ const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedH
 			...toolFields(hook.event),
 		};
 		// The hook runs with its own temporary folder as the project, so it cannot change the real project.
-		const invoked = await runtime.process.run(hook.command, hook.args, {
+		let program = hook.command;
+		let programArgs: string[] = hook.args ?? [];
+		if (hook.args === undefined) {
+			const invocation = shellInvocation(hook.shell ?? DEFAULT_HOOK_SHELL, runtime.platform);
+			if (invocation === undefined) return err(messages.check.hookShellUnknown(hook.feature, hook.event, hook.shell ?? ""));
+			program = invocation.program;
+			programArgs = [...invocation.flags, hook.command];
+		}
+		const invoked = await runtime.process.run(program, programArgs, {
 			cwd: temporaryPath,
 			input: JSON.stringify(hookEvent),
 			environment: { CLAUDE_PROJECT_DIR: temporaryPath },
@@ -238,9 +261,11 @@ const groupMatcher = (group: Record<string, unknown>): string | undefined => {
 
 const isRecordedCommand = (entry: unknown, hook: ExpectedHook): boolean => {
 	if (!isRecord(entry) || entry.type !== "command" || entry.command !== hook.command) return false;
+	const expectedArgs = hook.args;
+	if (expectedArgs === undefined) return entry.args === undefined;
 	const recordedArgs: unknown = entry.args ?? [];
-	return isUnknownArray(recordedArgs) && recordedArgs.length === hook.args.length
-		&& recordedArgs.every((arg, index) => arg === hook.args[index]);
+	return isUnknownArray(recordedArgs) && recordedArgs.length === expectedArgs.length
+		&& recordedArgs.every((arg, index) => arg === expectedArgs[index]);
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);

@@ -89,6 +89,7 @@ export const ru: Messages = {
 		temporaryRemoveFailed: (path: string, error: string): string => `Не удалось удалить временную папку ${path}: ${error}`,
 		serviceNotRunning: (): string => "Служба telegram-hub не запущена.",
 		hookNotStarted: (feature: string, event: string, error: string): string => `Хук ${feature}/${event} не запустился: ${error}`,
+		hookShellUnknown: (feature: string, event: string, shell: string): string => `Хук ${feature}/${event} называет неизвестную оболочку "${shell}"; rig check знает bash и powershell.`,
 		hookExitCode: (feature: string, event: string, exitCode: number, output: string): string =>
 			`Хук ${feature}/${event} завершился с кодом ${exitCode}: ${output}`,
 		bashMissing: (bash: string): string => `Не найдена программа ${bash} для проверки project-tmp.sh.`,
