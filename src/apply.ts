@@ -2,6 +2,7 @@ import type { AssetManifest, FeatureManifest, HookManifest } from "./feature.js"
 import type { JsonObject, DesiredSettingEntry } from "./settings/merge-settings.js";
 import type { AssetPlan, AssetRecord, PluginPlan, PluginRecord } from "./assets/installer.js";
 import type { JournalDependencies, PlannedEvent } from "./apply-journal.js";
+import type { Language } from "./messages.js";
 import type { RigState } from "./state.js";
 import type { Result } from "./result.js";
 import type { RuntimePorts } from "./ports.js";
@@ -14,7 +15,7 @@ import { hashText } from "./content-hash.js";
 import { assembleRules, ensureClaudeImports, executeRuleFilePlan, planRuleFiles } from "./rules/assemble-rules.js";
 import { resolveJsonPlaceholders, resolvePlaceholders } from "./placeholders.js";
 import { mergeSettings } from "./settings/merge-settings.js";
-import { messagesFor } from "./messages.js";
+import { isTranslatedLanguage, messagesFor } from "./messages.js";
 import { atomicWrite, joinPath, toSlashPath } from "./file-system.js";
 import { err, errorText, ok } from "./result.js";
 import { loadFeatures } from "./feature-graph.js";
@@ -285,7 +286,7 @@ const buildDesiredSettings = (
 		if (!enabled.has(feature.name) || !feature.platforms.includes(runtime.platform)) continue;
 		for (const hook of feature.hooks) {
 			if (hook.platform !== undefined && hook.platform !== runtime.platform) continue;
-			const value = hookSettingValue(hook, placeholders);
+			const value = hookSettingValue(hook, placeholders, runtime.language);
 			if (!value.ok) return value;
 			entries.push({
 				id: `${feature.name}:hook:${hook.event}:${hook.matcher}:${hookScriptName(hook)}`,
@@ -321,6 +322,7 @@ const buildDesiredSettings = (
 const hookSettingValue = (
 	hook: HookManifest,
 	placeholders: Readonly<Record<string, string>>,
+	language: Language,
 ): Result<JsonObject> => {
 	const command = resolvePlaceholders(hook.command, placeholders, `${hook.event} hook command`);
 	if (!command.ok) return command;
@@ -335,7 +337,9 @@ const hookSettingValue = (
 		value.args = args;
 	}
 	if (hook.timeout !== undefined) value.timeout = hook.timeout;
-	if (hook.statusMessage !== undefined) value.statusMessage = hook.statusMessage;
+	// A hook with a status message but no translation for the language keeps the English text.
+	const translated = isTranslatedLanguage(language) ? hook.translations?.[language]?.statusMessage : undefined;
+	if (hook.statusMessage !== undefined) value.statusMessage = translated ?? hook.statusMessage;
 	if (hook.async !== undefined) value.async = hook.async;
 	if (hook.asyncRewake !== undefined) value.asyncRewake = hook.asyncRewake;
 	if (hook.shell !== undefined) value.shell = hook.shell;

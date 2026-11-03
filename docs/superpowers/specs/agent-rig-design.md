@@ -84,7 +84,9 @@ language has no translation (see "Language").
 
 In the current format `rules` refers by the `path` field to a file relative to the part; the order of pieces is the order
 of the array. `platform`, `whenEnabled` and `whenDisabled` restrict rules. `hooks` holds `event`, `matcher` and `command`;
-`args`, `platform`, `timeout`, `statusMessage`, `async`, `asyncRewake` and `shell` are optional. The substitutions
+`args`, `platform`, `timeout`, `statusMessage`, `translations`, `async`, `asyncRewake` and `shell` are optional;
+`statusMessage` is a plain English string and the hook's `translations`, `{ "ru": { "statusMessage": "..." } }`, holds
+its texts in the other languages (see "Language"). The substitutions
 `{{CLONE}}`, `{{HUB}}`, `{{HOME}}` and `{{PYTHON}}` are resolved by one mechanism at apply time for rules, hooks, settings
 values, agents, skills and copied files. `settings` sets a dotted key and a value; `id`, `kind` and `platform` are
 optional. `kind` is `value`, `list-entry` or `install-default`; without `kind`, the permission lists `permissions.allow`,
@@ -263,6 +265,12 @@ means `"en"`. `rig` and the hub are English by default and switch to Russian tog
   `translations` field, keyed by language: `{ "ru": { "description": "..." } }`. `rig feature` and `rig feature --json`
   print the description in the current language, falling back to the English string, and always as a plain string, so the
   contract field stays a string.
+- A hook's `statusMessage` follows the same pattern: the plain string stays English (the previous release reads new
+  manifests during `rig update` and ignores unknown keys), the hook's `translations` holds `{ "ru": { "statusMessage":
+  "..." } }`. `settings.json` carries the message in the language in force at apply time, English when the hook has no
+  translation for it. `rig language en|ru` that changes the language reruns the normal apply (the same `applyRig`, under
+  the same rig lock) with the new language, so rig's own hook entries are rewritten; a hook entry the user changed by
+  hand follows the usual ownership rules and is kept.
 - `rig status` in text form shows the language on its own line. `rig status --json` is unchanged: it has no language field,
   because the hub validates this object with a strict schema. The hub learns the language from `rig language --json`.
 - Agent replies (Claude, Codex) are not tied to the setting: the rules tell agents to reply in the user's language. The rule

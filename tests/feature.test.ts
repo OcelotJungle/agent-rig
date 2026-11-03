@@ -71,6 +71,17 @@ describe("feature manifests", () => {
 		expect(validateFeature({ ...manifest(), translations: { de: { description: "x" } } }).ok).toBe(true);
 	});
 
+	test("accepts hook translations and rejects malformed ones, while statusMessage stays a plain string", () => {
+		const hook = { event: "Stop", matcher: "", command: "run", statusMessage: "Working" };
+		const withHook = (extra: Record<string, unknown>) => ({ ...manifest(), hooks: [{ ...hook, ...extra }] });
+		expect(validateFeature(withHook({ translations: { ru: { statusMessage: "Working (ru)" } } })).ok).toBe(true);
+		expect(validateFeature(withHook({ translations: { de: { statusMessage: "x" } } })).ok).toBe(true);
+		expect(validateFeature(withHook({ translations: { ru: { statusMessage: 4 } } })).ok).toBe(false);
+		expect(validateFeature(withHook({ translations: { ru: "text" } })).ok).toBe(false);
+		expect(validateFeature(withHook({ translations: "ru" })).ok).toBe(false);
+		expect(validateFeature(withHook({ statusMessage: { en: "Working" } })).ok).toBe(false);
+	});
+
 	test("rejects enable when dependencies are missing", () => {
 		const result = resolveFeatureChange({
 			messages: en,

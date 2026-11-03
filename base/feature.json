@@ -385,7 +385,12 @@
         "{{CLONE}}/base/hooks/compact_history.py"
       ],
       "timeout": 30,
-      "statusMessage": "Saving pre-compaction history"
+      "statusMessage": "Saving pre-compaction history",
+      "translations": {
+        "ru": {
+          "statusMessage": "Сохранение истории перед сжатием контекста"
+        }
+      }
     },
     {
       "event": "SessionStart",

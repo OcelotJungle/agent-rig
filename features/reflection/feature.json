@@ -26,6 +26,11 @@
       ],
       "timeout": 330,
       "statusMessage": "Reflecting on the turn",
+      "translations": {
+        "ru": {
+          "statusMessage": "Рефлексия хода"
+        }
+      },
       "asyncRewake": true
     }
   ],

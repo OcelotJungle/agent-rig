@@ -36,7 +36,10 @@ export type HookManifest = {
 	platform?: Platform;
 	args?: string[];
 	timeout?: number;
+	/** English text. It stays a plain string: the previous release reads new manifests during `rig update`. */
 	statusMessage?: string;
+	/** Status messages in the other languages, keyed by language. A missing language falls back to `statusMessage`. */
+	translations?: Partial<Record<TranslatedLanguage, { statusMessage: string }>>;
 	async?: boolean;
 	asyncRewake?: boolean;
 	shell?: string;
@@ -86,7 +89,11 @@ const isRule = (value: unknown): value is RuleChunk => isObject(value) &&
 	(value.platform === undefined || isPlatform(value.platform)) &&
 	(value.whenEnabled === undefined || isStringArray(value.whenEnabled)) &&
 	(value.whenDisabled === undefined || isStringArray(value.whenDisabled));
+// A language this release does not know is ignored, so a manifest with a newer translation still loads.
+const isTranslatedTexts = (value: unknown, key: "description" | "statusMessage"): boolean => isObject(value) &&
+	Object.entries(value).every(([language, text]) => !isTranslatedLanguage(language) || (isObject(text) && isString(text[key])));
 const isHook = (value: unknown): value is HookManifest => isObject(value) &&
+	(value.translations === undefined || isTranslatedTexts(value.translations, "statusMessage")) &&
 	isString(value.event) && isString(value.matcher) && isString(value.command) &&
 	(value.platform === undefined || isPlatform(value.platform)) &&
 	(value.args === undefined || isStringArray(value.args)) &&
@@ -127,13 +134,9 @@ const hasValidLists = (value: Record<string, unknown>): boolean => {
 	return REQUIRED_LISTS.every((key) => key in value);
 };
 
-// A language this release does not know is ignored, so a manifest with a newer translation still loads.
-const isTranslations = (value: unknown): boolean => isObject(value) &&
-	Object.entries(value).every(([language, text]) => !isTranslatedLanguage(language) || (isObject(text) && isString(text.description)));
-
 const isFeatureManifest = (value: unknown): value is FeatureManifest => isObject(value) &&
 	isString(value.name) && /^[a-z0-9][a-z0-9-]*$/.test(value.name) && isString(value.description) &&
-	(value.translations === undefined || isTranslations(value.translations)) && typeof value.enabledByDefault === "boolean" && hasValidLists(value);
+	(value.translations === undefined || isTranslatedTexts(value.translations, "description")) && typeof value.enabledByDefault === "boolean" && hasValidLists(value);
 
 export const validateFeature = (value: unknown): Result<FeatureManifest> => {
 	const name = isObject(value) && isString(value.name) ? value.name : "<unknown>";

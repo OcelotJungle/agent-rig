@@ -100,6 +100,32 @@ describe("real feature manifests", () => {
 		}
 	});
 
+	test("every hook status message stays a plain string for the previous release's parser and has a Russian translation beside it", async () => {
+		// The 0.2.x hook check (commit 5ef46a0, src/feature.ts) ignores unknown keys but needs these fields as they are.
+		const isString = (value: unknown): boolean => typeof value === "string";
+		const previousReleaseAcceptsHook = (hook: Record<string, unknown>): boolean =>
+			isString(hook.event) && isString(hook.matcher) && isString(hook.command) &&
+			(hook.statusMessage === undefined || isString(hook.statusMessage));
+		const manifestPaths = ["base", ...(await readdir(join(REPOSITORY_ROOT, "features"))).map((name) => join("features", name))]
+			.map((directory) => join(REPOSITORY_ROOT, directory, "feature.json"));
+		const withMessage: string[] = [];
+		const untranslated: string[] = [];
+		for (const path of manifestPaths) {
+			const value: unknown = JSON.parse(await readFile(path, "utf8"));
+			const hooks = typeof value === "object" && value !== null && "hooks" in value && Array.isArray(value.hooks) ? value.hooks : [];
+			for (const hook of hooks) {
+				expect(typeof hook === "object" && hook !== null && previousReleaseAcceptsHook({ ...hook })).toBe(true);
+				if (typeof hook !== "object" || hook === null || !("statusMessage" in hook)) continue;
+				withMessage.push(path);
+				const translations = "translations" in hook ? hook.translations : undefined;
+				const russian = typeof translations === "object" && translations !== null && "ru" in translations ? translations.ru : undefined;
+				if (typeof russian !== "object" || russian === null || !("statusMessage" in russian) || typeof russian.statusMessage !== "string") untranslated.push(path);
+			}
+		}
+		expect(withMessage.length).toBeGreaterThan(0);
+		expect(untranslated).toEqual([]);
+	});
+
 	test("base and telegram declare git, cron and tmux as system packages, cron and tmux on Linux only", async () => {
 		const fileSystem = new MemoryFileSystem();
 		await seedRepository(fileSystem);
@@ -235,7 +261,8 @@ describe("real feature manifests", () => {
 		}
 		const indexedHooks = hookRows.map(indexedHook);
 		const manifestHooks = loaded.value.flatMap((feature) =>
-			feature.hooks.map((hook) => ({ part: feature.name, ...hook })),
+			// The index lists the English status message; the translations beside it are not indexed.
+			feature.hooks.map(({ translations: _translations, ...hook }) => ({ part: feature.name, ...hook })),
 		);
 		const sortHooks = (left: { part: string; event: string; matcher: string }, right: { part: string; event: string; matcher: string }): number =>
 			`${left.part}/${left.event}/${left.matcher}`.localeCompare(`${right.part}/${right.event}/${right.matcher}`);

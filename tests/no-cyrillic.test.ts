@@ -11,7 +11,8 @@ const JSON_SUFFIX = ".json";
 const RUSSIAN_CATALOG = "src/messages-ru.ts";
 // Test data that proves the Russian switch: the expected Russian command output is written out here on purpose.
 const RUSSIAN_SWITCH_TESTS = "tests/language.test.ts";
-const ALLOWED_FILES: ReadonlySet<string> = new Set([RUSSIAN_CATALOG, RUSSIAN_SWITCH_TESTS]);
+const RUSSIAN_HOOK_TESTS = "tests/language-hooks.test.ts";
+const ALLOWED_FILES: ReadonlySet<string> = new Set([RUSSIAN_CATALOG, RUSSIAN_SWITCH_TESTS, RUSSIAN_HOOK_TESTS]);
 
 // The Docker scenarios mount the repository read-only under another owner; git refuses such a directory unless told it is safe.
 const trackedFiles = (): string[] => {

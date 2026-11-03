@@ -2,6 +2,7 @@ import type { Language } from "../messages.js";
 import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
 
+import { applyRig } from "../apply.js";
 import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { err, ok } from "../result.js";
 import { readStateReport, writeState } from "../state.js";
@@ -46,6 +47,10 @@ export const setLanguage = async (
 	if (changed) {
 		const event = await emitRigEvent(runtime, LANGUAGE_EVENT_TYPE, "info", text);
 		if (!event.ok) return event;
+		// Rig's own hook entries in settings.json carry their status message in the language, so the normal apply runs
+		// again with the new one. A message the user edited by hand follows the ownership rules there.
+		const applied = await applyRig({ ...runtime, language }, { state: { ...state, language }, mode: "apply" });
+		if (!applied.ok) return applied;
 	}
 	writeLine(json ? JSON.stringify({ language }) : text);
 	return ok(undefined);
