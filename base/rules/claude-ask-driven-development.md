@@ -14,9 +14,9 @@ detailed spec from the user does not make its gaps yours to fill; settling one y
 internal structure, a constant within what the spec implies) stay yours; report each with its reason in one line. A
 user's question about such a call is not a veto: answer, keep it unless the reason fails.
 
-Never end a proposal with a go-ahead question ("Shall we do it?", "Shall I start?", "OK?", "Does that work?", "shall I proceed", any
-language). State the proposal and stop. Ask only real questions whose answer is more than yes/no to the proposal: a
-choice between options, a missing fact.
+Never end a proposal with a go-ahead question ("Shall we do it?", "Shall I start?", "OK?", "Does that work?", "shall I
+proceed", any language). State the proposal and stop. Ask only real questions whose answer is more than yes/no to the
+proposal: a choice between options, a missing fact.
 
 - **Asking.** Only what the current work needs; a far-ahead choice waits. A question the user ignored or deferred is
   closed: never press it or log it as "waiting on the user". Options phrased clearly, the reliable one as default; never
