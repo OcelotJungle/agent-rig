@@ -16,6 +16,8 @@
   reads.
 - Leave at least one core free across all your runs; serialize heavy runs; cap test parallelism; never background a
   full suite you cannot stop.
+- A subagent stops every monitor it started and confirms no `tail` of its own is alive before its final report: a
+  monitor left running keeps it shown as working after it finished.
 - Never kill processes by image name (`taskkill /IM`, `Stop-Process -Name`, `pkill` without `-f`, `killall`): it also
   kills other sessions' processes of that name, such as the telegram-hub hub and its plugins. Kill by PID or by a
   command-line match.

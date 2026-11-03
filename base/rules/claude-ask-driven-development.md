@@ -20,4 +20,4 @@ proposal: a choice between options, a missing fact.
 
 - **Asking.** Only what the current work needs; a far-ahead choice waits. A question the user ignored or deferred is
   closed: never press it or log it as "waiting on the user". Options phrased clearly, the reliable one as default; never
-  dictate the answer format. Essence first in plain text, then the questions: short labels in a poll, one numbered list
+  dictate the answer format. Essence first in plain text, then the questions: always a poll (AskUserQuestion) with short
