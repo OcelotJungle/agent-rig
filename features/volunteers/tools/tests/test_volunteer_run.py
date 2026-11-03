@@ -330,6 +330,15 @@ class ConfigTests(Base):
         self.assertIn(str(self.work / "CLAUDE.md"), instructions)
         self.assertIn(vr.GLOBAL_RULES, instructions)
 
+    def test_real_module_constants_serialize_into_the_config(self):
+        # The fixture patches GLOBAL_RULES with a str; the module's own constant must serialize too.
+        real = load_fresh_module()
+        entry = {"id": "a/b", "agent": "full"}
+        env = real.build_env({"cwd": str(self.work), "read_only": False}, [entry], entry, "t")
+        rules = json.loads(env["OPENCODE_CONFIG_CONTENT"])["instructions"][0]
+        self.assertIsInstance(rules, str)
+        self.assertEqual(rules, (Path.home() / ".codex" / "AGENTS.md").as_posix())
+
     def test_minimal_agent_disables_claude_code_files(self):
         entry = {"id": "a/b", "agent": "minimal"}
         env = vr.build_env(self.state(), [entry], entry, "t")
@@ -340,6 +349,15 @@ class ConfigTests(Base):
 
 
 class SupervisorTests(Base):
+    def test_run_with_the_modules_own_rules_path_reaches_the_fake_opencode(self):
+        self.models("openrouter/a")
+        self.scene(openrouter__a=[{"text": "All done.\nSTATUS: done"}])
+        d = self.make_job()
+        with mock.patch.object(vr, "GLOBAL_RULES", load_fresh_module().GLOBAL_RULES):
+            st = self.run_job(d)
+        self.assertEqual(st["status"], "done")
+        self.assertEqual(len(self.calls()), 1)
+
     def test_success_writes_result_and_event_stream(self):
         self.models("openrouter/a")
         self.scene(openrouter__a=[{"text": "starting"}, {"tool": "echo hi"},

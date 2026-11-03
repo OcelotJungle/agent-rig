@@ -51,7 +51,7 @@ PROXY_START_TIMEOUT = int(os.environ.get("VOLUNTEER_PROXY_START_SECONDS", 90))
 OPENCODE_CMD = json.loads(os.environ["VOLUNTEER_OPENCODE_CMD"]) if os.environ.get("VOLUNTEER_OPENCODE_CMD") \
     else [shutil.which("opencode") or "opencode"]
 MODELS_SCRIPT = os.environ.get("VOLUNTEER_MODELS_SCRIPT") or str(TOOLS_DIR / "volunteer-models.py")
-GLOBAL_RULES = HOME / ".codex" / "AGENTS.md"
+GLOBAL_RULES = (HOME / ".codex" / "AGENTS.md").as_posix()  # goes into the JSON config: a forward-slash string
 GIT_BASH = "C:/Program Files/Git/bin/bash.exe"
 PROVIDER = "freellmpool"
 MODELS_MAX_AGE = 24 * 3600
