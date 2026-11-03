@@ -138,7 +138,7 @@ codex login --device-auth
 6. Write me "done".
 
 The group title can be changed later. Do not send me tokens or codes.
-If you want rig and the Telegram bot to talk Russian: `rig language ru` in the terminal or `/rig language ru` in the bot's topic.
+To change the language of rig and the Telegram bot (English or Russian): `rig language en|ru` in the terminal or `/rig language en|ru` in the bot's topic.
 ```
 
 ### Step 9. Service and access
@@ -200,7 +200,7 @@ If something is not done, write instead a block `What is left for you to do:` an
 Add this last line to either variant of the message:
 
 ```
-If you want rig and the Telegram bot to talk Russian: `rig language ru` in the terminal or `/rig language ru` in the bot's topic.
+To change the language of rig and the Telegram bot (English or Russian): `rig language en|ru` in the terminal or `/rig language en|ru` in the bot's topic.
 ```
 
 ## If a step fails

@@ -371,7 +371,7 @@ from the list: a stranger with the bot in their own group does not know it. At t
 done, or what the human still has to do, with exact commands.
 
 The install agent talks to the human in the human's language. `rig` itself stays English after install; the final list
-tells how to switch it: `rig language ru` in the terminal or `/rig language ru` in Telegram.
+tells how to change the language: `rig language en|ru` in the terminal or `/rig language en|ru` in Telegram.
 
 tmux is a program that keeps the terminal on the server after an SSH disconnect. The hub starts sessions from a topic in it.
 
