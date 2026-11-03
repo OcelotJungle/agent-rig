@@ -1,5 +1,7 @@
 """Tests for codex-run.py: the run rules per platform, and a cancelled job stopping its children (POSIX only)."""
 import importlib.util
+import io
+import json
 import os
 import shutil
 import subprocess
@@ -8,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -59,6 +62,44 @@ class RunRulesTest(unittest.TestCase):
     def test_common_rules_stay_on_both_platforms(self):
         for windows in (True, False):
             self.assertIn(SANDBOX_MARK, cr.run_rules(windows=windows))
+
+
+FAKE_CODEX = Path(__file__).resolve().parent / "fake_codex.py"
+
+
+class StartPathTest(unittest.TestCase):
+    """Drives cmd_start and the supervisor with the module's real constants against a fake codex."""
+
+    def test_started_job_runs_to_done_with_a_fake_codex(self):
+        tmp = Path(tempfile.mkdtemp(prefix="codex-run-test-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        cache = tmp / "models_cache.json"
+        cache.write_text(json.dumps({"models": [{
+            "slug": "gpt-6-luna", "visibility": "list",
+            "supported_reasoning_levels": [{"effort": "high"}]}]}), encoding="utf-8")
+        prompt = tmp / "prompt.md"
+        prompt.write_text("do the task", encoding="utf-8")
+        work = tmp / "work"
+        work.mkdir()
+        jobs = tmp / "jobs"
+        real_command = cr.Supervisor.command
+
+        def fake_command(sup, resume_text=None):
+            cmd, stdin_text = real_command(sup, resume_text)
+            return [sys.executable, "-I", str(FAKE_CODEX)] + cmd[1:], stdin_text
+
+        args = mock.Mock(model="luna", effort="high", approved=False, prompt_file=str(prompt), cwd=str(work),
+                         read_only=False)
+        with mock.patch.multiple(cr, JOBS_DIR=jobs, MODELS_CACHE=cache, POLL_SECONDS=0.01), \
+                mock.patch.object(cr, "spawn_supervisor") as spawn, \
+                mock.patch.object(cr.Supervisor, "command", fake_command), \
+                redirect_stdout(io.StringIO()):
+            cr.cmd_start(args)
+            job_dir = spawn.call_args.args[0]
+            cr.Supervisor(job_dir).run()
+        state = cr.read_json(job_dir / "state.json")
+        self.assertEqual(state["status"], "done", state)
+        self.assertIn("STATUS: done", (job_dir / "last.md").read_text(encoding="utf-8"))
 
 
 @unittest.skipIf(os.name == "nt", "the job's process group is a POSIX mechanism; Windows uses taskkill /T")
