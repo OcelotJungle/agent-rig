@@ -10,4 +10,4 @@ any purpose, no exceptions. A shell command never carries multi-line text.
   `gh pr create --body-file`). A one-line `-m "..."` is fine.
 - An edit whose pattern holds a backslash goes through Edit or a script file, never `sed`, `perl -pi -e` or `grep`.
 - When Edit cannot match text plainly in the file (CRLF), or one change goes into several places, a Python driver
-  calls `patch(path, [(old, new), ...])` from `{{HOME}}/.claude/tools/patchlib.py`.
+  calls `patch(path, [(old, new), ...])` from `{{CLONE}}/base/tools/patchlib.py`.

@@ -2,7 +2,7 @@ import type { FileSystem } from "./file-system.js";
 import type { Language } from "./messages.js";
 import type { Result } from "./result.js";
 
-import { atomicWrite, joinPath } from "./file-system.js";
+import { atomicWrite, joinPath, toSlashPath } from "./file-system.js";
 import { DEFAULT_LANGUAGE, isLanguage } from "./messages.js";
 import { err, errorText, ok } from "./result.js";
 
@@ -75,7 +75,7 @@ export const parseStateReport = (text: string): Result<StateReport> => {
 	}
 	const state: RigState = {
 		mode: value.mode,
-		paths: { repo: value.paths.repo, hub: value.paths.hub },
+		paths: { repo: toSlashPath(value.paths.repo), hub: toSlashPath(value.paths.hub) },
 		features: value.features,
 		records: value.records,
 		badPairs: value.badPairs,

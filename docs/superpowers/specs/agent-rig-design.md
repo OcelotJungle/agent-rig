@@ -54,6 +54,12 @@ from Telegram, and the developer of `rig` works from a working copy of the same 
 | Events | A file for the hub, format below | `~/.agent-rig/events.jsonl` |
 | Log | Output of cron runs | `~/.agent-rig/update.log` |
 
+Every path `rig` stores or compares has one form: forward slashes, also on Windows (`C:/Users/me/.claude/skills/x/SKILL.md`).
+The file-system adapters, `joinPath`, the runtime (`home`, `resolvePath`), the clone and hub paths in `state.json` and the
+`{{CLONE}}`, `{{HUB}}`, `{{HOME}}` and `{{PYTHON}}` substitutions all produce it. A `state.json` written by an older build
+with backslashes is read in this form: its asset keys match the same files, nothing is duplicated or taken for foreign.
+Only the `rig.cmd` shim keeps backslashes, because `cmd.exe` needs them.
+
 Clone paths are stored in `state.json`, the code does not hard-code them. The remote address is taken from the clone's
 `origin`, the branch is always `main`.
 
@@ -92,8 +98,12 @@ If a needed program is missing at `enable` or update, `rig` installs it itself w
 system packages: it prints the command, and at update `rig check` fails, the rollback runs and an event with that command
 arrives.
 
-The composition of the base and features. Paths are relative to `~/.claude`, sections are headings in `CLAUDE.md` and
-`~/.codex/AGENTS.md`.
+The composition of the base and features. File paths are relative to the part's own directory (`<clone>/base/` or
+`<clone>/features/<name>/`). Hook scripts, tools and the other `files` stay in the clone and run from there; only
+`agents/`, `skills/` and `assets` are copied into `~/.claude`. Rule text therefore names helper files as
+`{{CLONE}}/base/tools/patchlib.py` and uses `{{HOME}}/.claude/...` only for what `rig` installs there or for the Claude
+Code locations (`CLAUDE.md`, `settings.json`, `skills/`, the directory itself); a test checks every such path.
+Sections are headings in `CLAUDE.md` and `~/.codex/AGENTS.md`.
 
 | Part | On at install | Platforms | Files | Hook | Rules |
 |---|---|---|---|---|---|
@@ -183,7 +193,7 @@ Ownership rules: `state.json` stores every `rig` entry with the written value or
 | Case | What `rig` does |
 |---|---|
 | No entry, and no matching one either | Adds it, remembers it |
-| The same entry already exists, but not from `rig` | Accepts it as its own, creates no duplicate. This is how an existing setup is taken over |
+| The same entry already exists, but not from `rig` | Accepts it as its own, creates no duplicate. This is how an existing setup is taken over. A text file that differs from the source only in line endings (CRLF against LF) is the same entry; a binary file is compared byte for byte |
 | The value or file was changed | Keeps the changed one, sends an event once |
 | The entry was deleted, the feature is on | Restores it. Turning off must be done through `/feature` |
 | The feature was turned off, the entry was not changed | Deletes it |

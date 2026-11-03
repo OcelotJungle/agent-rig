@@ -26,6 +26,21 @@ describe("state", () => {
 		expect(result).toEqual({ ok: true, value: state });
 	});
 
+	test("clone and hub paths written with backslashes by an older build are read with forward slashes", () => {
+		const state: RigState = {
+			mode: "dev",
+			paths: { repo: "C:\\projects\\rig", hub: "C:\\projects\\hub" },
+			features: {},
+			records: {},
+			badPairs: [],
+			pendingHubRestart: null,
+		};
+
+		const result = parseState(JSON.stringify(state));
+
+		expect(result.ok && result.value.paths).toEqual({ repo: "C:/projects/rig", hub: "C:/projects/hub" });
+	});
+
 	test("keeps an optional language and treats a state without one as valid", () => {
 		const base: RigState = {
 			mode: "server",

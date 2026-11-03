@@ -112,6 +112,12 @@ PERMITTED_REMOVED_LINES = (
 )
 
 
+CLONE_HELPERS = (
+    ("{{HOME}}/.claude/tools/patchlib.py", "{{CLONE}}/base/tools/patchlib.py"),
+    ("{{HOME}}/.claude/hooks/project-tmp.sh", "{{CLONE}}/base/hooks/project-tmp.sh"),
+)
+
+
 def normalize_line_endings(text):
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
@@ -248,6 +254,9 @@ def normalize_live_paths(text, root, home):
         for variant in path_variants(value):
             normalized = re.sub(re.escape(variant), replacement, normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"(?<![\w{}])~(?=[/\\])", "{{HOME}}", normalized)
+    # Rig installs no files under ~/.claude/tools or ~/.claude/hooks: the helpers named in rules stay in the clone.
+    for live_location, clone_location in CLONE_HELPERS:
+        normalized = normalized.replace(live_location, clone_location)
     normalized = re.sub(r"(?<![\w{}])python(?=\s+-I\b)", "{{PYTHON}}", normalized, flags=re.IGNORECASE)
     # A clone path can hold spaces, so chunks quote it in commands; the live rules use a space-free `~` path.
     normalized = re.sub(r"(\{\{PYTHON\}\} -I )(\{\{CLONE\}\}/\S+)", r'\1"\2"', normalized)

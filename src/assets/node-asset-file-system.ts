@@ -6,8 +6,10 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { toSlashPath } from "../file-system.js";
 import { err, errorText, ok } from "../result.js";
 
+const TRAILING_SLASHES = /\/+$/;
 const EXECUTABLE_FILE_MODE = 0o755;
 const REGULAR_FILE_MODE = 0o644;
 const ANY_EXECUTE_BITS = 0o111;
@@ -78,7 +80,7 @@ async function writeBytesAtomic(path: string, content: FileContent): Promise<Res
 async function collectFiles(directory: string, files: string[]): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
-    const path = join(directory, entry.name);
+    const path = `${toSlashPath(directory).replace(TRAILING_SLASHES, "")}/${entry.name}`;
     if (entry.isDirectory()) await collectFiles(path, files);
     else if (entry.isFile()) files.push(path);
   }

@@ -23,11 +23,24 @@ export type FileSystem = {
 	uniqueSuffix(): string;
 };
 
-export const joinPath = (...parts: string[]): string => parts
-	.filter((part) => part.length > 0)
-	.join("/")
-	.replace(/\/+/g, "/")
-	.replace(/^([A-Za-z]):\//, "$1:/");
+// Every path rig stores, compares or renders into text has one form: forward slashes. Windows accepts them everywhere
+// rig uses a path, and a single form gives the same file the same key on every run.
+export const toSlashPath = (path: string): string => path.replaceAll("\\", "/");
+
+const UNC_PREFIX = "//";
+
+export const joinPath = (...parts: string[]): string => {
+	const slashed = parts
+		.filter((part) => part.length > 0)
+		.map(toSlashPath);
+	const collapsed = slashed
+		.join("/")
+		.replace(/\/+/g, "/")
+		.replace(/^([A-Za-z]):\//, "$1:/");
+	// A network path (\\server\share) keeps its two leading slashes.
+	const first = slashed[0] ?? "";
+	return first.startsWith(UNC_PREFIX) && !first.startsWith("///") ? `/${collapsed}` : collapsed;
+};
 
 export const atomicWrite = async (fs: FileSystem, path: string, value: string): Promise<Result<void>> => {
 	let temporaryPath = `${path}.tmp-${fs.uniqueSuffix()}`;

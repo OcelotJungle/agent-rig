@@ -48,7 +48,7 @@ describe("real file system adapter (A8)", () => {
 
     expect(applied.ok).toBe(true);
     expect(new Uint8Array(await readFile(join(target, "nested", "logo.png")))).toEqual(BINARY_BYTES);
-    expect(await readFile(join(target, "run.sh"), "utf8")).toBe(`#!/bin/sh\necho ${join(root, "home")}\n`);
+    expect(await readFile(join(target, "run.sh"), "utf8")).toBe(`#!/bin/sh\necho ${join(root, "home").replaceAll("\\", "/")}\n`);
     if (IS_WINDOWS) return;
     const mode = (await stat(join(target, "run.sh"))).mode;
     expect(mode & OWNER_EXECUTE_BIT).not.toBe(NO_BITS);

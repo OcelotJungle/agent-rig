@@ -12,7 +12,7 @@ import { homedir, platform as hostPlatform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createNodeAssetFileSystem } from "../assets/node-asset-file-system.js";
-import { atomicWrite } from "../file-system.js";
+import { atomicWrite, toSlashPath } from "../file-system.js";
 import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
 import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
 import { err, errorText, ok } from "../result.js";
@@ -40,7 +40,7 @@ type ReleaseAsset = { name: string; url: string };
 
 type RealRuntimeOptions = { hostName?: NodeJS.Platform };
 
-const realHome = (): string => process.env.USERPROFILE ?? process.env.HOME ?? homedir();
+const realHome = (): string => toSlashPath(process.env.USERPROFILE ?? process.env.HOME ?? homedir());
 
 // Reads only the language (state.json), without building the runtime: for `rig help` and usage errors.
 export const readRealLanguage = async (): Promise<Language> => readStoredLanguage(createFileSystem(), realHome());
@@ -80,7 +80,7 @@ export const createRealRuntime = async (options: RealRuntimeOptions = {}): Promi
 		},
 		home,
 		currentDirectory: process.cwd(),
-		resolvePath: (...parts) => resolve(...parts),
+		resolvePath: (...parts) => toSlashPath(resolve(...parts)),
 		executablePath: process.execPath,
 		pythonCommand,
 		pathEnvironment,

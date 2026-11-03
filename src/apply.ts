@@ -15,7 +15,7 @@ import { assembleRules, ensureClaudeImports, executeRuleFilePlan, planRuleFiles 
 import { resolveJsonPlaceholders, resolvePlaceholders } from "./placeholders.js";
 import { mergeSettings } from "./settings/merge-settings.js";
 import { messagesFor } from "./messages.js";
-import { atomicWrite, joinPath } from "./file-system.js";
+import { atomicWrite, joinPath, toSlashPath } from "./file-system.js";
 import { err, errorText, ok } from "./result.js";
 import { loadFeatures } from "./feature-graph.js";
 import { parseState, writeState } from "./state.js";
@@ -98,10 +98,10 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 	const today = runtime.clock.nowText().slice(0, ISO_DATE_LENGTH);
 	const settingsBackupBase = `${settingsPath}.bak-${today}`;
 	const placeholders = {
-		CLONE: request.state.paths.repo,
-		HUB: request.state.paths.hub,
-		HOME: runtime.home,
-		PYTHON: runtime.pythonCommand,
+		CLONE: toSlashPath(request.state.paths.repo),
+		HUB: toSlashPath(request.state.paths.hub),
+		HOME: toSlashPath(runtime.home),
+		PYTHON: toSlashPath(runtime.pythonCommand),
 	};
 	const chunksResult = await loadRuleChunks(runtime, manifests, enabled, platform, request.state.paths.repo, placeholders);
 	if (!chunksResult.ok) return chunksResult;

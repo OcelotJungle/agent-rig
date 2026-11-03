@@ -3,6 +3,7 @@ import type { Result } from "../result.js";
 
 import { chooseBackupPath } from "../backup-path.js";
 import { hashContent } from "../content-hash.js";
+import { toSlashPath } from "../file-system.js";
 import { resolvePlaceholders } from "../placeholders.js";
 
 const EMPTY_LENGTH = 0;
@@ -12,6 +13,8 @@ const ROOT_SEPARATOR_INDEX = 0;
 const SUCCESS_EXIT_CODE = 0;
 const ISO_DATE_LENGTH = 10;
 const NUL_BYTE = 0;
+const CRLF = "\r\n";
+const LF = "\n";
 const CLAUDE_PLUGIN_PREFIX = ["plugin"] as const;
 const USER_SCOPE = ["--scope", "user"] as const;
 const YES_OPTION = ["--yes"] as const;
@@ -134,7 +137,7 @@ export async function planAssets(
   plans: readonly AssetPlan[],
   priorRecords: AssetRecords,
 ): Promise<Result<AssetPlanOutcome>> {
-  const nextRecords: Record<string, AssetRecord> = { ...priorRecords };
+  const nextRecords = withSlashKeys(priorRecords);
   const events: AssetEvent[] = [];
   const operations: AssetOperations = { backups: [], writes: [], removals: [] };
   const activeTargets = new Set<string>();
@@ -142,12 +145,13 @@ export async function planAssets(
 
   for (const plan of plans) {
     for (const file of plan.files) {
+      const fileTarget = toSlashPath(file.targetPath);
       if (!plan.enabled) {
-        if (activeTargets.has(file.targetPath)) {
-          return { ok: false, error: `Duplicate asset target: ${file.targetPath}` };
+        if (activeTargets.has(fileTarget)) {
+          return { ok: false, error: `Duplicate asset target: ${fileTarget}` };
         }
-        activeTargets.add(file.targetPath);
-        const removal = await disableAssetTree(environment, file.targetPath, nextRecords, events, operations);
+        activeTargets.add(fileTarget);
+        const removal = await disableAssetTree(environment, fileTarget, nextRecords, events, operations);
         if (!removal.ok) return removal;
         continue;
       }
@@ -155,17 +159,17 @@ export async function planAssets(
       const sourceFiles = await loadSourceFiles(environment.fs, file.sourcePath);
       if (!sourceFiles.ok) return sourceFiles;
       for (const sourceFile of sourceFiles.value) {
-        const targetPath = appendRelativePath(file.targetPath, sourceFile.relativePath);
+        const targetPath = appendRelativePath(fileTarget, sourceFile.relativePath);
         if (activeTargets.has(targetPath)) {
           return { ok: false, error: `Duplicate asset target: ${targetPath}` };
         }
         activeTargets.add(targetPath);
         enabledTargets.add(targetPath);
         const content = substitutePlaceholders(sourceFile.content, {
-          CLONE: plan.clonePath,
-          HUB: plan.hubPath,
-          HOME: plan.homePath,
-          PYTHON: plan.pythonPath,
+          CLONE: toSlashPath(plan.clonePath),
+          HUB: toSlashPath(plan.hubPath),
+          HOME: toSlashPath(plan.homePath),
+          PYTHON: toSlashPath(plan.pythonPath),
         }, sourceFile.relativePath || file.sourcePath);
         if (!content.ok) return content;
         const sync = await enableAsset(environment, targetPath, content.value, nextRecords, events, operations);
@@ -308,13 +312,14 @@ async function loadSourceFiles(fs: FileSystem, sourcePath: string): Promise<Resu
     return { ok: false, error: `Asset source is empty or missing: ${sourcePath} (${file.error})` };
   }
 
-  const prefix = trimTrailingSeparator(sourcePath);
+  const prefix = trimTrailingSeparator(toSlashPath(sourcePath));
   const results: SourceFile[] = [];
   for (const path of files.value) {
     const read = await fs.readFile(path);
     if (!read.ok) return { ok: false, error: `Cannot read asset source ${path}: ${read.error}` };
-    const relativePath = path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}\\`)
-      ? path.slice(prefix.length + PATH_SEPARATOR_LENGTH)
+    const slashPath = toSlashPath(path);
+    const relativePath = slashPath.startsWith(`${prefix}/`)
+      ? slashPath.slice(prefix.length + PATH_SEPARATOR_LENGTH)
       : "";
     if (relativePath.length === EMPTY_LENGTH) return { ok: false, error: `Invalid file listing for asset directory ${sourcePath}` };
     results.push({ relativePath, content: read.value });
@@ -365,12 +370,18 @@ async function enableAsset(
 
   const currentHash = hashContent(current.value);
   if (prior === undefined) {
-    if (currentHash === desiredHash) {
+    if (currentHash === desiredHash || sameContent(current.value, content)) {
       records[targetPath] = { hash: currentHash, owned: true, notifiedHashes: [] };
     } else {
       records[targetPath] = { hash: currentHash, owned: false, notifiedHashes: [currentHash] };
       events.push({ type: "setting-kept", path: targetPath });
     }
+    return { ok: true, value: undefined };
+  }
+
+  if (currentHash !== desiredHash && sameContent(current.value, content)) {
+    // Only the line endings differ: the file is rig's own, whatever an earlier build recorded for it.
+    records[targetPath] = { hash: currentHash, owned: true, notifiedHashes: [] };
     return { ok: true, value: undefined };
   }
 
@@ -386,7 +397,7 @@ async function enableAsset(
     return { ok: true, value: undefined };
   }
 
-  if (currentHash === desiredHash) return { ok: true, value: undefined };
+  if (currentHash === desiredHash || sameContent(current.value, content)) return { ok: true, value: undefined };
   operations.writes.push({ path: targetPath, content });
   records[targetPath] = { hash: desiredHash, owned: true, notifiedHashes: [] };
   return { ok: true, value: undefined };
@@ -400,9 +411,7 @@ async function disableAssetTree(
   operations: AssetOperations,
 ): Promise<Result<void>> {
   const trimmedTarget = trimTrailingSeparator(targetPath);
-  const recordPaths = Object.keys(records).filter((path) =>
-    path === targetPath || path.startsWith(`${trimmedTarget}/`) || path.startsWith(`${trimmedTarget}\\`),
-  );
+  const recordPaths = Object.keys(records).filter((path) => path === targetPath || path.startsWith(`${trimmedTarget}/`));
   for (const path of recordPaths) {
     const removal = await disableAsset(environment, path, records, events, operations);
     if (!removal.ok) return removal;
@@ -503,8 +512,27 @@ async function writeTarget(fs: FileSystem, path: string, content: FileContent): 
 
 function appendRelativePath(base: string, relative: string): string {
   if (relative.length === EMPTY_LENGTH) return base;
-  const separator = base.includes("\\") ? "\\" : "/";
-  return `${trimTrailingSeparator(base)}${separator}${relative}`;
+  return `${trimTrailingSeparator(base)}/${relative}`;
+}
+
+// Record keys written by an older build may hold backslashes; they are read under their forward-slash key. When both
+// forms of one path exist, the forward-slash record wins.
+function withSlashKeys(records: AssetRecords): Record<string, AssetRecord> {
+  const result: Record<string, AssetRecord> = {};
+  for (const [path, record] of Object.entries(records)) {
+    const key = toSlashPath(path);
+    if (key === path || result[key] === undefined) result[key] = record;
+  }
+  return result;
+}
+
+// Text that differs only by line endings (CRLF against LF) is the same content; any other file is compared as bytes.
+function sameContent(left: FileContent, right: FileContent): boolean {
+  if (left.executable !== right.executable) return false;
+  const leftText = decodeText(left.bytes);
+  const rightText = decodeText(right.bytes);
+  if (leftText === null || rightText === null) return false;
+  return leftText.replaceAll(CRLF, LF) === rightText.replaceAll(CRLF, LF);
 }
 
 function trimTrailingSeparator(path: string): string {

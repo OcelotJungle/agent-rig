@@ -1,6 +1,6 @@
 ## Temporary files
 
-- TEMP, TMP and TMPDIR already point to `.tmp/` in the project root (hook `{{HOME}}/.claude/hooks/project-tmp.sh`; Codex
+- TEMP, TMP and TMPDIR already point to `.tmp/` in the project root (hook `{{CLONE}}/base/hooks/project-tmp.sh`; Codex
   inherits them). Take the temp path from `$TEMP` in the shell, not from a summary or an old brief.
 - Temporary files only through the language's temp API (`os.tmpdir()`, `fs.mkdtemp`, `tempfile`, etc.); never hardcode
   the system temp (`/tmp`, `C:\Temp`, `%TEMP%`).

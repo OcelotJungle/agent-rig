@@ -4,6 +4,7 @@ import type { Result } from "../result.js";
 import type { RigState } from "../state.js";
 import type { RuntimePorts } from "../ports.js";
 
+import { toSlashPath } from "../file-system.js";
 import { ensureClaudeImports } from "../rules/assemble-rules.js";
 import { resolvePlaceholders } from "../placeholders.js";
 import { mergeSettings } from "../settings/merge-settings.js";
@@ -138,10 +139,10 @@ const resolveExpectedHooks = (
 	enabled: ReadonlySet<string>,
 ): Result<ExpectedHook[]> => {
 	const placeholders = {
-		CLONE: state.paths.repo,
-		HUB: state.paths.hub,
-		HOME: runtime.home,
-		PYTHON: runtime.pythonCommand,
+		CLONE: toSlashPath(state.paths.repo),
+		HUB: toSlashPath(state.paths.hub),
+		HOME: toSlashPath(runtime.home),
+		PYTHON: toSlashPath(runtime.pythonCommand),
 	};
 	const hooks: ExpectedHook[] = [];
 	for (const feature of features) {

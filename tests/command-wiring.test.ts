@@ -109,6 +109,20 @@ describe("command wiring", () => {
 		expect(checked.error).toContain("sudo apt-get install tmux");
 	});
 
+	test("a dev install stores the clone and hub paths with forward slashes even when the platform resolves paths with backslashes", async () => {
+		const harness = createMemoryRuntime();
+		seedFeature(harness.fs, REPO, baseManifest());
+		harness.fs.seed(`${HOME}/.claude/settings.json`, "{}\n");
+		harness.runtime.resolvePath = (...parts) => parts.join("\\");
+
+		const installed = await installRig(harness.runtime, true, () => undefined);
+
+		expect(installed.ok).toBe(true);
+		const stored: unknown = JSON.parse(harness.fs.files.get(STATE_PATH) ?? "{}");
+		const paths = typeof stored === "object" && stored !== null && "paths" in stored ? stored.paths : null;
+		expect(paths).toEqual({ repo: REPO, hub: "/repo/../claude-telegram-hub" });
+	});
+
 	test("server install reads the crontab in the C locale so the missing-crontab message is matched in any language", async () => {
 		const harness = createMemoryRuntime();
 		seedFeature(harness.fs, `${HOME}/.agent-rig/repo`, baseManifest());

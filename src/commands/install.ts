@@ -4,6 +4,7 @@ import type { Result } from "../result.js";
 import type { RuntimePorts } from "../ports.js";
 
 import { applyRig } from "../apply.js";
+import { toSlashPath } from "../file-system.js";
 import { loadFeatures } from "../feature-graph.js";
 import { buildCronEntries, mergeCronEntries } from "../update/cron.js";
 import { messagesFor } from "../messages.js";
@@ -75,7 +76,7 @@ const resolveDevPaths = async (runtime: RuntimePorts): Promise<Result<{ repo: st
 	const worktreeIndex = normalized.lastIndexOf(worktreeMarker);
 	const projectRoot = worktreeIndex < 0 ? repo : normalized.slice(0, worktreeIndex);
 	const hub = runtime.resolvePath(projectRoot, "..", HUB_DIRECTORY_NAME);
-	return ok({ repo, hub });
+	return ok({ repo: toSlashPath(repo), hub: toSlashPath(hub) });
 };
 
 const readExistingState = async (runtime: RuntimePorts): Promise<Result<RigState | null>> => {
@@ -96,7 +97,7 @@ const installShim = async (runtime: RuntimePorts, repoPath: string): Promise<Res
 		const bashShim = `#!/usr/bin/env bash\nexec ${shellQuote(toGitBashPath(runtime.executablePath))} run ${shellQuote(toGitBashPath(cliPath))} "$@"\n`;
 		const bashWritten = await runtime.writeExecutable(pathJoin(binPath, "rig"), bashShim);
 		if (!bashWritten.ok) return bashWritten;
-		const cmdShim = `@echo off\r\n"${runtime.executablePath}" run "${cliPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`;
+		const cmdShim = `@echo off\r\n"${runtime.executablePath}" run "${cliPath.replaceAll("/", "\\")}" %*\r\nexit /b %ERRORLEVEL%\r\n`;
 		return runtime.writeExecutable(pathJoin(binPath, "rig.cmd"), cmdShim);
 	}
 	const content = `#!/usr/bin/env bash\nexec ${shellQuote(runtime.executablePath)} run ${shellQuote(cliPath)} "$@"\n`;
