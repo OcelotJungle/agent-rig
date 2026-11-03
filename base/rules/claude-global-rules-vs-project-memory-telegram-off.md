@@ -1,1 +1,1 @@
-- a rule only for Claude (delegation, subagents, hooks, answer format, working with the user) goes into this
+- a new rule only for Claude (delegation, subagents, hooks, answer format, working with the user) goes into
