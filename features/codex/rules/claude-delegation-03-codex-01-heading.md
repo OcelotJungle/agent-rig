@@ -1,2 +1,2 @@
-# Делегирование Codex
+# Delegating to Codex
 

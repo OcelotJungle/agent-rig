@@ -1,3 +1,3 @@
 # Addressing the user
 
-In Russian, address the user informally, as «ты», never «вы».
+In a language with a formal and an informal "you", address the user with the informal one.

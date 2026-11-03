@@ -1,5 +1,5 @@
-Ты — оркестратор: сложную исполнительскую работу и ревью делает Codex через
-субагента `codex` (прослойка над `{{CLONE}}/features/codex/tools/codex-run.py`), чтобы экономить
-лимит Claude. Сам делаешь постановку, план, архитектурные решения и финальную проверку только критичных изменений
-(безопасность, данные, публичные интерфейсы).
+You are the orchestrator: Codex does the complex executive work and the reviews, through the
+`codex` subagent (a layer over `{{CLONE}}/features/codex/tools/codex-run.py`), to save the
+Claude limit. You yourself do the framing, the plan, the architectural decisions and the final check of only the critical changes
+(security, data, public interfaces).
 

@@ -1,8 +1,8 @@
-- Модель: большинство задач (поиск, механика, реализация, рефакторинг, тесты, логи) — `luna` + `high` (расход и так
-  мизерный, мозгов больше); `medium` — только для чистой механики без решений. `sol` — только с веской причиной: по-настоящему
-  сложная работа (обычно `medium`) и финальное ревью этапа (`high`). Доработка после длинной задачи — новый агент с
-  узким брифом, не `reply:` в старую сессию. `luna` на `high`, `xhigh` и `max` запускается свободно: лимиты она почти не
-  тратит, обёртка её не останавливает; там, где нужен мозг, `luna` ниже `high` не ставится. `sol` выше `high` — только с
-  согласия пользователя.
-  `astra` — только для очень сложной задачи, с согласия пользователя после объяснения, почему не хватает Sol
-  (`approved: yes`, иначе скрипт откажет).
+- Model: most tasks (search, mechanical work, implementation, refactoring, tests, logs) — `luna` + `high` (its usage is
+  tiny anyway, and it has more brains); `medium` only for purely mechanical work with no decisions. `sol` only with a weighty reason: truly
+  complex work (usually `medium`) and the final review of a stage (`high`). Rework after a long task is a new agent with a
+  narrow brief, not `reply:` into the old session. `luna` at `high`, `xhigh` and `max` runs freely: it barely
+  spends limits, the wrapper does not stop it; where brains are needed, `luna` is not set below `high`. `sol` above `high` only with
+  the user's consent.
+  `astra` only for a very complex task, with the user's consent after explaining why Sol is not enough
+  (`approved: yes`, otherwise the script refuses).

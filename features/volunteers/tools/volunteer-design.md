@@ -1,94 +1,94 @@
-# volunteer — исполнитель на бесплатных облачных моделях
+# volunteer — an executor on free cloud models
 
-Методичка — в правилах агента, раздел «Делегирование волонтёрам».
+The guide is in the agent rules, section "Delegating to volunteers".
 
-## Назначение
+## Purpose
 
-Ещё один исполнитель рядом с `codex`. Делает обычную, рядовую работу на бесплатных облачных моделях,
-чтобы не тратить лимиты Claude и ChatGPT. Сложная работа и ревью — у Codex: так у работы
-волонтёров всегда есть проверяющий.
+Another executor next to `codex`. It does ordinary, routine work on free cloud models,
+so as not to spend the Claude and ChatGPT limits. Complex work and review belong to Codex: this way the volunteers'
+work always has a checker.
 
-## Схема
+## Scheme
 
 ```
-Claude → субагент volunteer (Haiku, по образцу agents/codex.md)
-       → tools/volunteer-run.py (по образцу codex-run.py: supervisor, wait/reply/attach, cancel, таймауты)
+Claude → subagent volunteer (Haiku, modeled on agents/codex.md)
+       → tools/volunteer-run.py (modeled on codex-run.py: supervisor, wait/reply/attach, cancel, timeouts)
        → opencode run --format json
-       → freellmpool (локальный OpenAI-совместимый прокси, только localhost)
-       → бесплатные провайдеры
+       → freellmpool (a local OpenAI-compatible proxy, localhost only)
+       → free providers
 ```
 
-- `codex.md` и `codex-run.py` не меняются.
-- Задачи — `~/.claude/volunteer-jobs/<JOB>/`, `state.json` в формате Codex-задач; модель, которая реально отвечает,
-  пишется в `slug`, чтобы карточка хаба её показала.
-- Хаб (`claude-telegram-hub`) этот исполнитель не меняет: чтобы он показывал задачи волонтёров, хабу нужны
-  расширенная проверка `agentType === "codex"`, регэкспы, каталог задач и схема событий под OpenCode.
+- `codex.md` and `codex-run.py` do not change.
+- Jobs live in `~/.claude/volunteer-jobs/<JOB>/`, with `state.json` in the format of Codex jobs; the model that actually
+  answers is written to `slug`, so that the hub card shows it.
+- The hub (`claude-telegram-hub`) does not change for this executor: for it to show volunteer jobs, the hub needs
+  an extended `agentType === "codex"` check, regexps, a job directory and an event schema for OpenCode.
 
-## Решения
+## Decisions
 
-| Решение | Почему |
+| Decision | Why |
 |---|---|
-| Имя `volunteer` | |
-| Обычная работа — volunteer, сложная и ревью — Codex | иначе работу волонтёров некому проверять |
-| Шлюз — freellmpool, OpenRouter внутри него как провайдер | у альтернативы (Arbiter) статичные квоты, Gemini без tools, платный хвост, молчаливая подмена модели, нет тестов |
-| Лимит OpenRouter на `:free` зависит от аккаунта: 1000 запросов в сутки на аккаунт при покупке за всё время не менее 10 кредитов (в коде `OPENROUTER_DAY_CAP` = 1000) | лимит считается по всем покупкам за всё время |
-| Шлюз запускает `volunteer-run.py`, если тот не отвечает, и оставляет работать | |
-| Одна модель на всю задачу, смена только при ошибке или исчерпании квоты | смена модели между шагами — риск для качества |
-| При исчерпании всех бесплатных моделей задача завершается с причиной; Claude сообщает и отдаёт её Codex | |
-| Права как у Codex: read-only / write, запись только в `cwd`, без коммитов и пушей | |
-| Работать можно только в папках из белого списка (`~/.agent-rig/volunteer-projects.json`); остальные папки, включая `~/.claude`, в него не входят, пока пользователь их не добавит | пользователь сам решает, какой код уходит бесплатным провайдерам |
-| Скрипт использует только провайдеров с ключом: OpenRouter, Groq, Z.ai, Requesty (список `ALLOWED_PROVIDERS` в `volunteer-models.py`). Провайдеры без ключа (Pollinations, OVHcloud, Kilo, LLM7) не используются, Gemini тоже: его адаптер не поддерживает tools. Ключи нужных провайдеров пользователь заводит сам | у провайдеров без ключа неизвестно, кто хранит запросы |
-| OpenCode ставится с выключенным автообновлением (`"autoupdate": false`) | версия, на которой проверены пробы, не должна меняться сама |
-| Ключи хранятся только в конфиге freellmpool, не в окружении сессий Claude и не в Телеграме | секреты не должны попадать к субагентам и в хаб |
-| Модель при вызове не выбирается; карточка показывает фактическую модель | |
-| Карточка показывает последнее завершённое действие, а не идущее (OpenCode `run` сообщает о действии по завершении); режим сервера не используется | лишний процесс ради мелочи |
-| Модели находит скрипт: бесплатные модели с tools у разрешённых провайдеров + пробный вызов; кэш на сутки. Без расписания: обновление запускает сам `volunteer-run.py start`, если кэш старше суток (в фоне, задача идёт по старому кэшу; первый раз — синхронно) | ручной список не нужен; расписание не нужно и его нельзя забыть выключить |
-| Порядок моделей: сначала короткий список предпочтительных (в коде `FAVORITES` в `volunteer-models.py`), потом остальные найденные по скорости, Groq в конце | предпочтительные выбраны по результатам проб |
-| Полный агент OpenCode там, где позволяют лимиты (сам читает правила проекта и общие правила `~/.codex/AGENTS.md`, но не `~/.claude/CLAUDE.md` — там правила оркестратора); урезанный — только для Groq | правила всё равно нужны исполнителю, пусть читает сам |
-| Requesty в freellmpool 0.13.0 нет: его надо подключить как пользовательского провайдера (`providers.toml`), и берутся только модели с проверенной нулевой ценой | платные модели не должны тратить деньги |
-| В настройках приватности OpenRouter (https://openrouter.ai/settings/privacy) должны быть разрешены провайдеры, которые могут обучаться на запросах бесплатных моделей | иначе часть бесплатных моделей недоступна; код туда идёт только из белого списка |
-| Модель виновата, только если инфраструктура здорова: после сбоя сначала проверка шлюза (`proxy_up`), потом сети (TCP к API-хостам используемых провайдеров). Шлюз лежит — перезапуск и повтор той же модели без переключения (не более 3 перезапусков за задачу, иначе `gateway keeps dying`); сети нет — ожидание с `waiting: "network"`, опрос каждые 15 с, до жёсткого таймаута (`no network since HH:MM`) | иначе из-за упавшего шлюза или обрыва интернета перебирались все модели и задача падала «no free models» |
-| Отдельные процессы (шлюз, супервизор) стартуют с `CREATE_BREAKAWAY_FROM_JOB`; если Job-объект запрещает отрыв, запуск идёт через WMI `Win32_Process.Create` (`volunteer-launch.ps1`), без молчаливого отката на обычный запуск. Токен не попадает в командную строку: шлюз стартует скрытой подкомандой `proxy-serve` | процессы, запущенные из Job-объекта с KILL_ON_JOB_CLOSE, умирали вместе с запускающим |
-| Все подпроцессы на Windows с `CREATE_NO_WINDOW` (вместо `DETACHED_PROCESS`) | у отдельного процесса нет консоли, и каждый его консольный потомок открывал видимое окно; скрытая консоль наследуется |
-| «Зависание» — 10 минут без событий OpenCode (`IDLE_SECONDS` = срок шлюза 540 с + 60 с запаса) | шлюз отдаёт ответ с вызовом инструментов целиком, поэтому пока модель думает, событий нет; сам шлюз сдаётся через 540 с (`_AGENT_UPSTREAM_TIMEOUT` в freellmpool 0.13.0) и возвращает ошибку. Порог в 5 минут убивал живой запрос |
-| Временный сбой (таймаут, 5xx/504, overloaded, 429, зависание) отправляет модель на 5 минут в «остывание»; следующая — первая по порядку не остывающая и подходящая по контексту. Все остывают — ожидание ближайшего конца (`waiting: "models"`, заметка `all models cooling down, waiting until HH:MM`). Постоянные сбои (переполнение контекста, 4xx) исключают модель до конца задачи. `switches` считает только реальные смены модели. Задача падает, только если ни одна модель не вмещает контекст, либо по жёсткому таймауту | перебор «вперёд без возврата» ронял задачу, пока модели просто были перегружены |
-| Модели с окном меньше текущей сессии пропускаются; запас на ответ `REPLY_HEADROOM_TOKENS` = 8000. Размер сессии — оценка байтов событий и промпта / 4 (OpenCode в событиях всегда пишет tokens = 0), берётся максимум с числом из ошибки переполнения. Окна — из публичных списков (`context_length` OpenRouter, `context_window` Requesty, запись `context` в кэше) и статика 8000 для Groq (лимит TPM); окно неизвестно — модель пробуется, переполнение считается постоянным | модель с малым окном падала на длинной сессии и сжигала переключение |
+| The name `volunteer` | |
+| Ordinary work goes to volunteer, complex work and review to Codex | otherwise nobody checks the volunteers' work |
+| The gateway is freellmpool, with OpenRouter inside it as a provider | the alternative (Arbiter) has static quotas, Gemini without tools, a paid tail, silent model substitution, and no tests |
+| The OpenRouter limit on `:free` depends on the account: 1000 requests a day per account when at least 10 credits have been bought over all time (in code `OPENROUTER_DAY_CAP` = 1000) | the limit is counted over all purchases over all time |
+| The gateway is started by `volunteer-run.py` if it does not answer, and is left running | |
+| One model for the whole job, switched only on an error or an exhausted quota | switching models between steps is a quality risk |
+| When all free models are exhausted the job ends with a reason; Claude reports it and hands the job to Codex | |
+| Permissions like Codex: read-only / write, writing only in `cwd`, no commits or pushes | |
+| Work is allowed only in folders from the allowlist (`~/.agent-rig/volunteer-projects.json`); other folders, including `~/.claude`, are not in it until the user adds them | the user decides which code goes to free providers |
+| The script uses only providers with a key: OpenRouter, Groq, Z.ai, Requesty (the `ALLOWED_PROVIDERS` list in `volunteer-models.py`). Providers without a key (Pollinations, OVHcloud, Kilo, LLM7) are not used, nor is Gemini: its adapter does not support tools. The user sets up the keys of the needed providers | with keyless providers it is unknown who stores the requests |
+| OpenCode is installed with autoupdate off (`"autoupdate": false`) | the version the probes were checked on must not change by itself |
+| Keys are stored only in the freellmpool config, not in the environment of Claude sessions and not in Telegram | secrets must not reach subagents and the hub |
+| The model is not chosen at call time; the card shows the actual model | |
+| The card shows the last finished action, not the one in progress (OpenCode `run` reports an action when it finishes); server mode is not used | an extra process for a trifle |
+| The script finds the models: free models with tools from the allowed providers + a trial call; a one-day cache. No schedule: the refresh is started by `volunteer-run.py start` itself if the cache is older than a day (in the background, the job runs on the old cache; the first time — synchronously) | no manual list is needed; no schedule is needed and it cannot be forgotten switched off |
+| Model order: first a short list of preferred ones (in code `FAVORITES` in `volunteer-models.py`), then the rest found, by speed, Groq last | the preferred ones were chosen from the probe results |
+| The full OpenCode agent where the limits allow (it reads the project rules and the shared rules `~/.codex/AGENTS.md` itself, but not `~/.claude/CLAUDE.md` — that holds the orchestrator's rules); a trimmed one only for Groq | the executor needs the rules anyway, let it read them itself |
+| Requesty is not in freellmpool 0.13.0: it has to be connected as a custom provider (`providers.toml`), and only models with a verified zero price are taken | paid models must not spend money |
+| In the OpenRouter privacy settings (https://openrouter.ai/settings/privacy) the providers that may train on requests of free models must be allowed | otherwise part of the free models is unavailable; code goes there only from the allowlist |
+| The model is to blame only if the infrastructure is healthy: after a failure, first a check of the gateway (`proxy_up`), then of the network (TCP to the API hosts of the providers in use). Gateway down — restart and retry the same model without switching (no more than 3 restarts per job, otherwise `gateway keeps dying`); no network — wait with `waiting: "network"`, polling every 15 s, until the hard timeout (`no network since HH:MM`) | otherwise, because of a dead gateway or a dropped internet connection, all models were cycled through and the job failed with "no free models" |
+| Separate processes (gateway, supervisor) start with `CREATE_BREAKAWAY_FROM_JOB`; if the Job object forbids breakaway, the launch goes through WMI `Win32_Process.Create` (`volunteer-launch.ps1`), with no silent fallback to a normal launch. The token does not appear on the command line: the gateway starts with the hidden subcommand `proxy-serve` | processes started from a Job object with KILL_ON_JOB_CLOSE died together with the launcher |
+| All subprocesses on Windows with `CREATE_NO_WINDOW` (instead of `DETACHED_PROCESS`) | a detached process has no console, and each of its console descendants opened a visible window; a hidden console is inherited |
+| "Hang" is 10 minutes without OpenCode events (`IDLE_SECONDS` = the gateway timeout of 540 s + 60 s of margin) | the gateway returns a response with tool calls whole, so while the model thinks there are no events; the gateway itself gives up after 540 s (`_AGENT_UPSTREAM_TIMEOUT` in freellmpool 0.13.0) and returns an error. A 5-minute threshold killed a live request |
+| A temporary failure (timeout, 5xx/504, overloaded, 429, hang) sends the model to "cooling down" for 5 minutes; the next one is the first in order that is not cooling down and fits the context. If all are cooling down — wait for the nearest end (`waiting: "models"`, note `all models cooling down, waiting until HH:MM`). Permanent failures (context overflow, 4xx) exclude the model until the end of the job. `switches` counts only real model changes. The job fails only if no model fits the context, or at the hard timeout | "forward without return" cycling failed the job while the models were merely overloaded |
+| Models with a window smaller than the current session are skipped; the reply headroom is `REPLY_HEADROOM_TOKENS` = 8000. The session size is an estimate of the bytes of events and prompt / 4 (OpenCode always writes tokens = 0 in events), taking the maximum with the number from the overflow error. Windows come from public lists (`context_length` of OpenRouter, `context_window` of Requesty, the `context` entry in the cache) and a static 8000 for Groq (the TPM limit); window unknown — the model is tried, an overflow counts as permanent | a model with a small window failed on a long session and burned a switch |
 
-## Открытые вопросы
+## Open questions
 
-Нет.
+None.
 
-## Методичка (действующий текст — в правилах агента, раздел «Делегирование волонтёрам»)
+## Guide (the current text is in the agent rules, section "Delegating to volunteers")
 
-- `volunteer` — исполнитель по умолчанию для рядовой работы: поиск и чтение кода, реализация по готовому плану,
-  рутинные правки, тесты до зелёного, разбор логов. Всегда в фоне. Промпт: `mode:`, `cwd:`, `task:` и
-  самодостаточное задание с критериями готовности; модель не выбирается.
-- `codex` — сложное (хитрое изменение, много связанных файлов, тонкий баг), ревью нетривиальных результатов
-  волонтёров и важных изменений, вторая попытка после неудачи волонтёра.
-- Проект вне белого списка (`REFUSED:`) — сразу `codex`. Белый список лежит в локальном файле
-  `~/.agent-rig/volunteer-projects.json`, формат `{"allowed": ["<папка>"]}`; без него отказ во всех папках.
-- Волонтёр не справился (`failed`, `partial`, плохой результат) — та же задача `codex` на `sol` с описанием, что
-  пробовали. Нет свободных бесплатных моделей — одна строка пользователю, задача уходит `codex`.
-- Codex недоступен — сложное тоже идёт волонтёру с подробным брифом, ревью — general-purpose.
+- `volunteer` is the default executor for routine work: searching and reading code, implementing a ready plan,
+  routine edits, tests until green, log analysis. Always in the background. Prompt: `mode:`, `cwd:`, `task:` and a
+  self-contained assignment with completion criteria; the model is not chosen.
+- `codex` — complex work (a tricky change, many linked files, a subtle bug), review of non-trivial results of
+  volunteers and of important changes, a second attempt after a volunteer's failure.
+- A project outside the allowlist (`REFUSED:`) — straight to `codex`. The allowlist is in the local file
+  `~/.agent-rig/volunteer-projects.json`, format `{"allowed": ["<folder>"]}`; without it every folder is refused.
+- The volunteer failed (`failed`, `partial`, a bad result) — the same task to `codex` on `sol` with a description of what
+  was tried. No free models left — one line to the user, the task goes to `codex`.
+- Codex unavailable — complex work also goes to a volunteer with a detailed brief, review — to general-purpose.
 
-## Лимиты
+## Limits
 
-- `volunteer-models.py limits [--json]` — дневная сводка для справки хаба: OpenRouter 1000/день на аккаунт (при
-  покупке ≥10 кредитов), Requesty 200/день на аккаунт (docs.requesty.ai), Groq по моделям из кэша, Z.ai отдельно без процента.
-  Сброс — полночь UTC.
-- Groq публикует лимиты бесплатного плана только в кабинете аккаунта и они меняются. Для `gpt-oss-120b`,
-  `gpt-oss-20b`, `qwen3.8-27b` на момент проб это 30 RPM, 1K RPD, 8K TPM, 200K TPD; каталог freellmpool совпадает. Упираемся раньше в токены: при 3–20k токенов
-  на шаг агента 200K в день — это примерно 10–60 запросов на модель. Сводка считает только запросы, поэтому
-  по Groq она оптимистична.
+- `volunteer-models.py limits [--json]` — a daily summary for the hub's reference: OpenRouter 1000/day per account (when
+  ≥10 credits were bought), Requesty 200/day per account (docs.requesty.ai), Groq by the models from the cache, Z.ai separately without a percentage.
+  The reset is at midnight UTC.
+- Groq publishes the free plan's limits only in the account dashboard, and they change. For `gpt-oss-120b`,
+  `gpt-oss-20b`, `qwen3.8-27b` at the time of the probes these were 30 RPM, 1K RPD, 8K TPM, 200K TPD; the freellmpool catalog matches. Tokens are hit first: at 3–20k tokens
+  per agent step, 200K a day is roughly 10–60 requests per model. The summary counts only requests, so
+  for Groq it is optimistic.
 
-## Поведение инструментов (как проверять: `volunteer-probes.md`)
+## Tool behavior (how to check: `volunteer-probes.md`)
 
-- freellmpool 0.13.0: фактическая модель — в `x_freellmpool.model` и `X-Freellmpool-Model`; `provider/model`
-  отключает фолбэк; `Retry-After` клиенту не отдаётся (502 при исчерпании); sticky-маршрутизации нет;
-  `auto`/`agent` с tools дают 503 — модель всегда закрепляет скрипт и сам переключает её при ошибке.
-- OpenCode: рабочая папка берётся из env `PWD`; без жёсткого таймаута висит на ретраях; служебный запрос заголовка
-  выключается `agent.title.disable`; в Git Bash `taskkill //F //T //PID`.
-- Job-объекты Windows: Claude Code запускает команды внутри Job-объекта с KILL_ON_JOB_CLOSE; процесс, оставшийся в нём,
-  умирает при закрытии задачи. `CREATE_BREAKAWAY_FROM_JOB` работает, только если Job разрешает отрыв, иначе `OSError`.
-  Запуск через WMI (`Win32_Process.Create`, процесс создаёт WmiPrvSE) всегда вне Job, но без унаследованного окружения —
-  поэтому спецификация запуска передаётся файлом, а секреты внутри самого процесса.
+- freellmpool 0.13.0: the actual model is in `x_freellmpool.model` and `X-Freellmpool-Model`; `provider/model`
+  turns the fallback off; `Retry-After` is not passed to the client (502 on exhaustion); there is no sticky routing;
+  `auto`/`agent` with tools give 503 — the script always pins the model and switches it itself on an error.
+- OpenCode: the working folder is taken from the env `PWD`; without a hard timeout it hangs on retries; the service request for the title
+  is turned off by `agent.title.disable`; in Git Bash `taskkill //F //T //PID`.
+- Windows Job objects: Claude Code runs commands inside a Job object with KILL_ON_JOB_CLOSE; a process left in it
+  dies when the job closes. `CREATE_BREAKAWAY_FROM_JOB` works only if the Job allows breakaway, otherwise `OSError`.
+  A launch through WMI (`Win32_Process.Create`, the process is created by WmiPrvSE) is always outside the Job, but without the inherited environment —
+  so the launch specification is passed as a file, and the secrets inside the process itself.

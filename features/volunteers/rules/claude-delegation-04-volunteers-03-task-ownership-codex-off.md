@@ -1,4 +1,4 @@
-- Кому что: `volunteer` — поиск и чтение кода, реализация по готовому плану, рутинные правки, тесты до зелёного, разбор
-  логов. Сложное (хитрое изменение, много связанных файлов, тонкий баг), ревью нетривиальных результатов
-  волонтёров и важных изменений, вторая попытка после неудачи волонтёра идут субагенту Claude по ярусам из
-  «Subagent models».
+- Who gets what: `volunteer` — searching and reading code, implementing a ready plan, routine edits, tests until green, log
+  analysis. Complex work (a tricky change, many linked files, a subtle bug), review of non-trivial volunteer results
+  and of important changes, and a second attempt after a volunteer's failure go to a Claude subagent by the tiers in
+  "Subagent models".

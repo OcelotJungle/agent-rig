@@ -1,6 +1,6 @@
 # Writing to the user
 
-- Replies in Russian whatever language summaries or ledgers use; reasoning and code in English.
+- Replies in the user's language whatever language summaries or ledgers use; reasoning and code in English.
 - Plain words; a new term gets one phrase with an example. Never a bare step, row or hash number: name the content.
 - Short whole-sentence lines, one topic per message, the main result in bold; no recaps or unasked idea lists. Short
   must not drop context: what we were doing, what each number measures. After launching background work, say only what runs.

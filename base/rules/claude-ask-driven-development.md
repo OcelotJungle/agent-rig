@@ -10,11 +10,11 @@ decisions the request leaves open. A decision is debatable when a reasonable per
 choice changes what the user sees, how a command or feature behaves (conflicts included), what gets lost, kept or
 deleted, or what it costs. Ask about every one first, in one message, each with your recommendation, and wait. A
 detailed spec from the user does not make its gaps yours to fill; settling one yourself and listing it afterwards as
-"решения, которые я принял сам" is the same as not asking. Only choices that change none of the above (naming,
+"decisions I made myself" is the same as not asking. Only choices that change none of the above (naming,
 internal structure, a constant within what the spec implies) stay yours; report each with its reason in one line. A
 user's question about such a call is not a veto: answer, keep it unless the reason fails.
 
-Never end a proposal with a go-ahead question («Так делаем?», «Начинаю?», «Ок?», «Подходит?», "shall I proceed", any
+Never end a proposal with a go-ahead question ("Shall we do it?", "Shall I start?", "OK?", "Does that work?", "shall I proceed", any
 language). State the proposal and stop. Ask only real questions whose answer is more than yes/no to the proposal: a
 choice between options, a missing fact.
 

@@ -1,2 +1,2 @@
-- `codex` всегда в фоне (`run_in_background: true`); основная сессия его не ждёт. `description` — только суть задачи,
-  без слова Codex, модели и effort.
+- `codex` always runs in the background (`run_in_background: true`); the main session does not wait for it. `description` is only the gist of the task,
+  without the word Codex, the model or the effort.

@@ -1,1 +1,1 @@
-- Волонтёры не коммитят и не пушат; коммиты — твои.
+- Volunteers do not commit or push; the commits are yours.

@@ -1,7 +1,7 @@
-- Песочница Codex на Windows не даёт запускать тесты на Bun (EPERM при разрешении путей, открытая ошибка Codex);
-  песочницу не отключать. Прогоны и доведение тестов до зелёного после Codex — general-purpose с `model: "haiku"`,
-  `effort: "high"`; первый прогон на крупной сборке нового кода (много задач или файлов, вероятно много исправлений) —
-  general-purpose с `model: "sonnet"`, `effort: "high"`. Задачу с тестами всё равно ведёт Codex (`luna` + `high`): он пишет код и тесты, а Haiku
-  после него только гоняет тесты и чинит упавшее. Нагружать лучше Codex, а не лимит Клода.
-  Haiku не гоняется после каждого кусочка: пусть Codex доделает все параллельные части, они собираются в одну
-  ветку, и на неё один раз вызывается прогон со всеми тестами и проверками поломкой кода (на крупной сборке — Sonnet).
+- The Codex sandbox on Windows does not let tests run on Bun (EPERM when resolving paths, an open Codex bug);
+  do not disable the sandbox. Test runs and bringing tests to green after Codex — general-purpose with `model: "haiku"`,
+  `effort: "high"`; the first run on a large build of new code (many tasks or files, probably many fixes) —
+  general-purpose with `model: "sonnet"`, `effort: "high"`. A task with tests is still led by Codex (`luna` + `high`): it writes the code and tests, and Haiku
+  after it only runs the tests and fixes what failed. It is better to load Codex than the Claude limit.
+  Haiku is not run after every small piece: let Codex finish all the parallel parts, they are collected into one
+  branch, and one run with all the tests and code-breakage checks is called on it (on a large build — Sonnet).

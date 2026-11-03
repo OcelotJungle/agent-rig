@@ -21,10 +21,10 @@ DISABLED_FEATURE_PATTERNS = {
     "skills": re.compile(r"\bmeasurement-runs\b", re.IGNORECASE),
 }
 
-# Section ownership copied from the "База и фичи" tables in the design spec.
+# Section ownership copied from the "Base and features" tables in the design spec.
 SPEC_SECTIONS = (
     ("Addressing the user", "shared"),
-    ("Временные файлы", "shared"),
+    ("Temporary files", "shared"),
     ("Tests and runs", "shared"),
     ("Specs are living documents", "shared"),
     ("JS/TS code conventions", "shared"),
@@ -42,8 +42,8 @@ SPEC_SECTIONS = (
     ("No heredocs", "claude"),
     ("Windows commands go through Bash", "claude"),
     ("Background tasks and monitors", "claude"),
-    ("Делегирование Codex", "claude"),
-    ("Делегирование волонтёрам", "claude"),
+    ("Delegating to Codex", "claude"),
+    ("Delegating to volunteers", "claude"),
     ("Attention chime", "claude"),
 )
 

@@ -1,1 +1,1 @@
-- Ревью важных изменений: `/codex:review` или `/codex:adversarial-review`. Субагент `codex:codex-rescue` запрещён.
+- Review of important changes: `/codex:review` or `/codex:adversarial-review`. The `codex:codex-rescue` subagent is forbidden.

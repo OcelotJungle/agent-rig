@@ -1,2 +1,2 @@
-- Не справился (`failed`, `partial`, плохой результат) — та же задача субагенту Claude по ярусам из «Subagent models»
-  с описанием, что пробовали. `no free models available` — одна строка пользователю, задача уходит субагенту Claude.
+- Failed (`failed`, `partial`, a bad result) — the same task to a Claude subagent by the tiers in "Subagent models"
+  with a description of what was tried. `no free models available` — one line to the user, the task goes to a Claude subagent.

@@ -1,3 +1,3 @@
-- Не справился: вторая попытка на уровень выше (`luna` → `sol`), потом сам или спроси пользователя. Кончился лимит
-  модели — скрипт сам берёт модель ниже; Codex недоступен совсем — одна строка пользователю, дальше Explore или
+- Failed: a second attempt one level up (`luna` → `sol`), then do it yourself or ask the user. If the model's limit
+  runs out, the script takes the model below by itself; if Codex is wholly unavailable — one line to the user, then Explore or
   general-purpose.

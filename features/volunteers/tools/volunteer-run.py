@@ -94,7 +94,7 @@ MODEL_COOLDOWN_SECONDS = 5 * 60
 REPLY_HEADROOM_TOKENS = 8000
 BYTES_PER_TOKEN = 4  # rough size of English/code text; OpenCode's step_finish events report 0 tokens
 # Context windows the listings do not carry. Source: Groq free plan, 8K tokens per minute for one request
-# (volunteer-design.md, "Лимиты"). A provider missing here has an unknown window: the model is tried and an
+# (volunteer-design.md, "Limits"). A provider missing here has an unknown window: the model is tried and an
 # overflow error then removes it for the job.
 PROVIDER_WINDOWS = {"groq": 8000}
 # Errors that no retry fixes: the session does not fit, or the request/credentials are wrong.

@@ -1,9 +1,9 @@
-## Временные файлы
+## Temporary files
 
-- TEMP, TMP и TMPDIR уже указывают на `.tmp/` в корне проекта (хук `{{HOME}}/.claude/hooks/project-tmp.sh`; Codex их
-  наследует). Путь к temp бери из `$TEMP` в шелле, не из сводки или старого брифа.
-- Временные файлы — только через temp-API языка (`os.tmpdir()`, `fs.mkdtemp`, `tempfile` и т. п.); никогда не хардкодь
-  системный temp (`/tmp`, `C:\Temp`, `%TEMP%`).
-- Тесты удаляют свои временные файлы (afterEach / teardown / finally), в том числе при падении.
-- В `.tmp/` ничего ценного: старше 3 дней удаляется. Заметки и результаты — в обычную папку проекта.
-- Инструмент не работает с temp внутри проекта — не обходи молча, сообщи пользователю.
+- TEMP, TMP and TMPDIR already point to `.tmp/` in the project root (hook `{{HOME}}/.claude/hooks/project-tmp.sh`; Codex
+  inherits them). Take the temp path from `$TEMP` in the shell, not from a summary or an old brief.
+- Temporary files only through the language's temp API (`os.tmpdir()`, `fs.mkdtemp`, `tempfile`, etc.); never hardcode
+  the system temp (`/tmp`, `C:\Temp`, `%TEMP%`).
+- Tests delete their temporary files (afterEach / teardown / finally), including on failure.
+- Nothing valuable in `.tmp/`: anything older than 3 days is deleted. Notes and results go to a normal project folder.
+- If a tool does not work with a temp inside the project, do not work around it silently; tell the user.

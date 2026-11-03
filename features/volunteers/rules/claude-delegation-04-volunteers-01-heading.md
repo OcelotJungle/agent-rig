@@ -1,2 +1,2 @@
-# Делегирование волонтёрам
+# Delegating to volunteers
 

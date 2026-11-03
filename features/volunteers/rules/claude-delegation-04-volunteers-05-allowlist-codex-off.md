@@ -1,2 +1,2 @@
-- Работает только в проектах из белого списка скрипта; `REFUSED:` — задача сразу идёт
-  субагенту Claude.
+- Works only in projects on the script's allowlist; `REFUSED:` — the task goes straight to
+  a Claude subagent.

@@ -384,16 +384,16 @@ def review(payload: dict) -> tuple[str, dict | None]:
 
 
 def reason(answer: dict) -> str:
-    items = [f"{i}. {p['what']} ({p['evidence']}). Сделай: {p['fix']}" for i, p in enumerate(answer["problems"][:MAX_PROBLEMS], 1)]
+    items = [f"{i}. {p['what']} ({p['evidence']}). Do: {p['fix']}" for i, p in enumerate(answer["problems"][:MAX_PROBLEMS], 1)]
     return (
-        f"{WAKE_MARKER} Рефлексия по твоему предыдущему ответу, он уже отправлен пользователю:\n" + "\n".join(items) + "\n\n"
-        "Начни КОРОТКОЕ дополнительное сообщение блоком «Рефлексия:», где каждый пункт идёт своей строкой от первого лица, "
-        "как твоя собственная рефлексия: что ты упустил и что теперь сделал («я не выяснил X — выяснил: …», «я не сделал Y — сделал»). "
-        "Где пункт неверен, коротко скажи почему. Где пункт верен и в отправленном ответе что-то неполно или неверно "
-        "(что угодно: абзац, список, объяснение, цифра, вывод, рекомендация), одной пометки о пробеле мало: "
-        "пришли эту часть заново, исправленную и целиком, чтобы пользователь мог читать её вместо старой. "
-        "Части, которых пункты не касаются, не повторяй. "
-        "Никаких «хук сказал», «она нашла», «замечание»."
+        f"{WAKE_MARKER} Reflection on your previous answer, which has already been sent to the user:\n" + "\n".join(items) + "\n\n"
+        "Start a SHORT follow-up message with a \"Reflection:\" block, written in the user's language, where each item goes on its own line in the first person, "
+        "as your own reflection: what you missed and what you have done about it now (\"I did not find out X — I found out: …\", \"I did not do Y — I did it\"). "
+        "Where an item is wrong, say briefly why. Where an item is right and something in the sent answer is incomplete or wrong "
+        "(anything: a paragraph, a list, an explanation, a number, a conclusion, a recommendation), a note about the gap is not enough: "
+        "send that part again, corrected and whole, so the user can read it instead of the old one. "
+        "Do not repeat the parts the items do not touch. "
+        "No \"the hook said\", \"it found\", \"a remark\"."
     )
 
 

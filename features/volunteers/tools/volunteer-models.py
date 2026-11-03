@@ -522,17 +522,17 @@ def compute_limits(a, now=None):
 
 def format_duration(seconds):
     minutes = max(seconds, 0) // 60
-    return "%d ч %d мин" % (minutes // 60, minutes % 60)
+    return "%d h %d min" % (minutes // 60, minutes % 60)
 
 
 def format_limits(r):
     if r["source"] == "none":
-        return "**Лимиты волонтёров**\nнет данных: %s" % r["error"]
-    note = "данные сейчас" if r["source"] == "proxy" else "по счётчикам freellmpool"
+        return "**Volunteer limits**\nno data: %s" % r["error"]
+    note = "live data" if r["source"] == "proxy" else "from freellmpool counters"
     names = (("openrouter", "OpenRouter"), ("requesty", "Requesty"), ("groq", "Groq"))
     parts = ["%s %d/%d" % (title, r["providers"][k]["used"], r["providers"][k]["cap"]) for k, title in names]
-    parts.append("Z.ai %d запр." % r["providers"]["zhipu"]["used"])
-    return "**Лимиты волонтёров** (%s)\nДень: %d%% (сброс через %s)\n%s" % (
+    parts.append("Z.ai %d req." % r["providers"]["zhipu"]["used"])
+    return "**Volunteer limits** (%s)\nDay: %d%% (resets in %s)\n%s" % (
         note,
         r["day_percent"],
         format_duration(r["reset_in_s"]),

@@ -1,3 +1,3 @@
-- Правила среды скрипт добавляет к заданию сам. Бриф: одна актуальная шапка без противоречий со старыми брифами;
-  нужные строки спеки цитатой или командой `sed -n Np | cut -c1-3000`; точные пути; правки ревью — общим правилом и
-  списком атак.
+- The script adds the environment rules to the assignment itself. Brief: one current header with no contradictions with old briefs;
+  the needed spec lines as a quote or by the command `sed -n Np | cut -c1-3000`; exact paths; review fixes as a general rule and
+  a list of attacks.

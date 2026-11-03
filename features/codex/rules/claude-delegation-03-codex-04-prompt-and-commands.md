@@ -1,4 +1,4 @@
-- Промпт: строки `model:`, `effort:`, `mode: write` или `mode: read-only`, `approved: no`, `cwd: <абсолютный путь>`,
-  затем `task:` и самодостаточное задание с критериями готовности. Продолжить сессию: `reply: <job>` + `task:`;
-  подключиться после падения воркера: `attach: <job>`. Остановить: `{{PYTHON}} -I "{{CLONE}}/features/codex/tools/codex-run.py" cancel <job>`;
-  список: `… list`.
+- Prompt: lines `model:`, `effort:`, `mode: write` or `mode: read-only`, `approved: no`, `cwd: <absolute path>`,
+  then `task:` and a self-contained assignment with completion criteria. Continue a session: `reply: <job>` + `task:`;
+  reconnect after the worker crashed: `attach: <job>`. Stop: `{{PYTHON}} -I "{{CLONE}}/features/codex/tools/codex-run.py" cancel <job>`;
+  list: `… list`.

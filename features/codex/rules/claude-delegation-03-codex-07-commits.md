@@ -1,1 +1,1 @@
-- Codex не коммитит и не пушит; коммиты — твои.
+- Codex does not commit or push; the commits are yours.

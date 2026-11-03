@@ -545,7 +545,7 @@ class Limits(TempDirCase):
         self.assertIsNone(r["day_percent"])
         self.assertIn("proxy", r["error"])
         self.assertIn("quota", r["error"])
-        self.assertIn("нет данных", vm.format_limits(r))
+        self.assertIn("no data", vm.format_limits(r))
 
     def test_json_shape_and_exit_code(self):
         with StatusServer(STATUS) as srv:
@@ -563,15 +563,15 @@ class Limits(TempDirCase):
             r = vm.compute_limits(self.ns(srv.url), self.now)
         text = vm.format_limits(r)
         lines = text.split("\n")
-        self.assertEqual(lines[0], "**Лимиты волонтёров** (данные сейчас)")
-        self.assertEqual(lines[1], "День: 8% (сброс через 5 ч 10 мин)")
-        self.assertEqual(lines[2], "OpenRouter 29/1000 · Requesty 4/200 · Groq 194/1500 · Z.ai 4 запр.")
+        self.assertEqual(lines[0], "**Volunteer limits** (live data)")
+        self.assertEqual(lines[1], "Day: 8% (resets in 5 h 10 min)")
+        self.assertEqual(lines[2], "OpenRouter 29/1000 · Requesty 4/200 · Groq 194/1500 · Z.ai 4 req.")
         self.assertNotIn(self.SECRET, text)
 
     def test_no_data_exit_zero_and_no_token(self):
         code, out = self.run_main("http://127.0.0.1:1")
         self.assertEqual(code, 0)
-        self.assertIn("нет данных", out)
+        self.assertIn("no data", out)
         self.assertNotIn(self.SECRET, out)
 
 

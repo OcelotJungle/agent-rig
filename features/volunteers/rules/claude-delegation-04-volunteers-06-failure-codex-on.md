@@ -1,3 +1,3 @@
-- Не справился (`failed`, `partial`, плохой результат) — та же задача `codex` (`luna` + `high`; `sol`, если задача сложная) с описанием, что пробовали.
-  `no free models available` — одна строка пользователю, задача уходит `codex`. Codex недоступен — сложное тоже идёт
-  волонтёру с подробным брифом, ревью — general-purpose.
+- Failed (`failed`, `partial`, a bad result) — the same task to `codex` (`luna` + `high`; `sol` if the task is complex) with a description of what was tried.
+  `no free models available` — one line to the user, the task goes to `codex`. Codex unavailable — complex work also goes
+  to a volunteer with a detailed brief, review — to general-purpose.

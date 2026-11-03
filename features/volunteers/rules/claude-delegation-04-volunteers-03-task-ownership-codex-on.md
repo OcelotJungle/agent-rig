@@ -1,3 +1,3 @@
-- Кому что: `volunteer` — поиск и чтение кода, реализация по готовому плану, рутинные правки, тесты до зелёного, разбор
-  логов. `codex` — сложное (хитрое изменение, много связанных файлов, тонкий баг), ревью нетривиальных результатов
-  волонтёров и важных изменений, вторая попытка после неудачи волонтёра.
+- Who gets what: `volunteer` — searching and reading code, implementing a ready plan, routine edits, tests until green, log
+  analysis. `codex` — complex work (a tricky change, many linked files, a subtle bug), review of non-trivial results of
+  volunteers and of important changes, a second attempt after a volunteer's failure.
