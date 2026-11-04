@@ -1,7 +1,7 @@
 """Run a Codex task for Claude: detached, supervised, resumable.
 
 Commands:
-  start  --model luna|sol|astra --effort E --prompt-file F [--cwd DIR] [--read-only] [--approved]
+  start  --model luna|terra|sol|astra --effort E --prompt-file F [--cwd DIR] [--read-only] [--approved]
          creates a job, starts the supervisor, then waits like `wait`
   wait   <job> [--interval SECONDS]   block until the job ends, asks, fails, or the interval passes;
                                       print a digest of what Codex did since the previous wait
@@ -13,8 +13,9 @@ Commands:
 
 
 Model names resolve to the newest visible model of the line in ~/.codex/models_cache.json, never
-below the floors below. Efforts above high on a costly line and the astra line need --approved (the
-user's consent); the luna line runs at any effort, it barely spends the limit.
+below the floor: luna 6, terra 6.1, sol 6.1, and astra 6. Efforts above high on costly lines need
+--approved (the user's consent); astra always needs it. The free luna line runs at any effort. When
+a line's usage limit is exhausted, jobs downgrade astra -> sol -> terra -> luna.
 Every wait is a heartbeat: with no heartbeat for ORPHAN_SECONDS the supervisor stops Codex.
 """
 import argparse
@@ -34,8 +35,8 @@ from pathlib import Path
 HOME = Path.home()
 JOBS_DIR = HOME / ".claude" / "codex-jobs"
 MODELS_CACHE = HOME / ".codex" / "models_cache.json"
-FLOORS = {"luna": (6,), "sol": (6, 1), "astra": (6,)}
-DOWNGRADE = {"astra": "sol", "sol": "luna"}
+FLOORS = {"luna": (6,), "terra": (6, 1), "sol": (6, 1), "astra": (6,)}
+DOWNGRADE = {"astra": "sol", "sol": "terra", "terra": "luna"}
 FREE_EFFORTS = ("low", "medium", "high")
 FREE_LINES = ("luna",)
 ALL_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
@@ -561,7 +562,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("start")
-    s.add_argument("--model", choices=sorted(FLOORS), default="sol")
+    s.add_argument("--model", choices=sorted(FLOORS), default="terra")
     s.add_argument("--effort", choices=ALL_EFFORTS, default="medium")
     s.add_argument("--prompt-file", required=True)
     s.add_argument("--cwd")

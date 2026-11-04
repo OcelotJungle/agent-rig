@@ -64,6 +64,64 @@ class RunRulesTest(unittest.TestCase):
             self.assertIn(SANDBOX_MARK, cr.run_rules(windows=windows))
 
 
+class TerraLineTest(unittest.TestCase):
+    def test_terra_resolves_to_newest_model_at_its_floor(self):
+        with tempfile.TemporaryDirectory(prefix="codex-run-model-test-") as tmp:
+            cache = Path(tmp) / "models_cache.json"
+            cache.write_text(json.dumps({"models": [
+                {"slug": "gpt-5.6-terra", "visibility": "list",
+                 "supported_reasoning_levels": [{"effort": "high"}]},
+                {"slug": "gpt-6.1-terra", "visibility": "list",
+                 "supported_reasoning_levels": [{"effort": "high"}]},
+            ]}), encoding="utf-8")
+            with mock.patch.object(cr, "MODELS_CACHE", cache):
+                self.assertEqual(cr.resolve_model("terra"), ("gpt-6.1-terra", ["high"]))
+                cache.write_text(json.dumps({"models": [{
+                    "slug": "gpt-5.6-terra", "visibility": "list",
+                    "supported_reasoning_levels": [{"effort": "high"}],
+                }]}), encoding="utf-8")
+                with self.assertRaisesRegex(SystemExit, "6.1"):
+                    cr.resolve_model("terra")
+
+    def test_downgrade_chain_includes_terra(self):
+        self.assertEqual(cr.DOWNGRADE["sol"], "terra")
+        self.assertEqual(cr.DOWNGRADE["terra"], "luna")
+
+    def start_terra(self, effort, approved):
+        with tempfile.TemporaryDirectory(prefix="codex-run-start-test-") as tmp:
+            root = Path(tmp)
+            args = mock.Mock(model="terra", effort=effort, approved=approved,
+                             prompt_file="unused", cwd=str(root), read_only=False)
+            with mock.patch.multiple(
+                    cr, JOBS_DIR=root / "jobs", resolve_model=mock.Mock(
+                        return_value=("gpt-6.1-terra", list(cr.ALL_EFFORTS))),
+                    take_prompt=mock.Mock(return_value="task"), cleanup_old_jobs=mock.Mock()), \
+                    mock.patch.object(cr, "spawn_supervisor"), \
+                    redirect_stdout(io.StringIO()):
+                cr.cmd_start(args)
+
+    def test_terra_effort_above_high_needs_approval(self):
+        self.assertEqual(cr.FLOORS["terra"], (6, 1))
+        args = mock.Mock(model="terra", effort="xhigh", approved=False)
+        with self.assertRaisesRegex(SystemExit, "REFUSED"):
+            cr.cmd_start(args)
+
+    def test_terra_effort_above_high_is_allowed_with_approval(self):
+        self.start_terra("xhigh", approved=True)
+
+    def test_terra_effort_at_or_below_high_needs_no_approval(self):
+        for effort in ("low", "medium", "high"):
+            with self.subTest(effort=effort):
+                self.start_terra(effort, approved=False)
+
+    def test_default_model_is_terra(self):
+        args_seen = []
+        with mock.patch.object(sys, "argv", ["codex-run.py", "start", "--prompt-file", "prompt.md"]), \
+                mock.patch.object(cr, "cmd_start", side_effect=lambda args: args_seen.append(args)):
+            cr.main()
+        self.assertEqual(args_seen[0].model, "terra")
+
+
 FAKE_CODEX = Path(__file__).resolve().parent / "fake_codex.py"
 
 

@@ -67,8 +67,8 @@ None.
   volunteers and of important changes, a second attempt after a volunteer's failure.
 - A project outside the allowlist (`REFUSED:`) — straight to `codex`. The allowlist is in the local file
   `~/.agent-rig/volunteer-projects.json`, format `{"allowed": ["<folder>"]}`; without it every folder is refused.
-- The volunteer failed (`failed`, `partial`, a bad result) — the same task to `codex` on `sol` with a description of what
-  was tried. No free models left — one line to the user, the task goes to `codex`.
+- The volunteer failed (`failed`, `partial`, a bad result) — the same task to `codex` on `luna` (`terra` if the task is complex) with a description
+  of what was tried. No free models left — one line to the user, the task goes to `codex`.
 - Codex unavailable — complex work also goes to a volunteer with a detailed brief, review — to general-purpose.
 
 ## Limits

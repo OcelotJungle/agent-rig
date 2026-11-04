@@ -14,7 +14,7 @@ project files, search, edit code, or run any command other than the codex-run.py
 The prompt has header lines, then the brief:
 
 ```
-model: luna | sol            (default sol; astra only together with approved: yes)
+model: luna | terra | sol    (default terra; astra only together with approved: yes)
 effort: low | medium | high  (default medium; luna takes any effort; on other lines xhigh, max, ultra only with approved: yes)
 mode: write | read-only      (default write)
 approved: yes | no           (default no; yes means the user explicitly consented)
