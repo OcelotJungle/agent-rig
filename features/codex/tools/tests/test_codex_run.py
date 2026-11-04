@@ -51,6 +51,49 @@ def process_alive(pid):
 
 
 class RunRulesTest(unittest.TestCase):
+    def test_report_contract_in_prompt(self):
+        self.assertIn("More work than expected is never a reason to stop", cr.run_rules(False))
+        self.assertIn("Blocked by: for blocked", cr.run_rules(False))
+
+    def test_report_validation(self):
+        for report, expected in [("STATUS: done", ("done", None)),
+                                 ("STATUS: question\nQuestions: choose A or B", ("question", None)),
+                                 ("STATUS: blocked\nBlocked by: access", ("blocked", None))]:
+            self.assertEqual(cr.validate_report(report), expected)
+        for report, missing in [("text", "STATUS"), ("STATUS: partial", "status"),
+                                ("STATUS: done extra", "status"),
+                                ("STATUS: question\nQuestions: none", "Questions"),
+                                ("STATUS: question\nQuestions:\nRisks: none", "Questions"),
+                                ("STATUS: blocked\nBlocked by: none", "Blocked by"),
+                                ("STATUS: blocked", "Blocked by")]:
+            with self.subTest(report=report):
+                self.assertIn(missing.lower(), cr.validate_report(report)[1].lower())
+
+    def test_malformed_recovery_and_restart(self):
+        for reports, prior, expected, calls in [(["bad", "STATUS: blocked\nBlocked by: access"], 0, "blocked", 2),
+                                                 (["bad", "bad again"], 0, "malformed", 2),
+                                                 (["bad again"], 1, "malformed", 1)]:
+            with self.subTest(expected=expected, prior=prior), tempfile.TemporaryDirectory() as tmp:
+                job = Path(tmp)
+                cr.write_json(job / "state.json", {"cwd": tmp, "created": cr.now(), "notes": [],
+                              "session_id": "session", "malformed_follow_ups": prior})
+                sup = cr.Supervisor(job)
+                prompts = []
+                def run_once(text):
+                    prompts.append(text)
+                    (job / "last.md").write_text(reports[len(prompts) - 1], encoding="utf-8")
+                    sup.saw_turn_completed = True
+                    return None, 0
+                with mock.patch.object(sup, "run_once", side_effect=run_once):
+                    sup.run()
+                state = cr.read_json(job / "state.json")
+                self.assertEqual(state["status"], expected)
+                self.assertEqual(len(prompts), calls)
+                if calls == 2:
+                    self.assertIn("STATUS", prompts[1])
+                if expected == "malformed":
+                    self.assertIn("STATUS", state["report_error"])
+
     def test_windows_rules_name_git_bash(self):
         self.assertIn(GIT_BASH_MARK, cr.run_rules(windows=True))
 
@@ -158,6 +201,148 @@ class StartPathTest(unittest.TestCase):
         state = cr.read_json(job_dir / "state.json")
         self.assertEqual(state["status"], "done", state)
         self.assertIn("STATUS: done", (job_dir / "last.md").read_text(encoding="utf-8"))
+
+
+STARTING_STALE_SECONDS = 100  # above the 60 s the wait gives a supervisor to start
+REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
+NOT_REPLYABLE_STATUSES = ("running", "starting", "cancelled", "orphaned")
+BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: the access key is missing"
+REPORT_TEXT = "Result in short.\nSTATUS: done\nDone: - the secret report body\nChanged files: a.py"
+
+
+class JobLifecycleTest(unittest.TestCase):
+    """cmd_wait, cmd_reply and the malformed counter across turns."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="codex-run-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        patcher = mock.patch.multiple(cr, JOBS_DIR=self.tmp, POLL_SECONDS=0.01)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def make_job(self, **fields):
+        d = self.tmp / "job1"
+        d.mkdir()
+        state = {"job": "job1", "slug": "gpt-6-luna", "effort": "high", "cwd": str(self.tmp),
+                 "created": cr.now(), "notes": [], "session_id": "session"}
+        state.update(fields)
+        cr.write_json(d / "state.json", state)
+        return d
+
+    def wait(self, d, interval=0):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cr.cmd_wait(mock.Mock(job="job1", interval=interval))
+        return cr.read_json(d / "state.json"), out.getvalue()
+
+    def test_wait_ends_a_job_whose_supervisor_died_as_blocked(self):
+        d = self.make_job(status="running", supervisor_pid=None)
+        state, out = self.wait(d)
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["error"], "supervisor process died")
+        self.assertNotIn("still running", out)
+
+    def test_wait_ends_a_job_whose_supervisor_never_started_as_blocked(self):
+        d = self.make_job(status="starting", created=cr.now() - STARTING_STALE_SECONDS)
+        state, out = self.wait(d, interval=STARTING_STALE_SECONDS)
+        self.assertEqual(state["status"], "blocked")
+        self.assertIn("supervisor did not start", state["error"])
+
+    def test_reply_accepts_every_status_a_job_can_end_with_a_session(self):
+        for status in REPLY_STATUSES:
+            with self.subTest(status=status):
+                d = self.make_job(status=status, error="old")
+                with mock.patch.object(cr, "spawn_supervisor") as spawn, \
+                        mock.patch.object(cr, "cmd_wait"), mock.patch.object(cr, "take_prompt", return_value="go"), \
+                        redirect_stdout(io.StringIO()):
+                    cr.cmd_reply(mock.Mock(job="job1", prompt_file="unused"))
+                spawn.assert_called_once()
+                self.assertEqual(cr.read_json(d / "state.json")["status"], "starting")
+                self.assertIn("go", (d / "reply.md").read_text(encoding="utf-8"))
+                shutil.rmtree(d)
+
+    def test_reply_refuses_a_job_that_has_not_finished(self):
+        for status in NOT_REPLYABLE_STATUSES:
+            with self.subTest(status=status):
+                d = self.make_job(status=status)
+                with mock.patch.object(cr, "spawn_supervisor") as spawn, self.assertRaises(SystemExit):
+                    cr.cmd_reply(mock.Mock(job="job1", prompt_file="unused"))
+                spawn.assert_not_called()
+                shutil.rmtree(d)
+
+    def test_progress_digest_never_shows_a_message_with_the_report(self):
+        d = self.make_job(status="running", started=cr.now())
+        st = cr.read_json(d / "state.json")
+        events = [{"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+                  for text in ("reading the tests", REPORT_TEXT)]
+        progress = cr.digest(d, st, events, False)
+        self.assertIn("reading the tests", progress)
+        self.assertNotIn("secret report body", progress)
+        self.assertNotIn("STATUS", progress)
+
+    def final_digest(self, d):
+        return cr.digest(d, cr.read_json(d / "state.json"), [], True)
+
+    def test_final_digest_shows_the_report_of_every_report_outcome(self):
+        for status in ("done", "question", "blocked", "malformed"):
+            with self.subTest(status=status):
+                d = self.make_job(status=status, started=cr.now(), ended=cr.now(), report_error="no STATUS line")
+                (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
+                out = self.final_digest(d)
+                self.assertIn("Blocked by: the access key", out)
+                self.assertNotIn("error:", out)
+                self.assertEqual("report problem: no STATUS line" in out, status == "malformed")
+                shutil.rmtree(d)
+
+    def test_final_digest_keeps_the_error_when_the_launcher_failed(self):
+        d = self.make_job(status="blocked", started=cr.now(), ended=cr.now(), error="supervisor process died")
+        (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
+        out = self.final_digest(d)
+        self.assertIn("error: supervisor process died", out)
+        self.assertNotIn("the access key", out)
+
+    def test_a_report_outcome_clears_a_stale_error(self):
+        for report, status in [("STATUS: blocked\nBlocked by: the access key", "blocked"), ("bad", "malformed")]:
+            with self.subTest(status=status):
+                d = self.make_job(status="starting", error="supervisor process died", malformed_follow_ups=1)
+                state, _ = self.run_supervisor(d, [report])
+                self.assertEqual(state["status"], status)
+                self.assertIsNone(state["error"])
+                shutil.rmtree(d)
+
+    def run_supervisor(self, d, reports):
+        sup = cr.Supervisor(d)
+        prompts = []
+
+        def run_once(text):
+            prompts.append(text)
+            (d / "last.md").write_text(reports[len(prompts) - 1], encoding="utf-8")
+            sup.saw_turn_completed = True
+            return None, 0
+
+        with mock.patch.object(sup, "run_once", side_effect=run_once):
+            sup.run()
+        return cr.read_json(d / "state.json"), prompts
+
+    def test_a_reply_turn_gets_its_own_malformed_follow_up(self):
+        d = self.make_job(status="starting", malformed_follow_ups=1)
+        (d / "reply.md").write_text("the answer", encoding="utf-8")
+        state, prompts = self.run_supervisor(d, ["bad", "STATUS: done"])
+        self.assertEqual(len(prompts), 2)
+        self.assertEqual(state["status"], "done")
+
+    def test_a_second_malformed_report_in_a_reply_turn_ends_the_job(self):
+        d = self.make_job(status="starting", malformed_follow_ups=1)
+        (d / "reply.md").write_text("the answer", encoding="utf-8")
+        state, prompts = self.run_supervisor(d, ["bad", "bad again"])
+        self.assertEqual(len(prompts), 2)
+        self.assertEqual(state["status"], "malformed")
+
+    def test_a_restart_without_a_reply_keeps_the_malformed_counter(self):
+        d = self.make_job(status="starting", malformed_follow_ups=1)
+        state, prompts = self.run_supervisor(d, ["bad"])
+        self.assertEqual(len(prompts), 1)
+        self.assertEqual(state["status"], "malformed")
 
 
 @unittest.skipIf(os.name == "nt", "the job's process group is a POSIX mechanism; Windows uses taskkill /T")

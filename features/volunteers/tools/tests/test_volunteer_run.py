@@ -349,6 +349,39 @@ class ConfigTests(Base):
 
 
 class SupervisorTests(Base):
+    def test_report_contract_in_prompt(self):
+        self.assertIn("More work than expected is never a reason to stop", vr.RUN_RULES)
+        self.assertIn("Blocked by: for blocked", vr.RUN_RULES)
+
+    def test_malformed_recovery_and_restart(self):
+        self.models("openrouter/a")
+        for first, second, prior, expected, count in [("bad", "STATUS: blocked\nBlocked by: access", 0, "blocked", 2),
+                                                       ("bad", "bad again", 0, "malformed", 2),
+                                                       ("bad again", "unused", 1, "malformed", 1)]:
+            with self.subTest(expected=expected, prior=prior):
+                self.scene(openrouter__a=[{"text": first}])
+                d = self.make_job()
+                state = vr.read_json(d / "state.json")
+                state["malformed_follow_ups"] = prior
+                vr.write_json(d / "state.json", state)
+                real_run_once = vr.Supervisor.run_once
+                calls = []
+                def run_once(sup, *args):
+                    result = real_run_once(sup, *args)
+                    calls.append(1)
+                    if len(calls) == 1:
+                        self.scene(openrouter__a=[{"text": second}])
+                    return result
+                with mock.patch.object(vr.Supervisor, "run_once", run_once):
+                    st = self.run_job(d)
+                self.assertEqual(st["status"], expected, st)
+                self.assertEqual(len(calls), count)
+                if count == 2:
+                    self.assertIn("STATUS", self.calls()[-1]["message"])
+                if expected == "malformed":
+                    self.assertIn("STATUS", st["report_error"])
+                shutil.rmtree(d)
+
     def test_run_with_the_modules_own_rules_path_reaches_the_fake_opencode(self):
         self.models("openrouter/a")
         self.scene(openrouter__a=[{"text": "All done.\nSTATUS: done"}])
@@ -386,7 +419,7 @@ class SupervisorTests(Base):
 
     def test_question_status(self):
         self.models("openrouter/a")
-        self.scene(openrouter__a=[{"text": "Which API?\nSTATUS: question"}])
+        self.scene(openrouter__a=[{"text": "STATUS: question\nQuestions: Which API? A or B; recommend A."}])
         self.assertEqual(self.run_job(self.make_job())["status"], "question")
 
     def test_switch_on_error_event(self):
@@ -437,7 +470,7 @@ class SupervisorTests(Base):
         self.scene(openrouter__a=[{"error": "bad request", "status": 400}, {"sleep": 60}],
                    openrouter__b=[{"error": "model not found", "status": 404}, {"sleep": 60}])
         st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed")
+        self.assertEqual(st["status"], "blocked")
         self.assertIn("no free models available", st["error"])
         self.assertIn("model not found", st["error"])
 
@@ -445,7 +478,7 @@ class SupervisorTests(Base):
         data = {"checked_at": stamp(), "models": [], "rejected": [{"id": "x/y", "reason": "no tools"}]}
         (self.jobs / "models.json").write_text(json.dumps(data), encoding="utf-8")
         st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed")
+        self.assertEqual(st["status"], "blocked")
         self.assertIn("no free models available", st["error"])
         self.assertIn("no tools", st["error"])
 
@@ -576,6 +609,144 @@ class ModelsCacheTests(Base):
             vr.ensure_models()
 
 
+STARTING_STALE_SECONDS = 100  # above the 60 s the wait gives a supervisor to start
+REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
+NOT_REPLYABLE_STATUSES = ("running", "starting", "cancelled", "orphaned")
+BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: the access key is missing"
+REPORT_TEXT = "Result in short.\nSTATUS: done\nDone: - the secret report body\nChanged files: a.py"
+
+
+class JobLifecycleTests(Base):
+    """cmd_wait, cmd_reply, the malformed counter across turns and the progress digest."""
+
+    def job_with(self, **fields):
+        d = self.make_job()
+        st = vr.read_json(d / "state.json")
+        st.update(session_id="session", slug="openrouter/a", **fields)
+        vr.write_json(d / "state.json", st)
+        return d
+
+    def wait(self, d, interval=0):
+        out = io.StringIO()
+        with redirect_stdout(out):
+            vr.cmd_wait(mock.Mock(job="20260101-000000-abcd", interval=interval))
+        return vr.read_json(d / "state.json"), out.getvalue()
+
+    def test_wait_ends_a_job_whose_supervisor_died_as_blocked(self):
+        d = self.job_with(status="running", supervisor_pid=None)
+        state, out = self.wait(d)
+        self.assertEqual(state["status"], "blocked")
+        self.assertEqual(state["error"], "supervisor process died")
+        self.assertNotIn("still running", out)
+
+    def test_wait_ends_a_job_whose_supervisor_never_started_as_blocked(self):
+        d = self.job_with(status="starting", created=time.time() - STARTING_STALE_SECONDS)
+        state, out = self.wait(d, interval=STARTING_STALE_SECONDS)
+        self.assertEqual(state["status"], "blocked")
+        self.assertIn("supervisor did not start", state["error"])
+
+    def test_reply_accepts_every_status_a_job_can_end_with_a_session(self):
+        for status in REPLY_STATUSES:
+            with self.subTest(status=status):
+                d = self.job_with(status=status, error="old")
+                with mock.patch.object(vr, "spawn_supervisor") as spawn, mock.patch.object(vr, "cmd_wait"), \
+                        mock.patch.object(vr, "take_prompt", return_value="go"), redirect_stdout(io.StringIO()):
+                    vr.cmd_reply(mock.Mock(job="20260101-000000-abcd", prompt_file="unused"))
+                spawn.assert_called_once()
+                self.assertEqual(vr.read_json(d / "state.json")["status"], "starting")
+                self.assertIn("go", (d / "reply.md").read_text(encoding="utf-8"))
+                shutil.rmtree(d)
+
+    def test_reply_refuses_a_job_that_has_not_finished(self):
+        for status in NOT_REPLYABLE_STATUSES:
+            with self.subTest(status=status):
+                d = self.job_with(status=status)
+                with mock.patch.object(vr, "spawn_supervisor") as spawn, self.assertRaises(SystemExit):
+                    vr.cmd_reply(mock.Mock(job="20260101-000000-abcd", prompt_file="unused"))
+                spawn.assert_not_called()
+                shutil.rmtree(d)
+
+    def run_turn(self, d, first, second):
+        """Runs the supervisor over a bad first report; the second report is what the follow-up gets."""
+        self.models("openrouter/a")
+        self.scene(openrouter__a=[{"text": first}])
+        real_run_once = vr.Supervisor.run_once
+        calls = []
+
+        def run_once(sup, *args):
+            result = real_run_once(sup, *args)
+            calls.append(1)
+            if len(calls) == 1:
+                self.scene(openrouter__a=[{"text": second}])
+            return result
+
+        with mock.patch.object(vr.Supervisor, "run_once", run_once):
+            st = self.run_job(d)
+        return st, len(calls)
+
+    def test_a_reply_turn_gets_its_own_malformed_follow_up(self):
+        d = self.job_with(status="starting", malformed_follow_ups=1)
+        (d / "reply.md").write_text("the answer", encoding="utf-8")
+        st, calls = self.run_turn(d, "bad", "STATUS: done")
+        self.assertEqual(calls, 2)
+        self.assertEqual(st["status"], "done", st)
+
+    def test_a_second_malformed_report_in_a_reply_turn_ends_the_job(self):
+        d = self.job_with(status="starting", malformed_follow_ups=1)
+        (d / "reply.md").write_text("the answer", encoding="utf-8")
+        st, calls = self.run_turn(d, "bad", "bad again")
+        self.assertEqual(calls, 2)
+        self.assertEqual(st["status"], "malformed")
+
+    def test_a_restart_without_a_reply_keeps_the_malformed_counter(self):
+        d = self.job_with(status="starting", malformed_follow_ups=1)
+        st, calls = self.run_turn(d, "bad", "STATUS: done")
+        self.assertEqual(calls, 1)
+        self.assertEqual(st["status"], "malformed")
+
+    def final_digest(self, d):
+        return vr.digest(d, vr.read_json(d / "state.json"), [], True)
+
+    def test_final_digest_shows_the_report_of_every_report_outcome(self):
+        for status in ("done", "question", "blocked", "malformed"):
+            with self.subTest(status=status):
+                d = self.job_with(status=status, started=time.time(), ended=time.time(),
+                                  report_error="no STATUS line")
+                (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
+                out = self.final_digest(d)
+                self.assertIn("Blocked by: the access key", out)
+                self.assertNotIn("error:", out)
+                self.assertEqual("report problem: no STATUS line" in out, status == "malformed")
+                shutil.rmtree(d)
+
+    def test_final_digest_keeps_the_error_when_the_launcher_failed(self):
+        d = self.job_with(status="blocked", started=time.time(), ended=time.time(), error="supervisor process died")
+        (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
+        out = self.final_digest(d)
+        self.assertIn("error: supervisor process died", out)
+        self.assertNotIn("the access key", out)
+
+    def test_a_report_outcome_clears_a_stale_error(self):
+        for first, status in [("STATUS: blocked\nBlocked by: the access key", "blocked"), ("bad", "malformed")]:
+            with self.subTest(status=status):
+                d = self.job_with(status="starting", error="supervisor process died", malformed_follow_ups=1)
+                st, _ = self.run_turn(d, first, "unused")
+                self.assertEqual(st["status"], status)
+                self.assertIsNone(st["error"])
+                shutil.rmtree(d)
+
+    def test_progress_digest_never_shows_a_message_with_the_report(self):
+        d = self.make_job()
+        st = vr.read_json(d / "state.json")
+        st.update(status="running", slug="openrouter/a", started=time.time())
+        events = [{"type": "item.completed", "item": {"type": "agent_message", "text": text}}
+                  for text in ("reading the tests", REPORT_TEXT)]
+        progress = vr.digest(d, st, events, False)
+        self.assertIn("reading the tests", progress)
+        self.assertNotIn("secret report body", progress)
+        self.assertNotIn("STATUS", progress)
+
+
 class ClientTests(Base):
     def test_start_creates_job_and_prints_start_line(self):
         self.models("openrouter/a")
@@ -702,7 +873,7 @@ class InfraHealthTests(Base):
 
         with mock.patch.object(vr.Supervisor, "run_once", run_once):
             st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed", st)
+        self.assertEqual(st["status"], "blocked", st)
         self.assertIn("gateway keeps dying (see proxy.log)", st["error"])
         self.assertEqual(st["switches"], 0)
         self.assertEqual({c["model"] for c in self.calls()}, {"openrouter/a"})
@@ -727,7 +898,7 @@ class InfraHealthTests(Base):
         with mock.patch.object(vr.Supervisor, "run_once", run_once), \
                 mock.patch.object(vr, "ensure_proxy", broken_ensure):
             st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed", st)
+        self.assertEqual(st["status"], "blocked", st)
         self.assertIn("the gateway did not answer", st["error"])
         self.assertEqual(len(self.calls()), 1)
 
@@ -755,7 +926,7 @@ class InfraHealthTests(Base):
         self.tcp.return_value = False
         with mock.patch.object(vr, "HARD_TIMEOUT_SECONDS", 3):
             st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed", st)
+        self.assertEqual(st["status"], "blocked", st)
         self.assertRegex(st["error"], r"^no network since \d\d:\d\d")
         self.assertEqual(st["switches"], 0)
 
@@ -858,7 +1029,7 @@ class CooldownAndWindowTests(Base):
         self.scene(openrouter__a=[{"error": "overloaded", "status": 503}, {"sleep": 60}])
         with mock.patch.object(vr, "MODEL_COOLDOWN_SECONDS", 60), mock.patch.object(vr, "HARD_TIMEOUT_SECONDS", 3):
             st = self.run_job(self.make_job())
-        self.assertEqual(st["status"], "failed", st)
+        self.assertEqual(st["status"], "blocked", st)
         self.assertIn("hard timeout", st["error"])
 
     def test_context_overflow_removes_the_model_for_the_job(self):
@@ -902,7 +1073,7 @@ class CooldownAndWindowTests(Base):
         self.models("openrouter/a", "openrouter/b", contexts={"openrouter/a": 2000, "openrouter/b": 3000})
         self.scene(openrouter__a=[{"text": "wrong\nSTATUS: done"}], openrouter__b=[{"text": "wrong\nSTATUS: done"}])
         st = self.run_job(self.make_job(prompt=self.BIG_PROMPT))
-        self.assertEqual(st["status"], "failed", st)
+        self.assertEqual(st["status"], "blocked", st)
         self.assertRegex(st["error"], r"no model fits the session context \(~\d+ tokens\)")
         self.assertEqual(self.calls(), [])
 

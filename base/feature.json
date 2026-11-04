@@ -430,7 +430,8 @@
     "hooks/no_ampersand.py",
     "hooks/project-tmp.sh",
     "hooks/project-tmp-settings.ps1",
-    "tools/patchlib.py"
+    "tools/patchlib.py",
+    "tools/run-report.py"
   ],
   "assets": [],
   "agents": [

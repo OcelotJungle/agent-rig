@@ -5,7 +5,7 @@ Same shape as codex-run.py, but the worker is OpenCode talking to a local freell
 Commands:
   start  --prompt-file F [--cwd DIR] [--read-only]
          refuses a cwd outside the project whitelist, creates a job, starts the supervisor, returns at once
-  wait   <job> [--interval SECONDS]   block until the job ends, asks, fails, or the interval passes;
+  wait   <job> [--interval SECONDS]   block until the job ends, asks, is blocked, or the interval passes;
                                       print a digest of what the worker did since the previous wait
   attach <job>                         same as wait (for a new relay after the old one died)
   reply  <job> --prompt-file F         continue a finished job's session with answers or a follow-up
@@ -21,6 +21,7 @@ Every wait is a heartbeat: with no heartbeat for ORPHAN_SECONDS the supervisor s
 """
 import argparse
 import ctypes
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +37,11 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+report_spec = importlib.util.spec_from_file_location("run_report", Path(__file__).resolve().parents[3] / "base/tools/run-report.py")
+report_module = importlib.util.module_from_spec(report_spec)
+report_spec.loader.exec_module(report_module)
+validate_report = report_module.validate_report
 
 HOME = Path.home()
 PROJECTS_FILE = HOME / ".agent-rig" / "volunteer-projects.json"
@@ -74,8 +80,11 @@ DIGEST_MESSAGES = 6
 DIGEST_TEXT_CHARS = 400
 REASON_CHARS = 160
 CHANGED_FILES_MAX = 50
-TERMINAL = ("done", "question", "failed", "cancelled", "orphaned", "limit")
-STATUS_RE = re.compile(r"^\s*STATUS:\s*(done|partial|failed|question)\b", re.I | re.M)
+TERMINAL = ("done", "question", "blocked", "malformed", "cancelled", "orphaned", "limit")
+# Statuses that come from the agent's own report; the final digest prints last.md for them.
+REPORT_STATUSES = ("done", "question", "blocked", "malformed")
+# A reply continues a job that ended on its own; a cancelled or orphaned one was stopped from outside.
+REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
 
 # A failed run is blamed on the model only while the infrastructure is healthy.
 NETWORK_POLL_SECONDS = 15
@@ -118,20 +127,12 @@ Rules for this run (from the orchestrating agent):
   it, report it.
 - Never run `git commit`, `git push`, or anything else that changes git history, branches or remotes.
 - Choices that change no behaviour are yours: naming, internal structure, how to organise the tests.
-- Do not guess any decision the task, the code or the docs leave open that changes behaviour (API
-  semantics included), loses or changes data, or costs money. Finish everything that does not depend
-  on it, then end with STATUS: question, listing each question.
+__DECISION_RULES__
 - Work in small steps. Before each major step say in one short sentence what you are about to do.
 - Do not paste diffs, logs or file contents into your messages.
 - Keep output small, since every printed line is reread on every later step: no whole big files, no
   unbounded searches, only the tail of test output.
-- End with this report and nothing after it:
-  STATUS: done | partial | failed | question
-  Summary: 3-7 bullets
-  Changed files: paths only
-  Checks run: one line
-  Open problems: bullets or "none"
-"""
+""".replace("__DECISION_RULES__\n", report_module.DECISION_RULES) + report_module.REPORT_FORM
 
 RESUME_TEXT = (
     "The previous run was interrupted at {when} ({why}). Continue the same task from where you "
@@ -748,9 +749,13 @@ class Supervisor:
             extra = f"\n... and {len(files) - len(shown)} more" if len(files) > len(shown) else ""
             report += "\n\nWorking tree changes (git status --porcelain):\n" + "\n".join(shown) + extra
         (self.dir / "last.md").write_text(report + "\n", encoding="utf-8")
-        m = STATUS_RE.search(self.last_text)
-        status = "question" if m and m.group(1).lower() == "question" else "done"
-        return self.save(status=status, ended=now(), error=None)
+        status, error = validate_report(self.last_text)
+        if error:
+            if self.state.get("malformed_follow_ups", 0) or not self.state.get("session_id"):
+                return self.save(status="malformed", ended=now(), error=None, report_error=error)
+            self.save(malformed_follow_ups=1, report_error=error)
+            return None
+        return self.save(status=status, ended=now(), error=None, report_error=None)
 
     def estimate_tokens(self):
         """Session size: OpenCode reports no token usage, so count the bytes of everything it has seen."""
@@ -769,7 +774,7 @@ class Supervisor:
         return template.format(when=hhmm(now()), why=short(why, REASON_CHARS))
 
     def pause(self, waiting, ready, interval, timeout_error):
-        """Wait until ready() is true, checking cancel, orphaning and the hard timeout. True when the job was ended here (cancelled, orphaned, failed)."""
+        """Wait until ready() is true, checking cancel, orphaning and the hard timeout. True when the job was ended here (cancelled, orphaned, blocked)."""
         self.save(waiting=waiting)
         next_check = 0
         while True:
@@ -780,7 +785,7 @@ class Supervisor:
                 self.save(status="orphaned", ended=now(), waiting=None)
                 return True
             if now() - self.t0 > HARD_TIMEOUT_SECONDS:
-                self.save(status="failed", ended=now(), error=timeout_error(), waiting=None)
+                self.save(status="blocked", ended=now(), error=timeout_error(), waiting=None)
                 return True
             if now() >= next_check:
                 if ready():
@@ -796,12 +801,13 @@ class Supervisor:
         if reply.exists():
             text = reply.read_text(encoding="utf-8")
             reply.unlink()
+            self.save(malformed_follow_ups=0)  # a reply starts a new turn with its own malformed follow-up
         self.t0 = now()
         self.save(supervisor_pid=os.getpid(), status="running", started=self.state.get("started") or now())
         try:
             models = self.prepare()
         except Fail as f:
-            return self.save(status="failed", ended=now(), error=str(f))
+            return self.save(status="blocked", ended=now(), error=str(f))
         by_id = {m["id"]: m for m in models}
         hard_timeout = lambda: f"hard timeout after {HARD_TIMEOUT_SECONDS // 60} min"
         banned, cooling, failures = {}, {}, []
@@ -816,10 +822,10 @@ class Supervisor:
                 alive = [m for m in models if m["id"] not in banned]
                 if not alive:
                     tail = "; ".join(f"{i.split('/')[-1]}: {w[:70]}" for i, w in failures[-5:])
-                    return self.save(status="failed", ended=now(), error=f"no free models available: {tail}")
+                    return self.save(status="blocked", ended=now(), error=f"no free models available: {tail}")
                 fit = [m for m in alive if model_fits(m, est)]
                 if not fit:
-                    return self.save(status="failed", ended=now(),
+                    return self.save(status="blocked", ended=now(),
                                      error=f"no model fits the session context (~{est} tokens)")
                 ready = [m for m in fit if cooling.get(m["id"], 0) <= now()]
                 if not ready:
@@ -842,9 +848,14 @@ class Supervisor:
             if reason in ("cancelled", "orphaned"):
                 return self.save(status=reason, ended=now())
             if reason == "timeout":
-                return self.save(status="failed", ended=now(), error=hard_timeout())
-            if reason is None and code == 0 and self.last_text.strip():
-                return self.finish()
+                return self.save(status="blocked", ended=now(), error=hard_timeout())
+            if reason is None and code == 0:
+                self.finish()
+                if self.state.get("status") in TERMINAL:
+                    return
+                forced = entry
+                text = report_module.malformed_follow_up(self.state["report_error"])
+                continue
             why = self.fail_reason or {"hung": f"no events for {IDLE_SECONDS // 60 or IDLE_SECONDS} "
                                                 f"{'min' if IDLE_SECONDS >= 60 else 's'}"}.get(reason) or \
                 f"exit code {code}" + ("" if self.last_text.strip() else ", no final message")
@@ -855,15 +866,15 @@ class Supervisor:
             try:
                 gateway_up = proxy_up(self.token)
             except Fail as f:
-                return self.save(status="failed", ended=now(), error=str(f))
+                return self.save(status="blocked", ended=now(), error=str(f))
             if not gateway_up:
                 restarts += 1
                 if restarts > MAX_GATEWAY_RESTARTS:
-                    return self.save(status="failed", ended=now(), error="gateway keeps dying (see proxy.log)")
+                    return self.save(status="blocked", ended=now(), error="gateway keeps dying (see proxy.log)")
                 try:
                     self.token = ensure_proxy()
                 except Fail as f:
-                    return self.save(status="failed", ended=now(), error=str(f))
+                    return self.save(status="blocked", ended=now(), error=str(f))
                 self.note(f"gateway was down, restarted; retrying {entry['id']}")
                 forced, text = entry, self.follow_up(RESUME_TEXT, last_why)
                 continue
@@ -969,15 +980,17 @@ def digest(d, st, events, final):
         if e.get("type") == "item.completed" and kind == "agent_message":
             msgs.append(it.get("text") or "")
     if not final:
-        for m in msgs[-DIGEST_MESSAGES:]:
+        for m in [m for m in msgs if not report_module.has_status_line(m)][-DIGEST_MESSAGES:]:
             lines.append(f"volunteer: {short(m)}")
         if last_cmd:
             lines.append(f"running: {short(last_cmd, 160)}")
     if final:
         last = d / "last.md"
-        if st["status"] in ("done", "question") and last.exists():
+        if st["status"] in REPORT_STATUSES and not st.get("error") and last.exists():
             lines.append("")
             lines.append(last.read_text(encoding="utf-8", errors="replace").strip())
+            if st["status"] == "malformed":
+                lines.append(f"report problem: {st.get('report_error')}")
         else:
             lines.append(f"error: {st.get('error') or 'no final report'}")
             if msgs:
@@ -998,13 +1011,13 @@ def cmd_wait(a):
         st = read_json(d / "state.json") or {}
         status = st.get("status")
         if status not in TERMINAL and status != "starting" and not pid_alive(st.get("supervisor_pid")):
-            st.update(status="failed", error="supervisor process died", ended=now())
+            st.update(status="blocked", error="supervisor process died", ended=now())
             write_json(d / "state.json", st)
-            status = "failed"
+            status = "blocked"
         if status in TERMINAL or now() >= deadline:
             break
         if status == "starting" and now() - st["created"] > 60:
-            st.update(status="failed", error="supervisor did not start (see supervisor.log)", ended=now())
+            st.update(status="blocked", error="supervisor did not start (see supervisor.log)", ended=now())
             write_json(d / "state.json", st)
             break
         time.sleep(POLL_SECONDS)
@@ -1018,7 +1031,7 @@ def cmd_wait(a):
 def cmd_reply(a):
     d = job_dir(a.job)
     st = read_json(d / "state.json") or {}
-    if st.get("status") not in ("done", "question", "failed", "limit") or not st.get("session_id"):
+    if st.get("status") not in REPLY_STATUSES or not st.get("session_id"):
         sys.exit(f"ERROR: job {a.job} is {st.get('status')}; reply needs a finished job with a session")
     text = take_prompt(a.prompt_file).rstrip()
     (d / "reply.md").write_text(text + "\n\nKeep the same rules and finish with the same report format.",

@@ -70,4 +70,5 @@ Messages that only carry a tool call (getting the prompt path, writing the promp
 start/attach/reply call, a repeated wait after a failure) have no text at all.
 
 If the result looks incomplete, empty, wrong or failed, still return it unchanged: the caller judges it.
-Never shorten or rephrase the volunteer's report, never retry a task the volunteer reported as failed.
+Never shorten or rephrase the volunteer's report (its Questions or Blocked by section included), never retry a
+task whose job ended as `blocked` or `malformed`.

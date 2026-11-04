@@ -3,7 +3,7 @@
 Commands:
   start  --model luna|terra|sol|astra --effort E --prompt-file F [--cwd DIR] [--read-only] [--approved]
          creates a job, starts the supervisor, then waits like `wait`
-  wait   <job> [--interval SECONDS]   block until the job ends, asks, fails, or the interval passes;
+  wait   <job> [--interval SECONDS]   block until the job ends, asks, is blocked, or the interval passes;
                                       print a digest of what Codex did since the previous wait
   attach <job>                         same as wait (for a new worker after the old one died)
   reply  <job> --prompt-file F         continue a finished job's Codex session with answers or a follow-up
@@ -20,6 +20,7 @@ Every wait is a heartbeat: with no heartbeat for ORPHAN_SECONDS the supervisor s
 """
 import argparse
 import ctypes
+import importlib.util
 import json
 import os
 import re
@@ -31,6 +32,11 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+report_spec = importlib.util.spec_from_file_location("run_report", Path(__file__).resolve().parents[3] / "base/tools/run-report.py")
+report_module = importlib.util.module_from_spec(report_spec)
+report_spec.loader.exec_module(report_module)
+validate_report = report_module.validate_report
 
 HOME = Path.home()
 JOBS_DIR = HOME / ".claude" / "codex-jobs"
@@ -51,9 +57,12 @@ HEALTHY_RUN_SECONDS = int(os.environ.get("CODEX_RUN_HEALTHY_SECONDS", 10 * 60))
 KEEP_JOBS_DAYS = 14
 DIGEST_MESSAGES = 6
 DIGEST_TEXT_CHARS = 400
-TERMINAL = ("done", "question", "failed", "cancelled", "orphaned", "limit")
+TERMINAL = ("done", "question", "blocked", "malformed", "cancelled", "orphaned", "limit")
+# Statuses that come from the agent's own report; the final digest prints last.md for them.
+REPORT_STATUSES = ("done", "question", "blocked", "malformed")
+# A reply continues a job that ended on its own; a cancelled or orphaned one was stopped from outside.
+REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
 LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|quota|too many requests|429", re.I)
-STATUS_RE = re.compile(r"^\s*STATUS:\s*(done|partial|failed|question)\b", re.I | re.M)
 
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -73,9 +82,7 @@ Rules for this run (from the orchestrating agent):
 - You run non-interactively. Nobody can answer you mid-run.
 - Never run `git commit`, `git push`, or anything else that changes git history, branches or remotes.
 - Choices that change no behaviour are yours: naming, internal structure, how to organise the tests.
-- Do not guess any decision the task, the code or the docs leave open that changes behaviour (API
-  semantics included), loses or changes data, or costs money. Finish everything that does not depend
-  on it, implementing it fully, then end with STATUS: question, listing each question.
+__DECISION_RULES__
 - Work in small steps. Before each major step say in one short sentence what you are about to do.
 - Do not paste diffs, logs or file contents into your messages.
 __SHELL_RULE__- Sandbox limits: tools that call os.userInfo (drizzle-kit, for example) fail with ENOMEM: do not run them,
@@ -87,13 +94,7 @@ __SHELL_RULE__- Sandbox limits: tools that call os.userInfo (drizzle-kit, for ex
 - Fix the class of a bug, not the reported point: find the general rule, try neighbouring bypasses, add a
   test for each. Before the report, walk the changed files against AGENTS.md and fix what breaks it.
 - One operation per file in one apply_patch: several operations on one file are rejected.
-- End with this report and nothing after it:
-  STATUS: done | partial | failed | question
-  Done: 3-7 bullets
-  Changed files: paths only
-  Tests: one line
-  Open questions and risks: bullets or "none"
-"""
+""".replace("__DECISION_RULES__\n", report_module.DECISION_RULES) + report_module.REPORT_FORM
 
 def run_rules(windows):
     return RUN_RULES.replace(SHELL_RULE_MARKER, SHELL_RULE_WINDOWS if windows else "")
@@ -319,6 +320,7 @@ class Supervisor:
         if reply.exists():
             resume_text = reply.read_text(encoding="utf-8")
             reply.unlink()
+            self.save(malformed_follow_ups=0)  # a reply starts a new turn with its own malformed follow-up
         self.save(supervisor_pid=os.getpid(), status="running", started=self.state.get("started") or now())
         restarts = 0
         while True:
@@ -329,9 +331,14 @@ class Supervisor:
             last = self.dir / "last.md"
             if reason is None and self.saw_turn_completed and last.exists():
                 report = last.read_text(encoding="utf-8", errors="replace")
-                m = STATUS_RE.search(report)
-                status = "question" if m and m.group(1).lower() == "question" else "done"
-                return self.save(status=status, ended=now(), exit_code=code)
+                status, error = validate_report(report)
+                if not error:
+                    return self.save(status=status, ended=now(), exit_code=code, error=None, report_error=None)
+                if self.state.get("malformed_follow_ups", 0) or not self.state.get("session_id"):
+                    return self.save(status="malformed", ended=now(), exit_code=code, error=None, report_error=error)
+                self.save(malformed_follow_ups=1, report_error=error)
+                resume_text = report_module.malformed_follow_up(error)
+                continue
             if now() - run_started >= HEALTHY_RUN_SECONDS:
                 restarts = 0  # it worked for a while before dying: a fresh failure, not a loop
             if LIMIT_RE.search(self.error_text or ""):
@@ -348,7 +355,7 @@ class Supervisor:
                 reason, f"process exited with code {code} without a final report"
                 + (f": {short(self.error_text, 200)}" if self.error_text else ""))
             if restarts >= MAX_RESTARTS or not self.state.get("session_id"):
-                return self.save(status="failed", ended=now(), error=why)
+                return self.save(status="blocked", ended=now(), error=why)
             restarts += 1
             self.note(f"restart {restarts}/{MAX_RESTARTS}: {why}")
             self.save(restarts=self.state.get("restarts", 0) + 1)
@@ -460,7 +467,7 @@ def digest(d, st, events, final):
     if not final:
         for r in reasoning[-2:]:
             lines.append(f"thinking: {short(r, 250)}")
-        for m in msgs[-DIGEST_MESSAGES:]:
+        for m in [m for m in msgs if not report_module.has_status_line(m)][-DIGEST_MESSAGES:]:
             lines.append(f"codex: {short(m)}")
         if last_cmd:
             lines.append(f"running: {short(last_cmd, 160)}")
@@ -468,9 +475,11 @@ def digest(d, st, events, final):
         lines.append("files touched: " + ", ".join(Path(f).name for f in files[:15]))
     if final:
         last = d / "last.md"
-        if st["status"] in ("done", "question") and last.exists():
+        if st["status"] in REPORT_STATUSES and not st.get("error") and last.exists():
             lines.append("")
             lines.append(last.read_text(encoding="utf-8", errors="replace").strip())
+            if st["status"] == "malformed":
+                lines.append(f"report problem: {st.get('report_error')}")
         else:
             lines.append(f"error: {st.get('error') or 'no final report'}")
             if msgs:
@@ -491,13 +500,13 @@ def cmd_wait(a):
         st = read_json(d / "state.json") or {}
         status = st.get("status")
         if status not in TERMINAL and status != "starting" and not pid_alive(st.get("supervisor_pid")):
-            st.update(status="failed", error="supervisor process died", ended=now())
+            st.update(status="blocked", error="supervisor process died", ended=now())
             write_json(d / "state.json", st)
-            status = "failed"
+            status = "blocked"
         if status in TERMINAL or now() >= deadline:
             break
         if status == "starting" and now() - st["created"] > 60:
-            st.update(status="failed", error="supervisor did not start (see supervisor.log)", ended=now())
+            st.update(status="blocked", error="supervisor did not start (see supervisor.log)", ended=now())
             write_json(d / "state.json", st)
             break
         time.sleep(POLL_SECONDS)
@@ -511,7 +520,7 @@ def cmd_wait(a):
 def cmd_reply(a):
     d = job_dir(a.job)
     st = read_json(d / "state.json") or {}
-    if st.get("status") not in ("done", "question", "failed", "limit") or not st.get("session_id"):
+    if st.get("status") not in REPLY_STATUSES or not st.get("session_id"):
         sys.exit(f"ERROR: job {a.job} is {st.get('status')}; reply needs a finished job with a session")
     text = take_prompt(a.prompt_file).rstrip()
     (d / "reply.md").write_text(text + "\n\nKeep the same rules and finish with the same report format.",
