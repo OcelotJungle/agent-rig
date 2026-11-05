@@ -14,8 +14,9 @@ Commands:
 
 Model names resolve to the newest visible model of the line in ~/.codex/models_cache.json, never
 below the floor: luna 6, terra 6.1, sol 6.1, and astra 6. Efforts above high on costly lines need
---approved (the user's consent); astra always needs it. The free luna line runs at any effort. When
-a line's usage limit is exhausted, jobs downgrade astra -> sol -> terra -> luna.
+--approved (the user's consent); astra always needs it. The free luna line runs at any effort. The
+Codex usage limit is shared by all lines; a job that hits it ends as limit with the reset time, and
+continues on the same line by reply after the reset.
 Every wait is a heartbeat: with no heartbeat for ORPHAN_SECONDS the supervisor stops Codex.
 """
 import argparse
@@ -42,7 +43,6 @@ HOME = Path.home()
 JOBS_DIR = HOME / ".claude" / "codex-jobs"
 MODELS_CACHE = HOME / ".codex" / "models_cache.json"
 FLOORS = {"luna": (6,), "terra": (6, 1), "sol": (6, 1), "astra": (6,)}
-DOWNGRADE = {"astra": "sol", "sol": "terra", "terra": "luna"}
 FREE_EFFORTS = ("low", "medium", "high")
 FREE_LINES = ("luna",)
 ALL_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
@@ -63,6 +63,7 @@ REPORT_STATUSES = ("done", "question", "blocked", "malformed")
 # A reply continues a job that ended on its own; a cancelled or orphaned one was stopped from outside.
 REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
 LIMIT_RE = re.compile(r"usage limit|rate limit|limit reached|quota|too many requests|429", re.I)
+LIMIT_RESET_RE = re.compile(r"\btry again at\s+(.+?)(?:[.!?](?:\s|$)|$)", re.I)
 
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -103,12 +104,6 @@ def run_rules(windows):
 RESUME_TEXT = (
     "The previous run was interrupted at {when} ({why}). Continue the same task from where you "
     "stopped. The last step may be incomplete: check the current state of the files first. "
-    "Keep the same rules and finish with the same report format."
-)
-
-SWITCH_TEXT = (
-    "The previous model ran out of usage at {when}. You are taking over the same task on a "
-    "different model. Continue from where it stopped; check the current state of the files first. "
     "Keep the same rules and finish with the same report format."
 )
 
@@ -342,15 +337,9 @@ class Supervisor:
             if now() - run_started >= HEALTHY_RUN_SECONDS:
                 restarts = 0  # it worked for a while before dying: a fresh failure, not a loop
             if LIMIT_RE.search(self.error_text or ""):
-                lower = DOWNGRADE.get(self.state["line"])
-                if lower is None or not self.state.get("session_id"):
-                    return self.save(status="limit", ended=now(), error=self.error_text)
-                slug, efforts = resolve_model(lower)
-                effort = self.state["effort"] if self.state["effort"] in efforts else "medium"
-                self.note(f"usage limit on {self.state['slug']}; switching to {slug}")
-                self.save(line=lower, slug=slug, effort=effort)
-                resume_text = SWITCH_TEXT.format(when=hhmm(now()))
-                continue
+                reset_match = LIMIT_RESET_RE.search(self.error_text or "")
+                limit_reset = reset_match.group(1).strip() if reset_match else None
+                return self.save(status="limit", ended=now(), error=self.error_text, limit_reset=limit_reset)
             why = {"hung": "no output for too long, stopped as hung"}.get(
                 reason, f"process exited with code {code} without a final report"
                 + (f": {short(self.error_text, 200)}" if self.error_text else ""))
@@ -480,6 +469,12 @@ def digest(d, st, events, final):
             lines.append(last.read_text(encoding="utf-8", errors="replace").strip())
             if st["status"] == "malformed":
                 lines.append(f"report problem: {st.get('report_error')}")
+        elif st["status"] == "limit":
+            lines.append("usage limit (shared by all Codex models): resets at "
+                         f"{st.get('limit_reset') or 'unknown'}; after the reset continue this job with reply: "
+                         f"{st['job']}")
+            if msgs:
+                lines.append(f"last codex message: {short(msgs[-1], 800)}")
         else:
             lines.append(f"error: {st.get('error') or 'no final report'}")
             if msgs:

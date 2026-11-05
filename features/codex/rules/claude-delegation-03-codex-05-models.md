@@ -11,4 +11,5 @@
 - Review on Codex has two stages. First the preliminary review on `terra` `high`. Serious problems (High severity and
   above) are fixed and the `terra` review is repeated; minor findings are fixed before the next stage without another
   `terra` round. Only when `terra` finds no serious problems does the final review run on `sol` `high`.
-- When a line's limit runs out, the script steps down by itself: `astra` → `sol` → `terra` → `luna`.
+- The Codex usage limit is one for all lines: when it runs out, every line is out at once, so another line is no way
+  around it.

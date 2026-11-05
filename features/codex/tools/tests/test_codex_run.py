@@ -126,9 +126,59 @@ class TerraLineTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "6.1"):
                     cr.resolve_model("terra")
 
-    def test_downgrade_chain_includes_terra(self):
-        self.assertEqual(cr.DOWNGRADE["sol"], "terra")
-        self.assertEqual(cr.DOWNGRADE["terra"], "luna")
+    def test_usage_limit_ends_without_changing_the_model_line(self):
+        with tempfile.TemporaryDirectory(prefix="codex-run-limit-test-") as tmp:
+            d = Path(tmp)
+            cr.write_json(d / "state.json", {"job": "job1", "line": "sol", "slug": "gpt-6.1-sol",
+                          "effort": "high", "cwd": tmp, "created": cr.now(), "notes": [],
+                          "session_id": "session"})
+            sup = cr.Supervisor(d)
+            calls = []
+
+            def usage_limit(text):
+                calls.append(text)
+                sup.error_text = "usage limit reached; try again at 11:39 PM."
+                return None, 1
+
+            with mock.patch.object(sup, "run_once", side_effect=usage_limit):
+                sup.run()
+            state = cr.read_json(d / "state.json")
+            self.assertEqual(state["status"], "limit")
+            self.assertEqual(state["limit_reset"], "11:39 PM")
+            self.assertEqual((state["line"], state["slug"], state["effort"]), ("sol", "gpt-6.1-sol", "high"))
+            self.assertEqual(len(calls), 1)
+
+    def test_usage_limit_without_reset_time_has_null_reset(self):
+        with tempfile.TemporaryDirectory(prefix="codex-run-limit-test-") as tmp:
+            d = Path(tmp)
+            cr.write_json(d / "state.json", {"job": "job1", "line": "sol", "slug": "gpt-6.1-sol",
+                          "effort": "high", "cwd": tmp, "created": cr.now(), "notes": [],
+                          "session_id": "session"})
+            sup = cr.Supervisor(d)
+            def usage_limit(text):
+                sup.error_text = "usage limit reached."
+                return None, 1
+            with mock.patch.object(sup, "run_once", side_effect=usage_limit):
+                sup.run()
+            state = cr.read_json(d / "state.json")
+            self.assertEqual(state["status"], "limit")
+            self.assertIsNone(state["limit_reset"])
+
+    def test_usage_limit_parses_calendar_reset_time(self):
+        with tempfile.TemporaryDirectory(prefix="codex-run-limit-test-") as tmp:
+            d = Path(tmp)
+            cr.write_json(d / "state.json", {"job": "job1", "line": "sol", "slug": "gpt-6.1-sol",
+                          "effort": "high", "cwd": tmp, "created": cr.now(), "notes": [],
+                          "session_id": "session"})
+            sup = cr.Supervisor(d)
+
+            def usage_limit(text):
+                sup.error_text = "usage limit reached; try again at Nov 6th, 2026 8:00 AM."
+                return None, 1
+
+            with mock.patch.object(sup, "run_once", side_effect=usage_limit):
+                sup.run()
+            self.assertEqual(cr.read_json(d / "state.json")["limit_reset"], "Nov 6th, 2026 8:00 AM")
 
     def start_terra(self, effort, approved):
         with tempfile.TemporaryDirectory(prefix="codex-run-start-test-") as tmp:
@@ -223,7 +273,8 @@ class JobLifecycleTest(unittest.TestCase):
     def make_job(self, **fields):
         d = self.tmp / "job1"
         d.mkdir()
-        state = {"job": "job1", "slug": "gpt-6-luna", "effort": "high", "cwd": str(self.tmp),
+        state = {"job": "job1", "line": "luna", "slug": "gpt-6-luna", "effort": "high",
+                 "read_only": False, "cwd": str(self.tmp),
                  "created": cr.now(), "notes": [], "session_id": "session"}
         state.update(fields)
         cr.write_json(d / "state.json", state)
@@ -300,6 +351,38 @@ class JobLifecycleTest(unittest.TestCase):
         out = self.final_digest(d)
         self.assertIn("error: supervisor process died", out)
         self.assertNotIn("the access key", out)
+
+    def test_final_digest_shows_shared_limit_reset_and_reply(self):
+        d = self.make_job(status="limit", started=cr.now(), ended=cr.now(), error="usage limit reached",
+                          limit_reset="11:39 PM")
+        event = {"type": "item.completed", "item": {"type": "agent_message", "text": "Try again later."}}
+        out = cr.digest(d, cr.read_json(d / "state.json"), [event], True)
+        self.assertIn("usage limit (shared by all Codex models): resets at 11:39 PM; after the reset continue this job with reply: job1", out)
+        self.assertIn("last codex message: Try again later.", out)
+        self.assertNotIn("error:", out)
+
+    def test_reply_after_limit_resumes_on_the_original_line_and_slug(self):
+        d = self.make_job(status="limit", line="sol", slug="gpt-6.1-sol", effort="high",
+                          limit_reset="Nov 6th, 2026 8:00 AM")
+        commands = []
+        with mock.patch.object(cr, "spawn_supervisor"), mock.patch.object(cr, "cmd_wait"), \
+                mock.patch.object(cr, "take_prompt", return_value="continue"), redirect_stdout(io.StringIO()):
+            cr.cmd_reply(mock.Mock(job="job1", prompt_file="unused"))
+        sup = cr.Supervisor(d)
+
+        def resumed(text):
+            command, _ = sup.command(text)
+            commands.append((sup.state["line"], sup.state["slug"], command))
+            (d / "last.md").write_text("STATUS: done", encoding="utf-8")
+            sup.saw_turn_completed = True
+            return None, 0
+
+        with mock.patch.object(sup, "run_once", side_effect=resumed):
+            sup.run()
+        state = cr.read_json(d / "state.json")
+        self.assertEqual(state["status"], "done")
+        self.assertEqual((commands[0][0], commands[0][1]), ("sol", "gpt-6.1-sol"))
+        self.assertIn("gpt-6.1-sol", commands[0][2])
 
     def test_a_report_outcome_clears_a_stale_error(self):
         for report, status in [("STATUS: blocked\nBlocked by: the access key", "blocked"), ("bad", "malformed")]:
