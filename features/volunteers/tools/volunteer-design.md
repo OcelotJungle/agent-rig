@@ -68,7 +68,8 @@ None.
 - A project outside the allowlist (`REFUSED:`) — straight to `codex`. The allowlist is in the local file
   `~/.agent-rig/volunteer-projects.json`, format `{"allowed": ["<folder>"]}`; without it every folder is refused.
 - A job ends as `done`, `question`, `blocked` or `malformed`. `question` — answer through `reply: <job>`; `blocked` —
-  remove the cause, repeat the task; `malformed` — the same task to `codex` on `luna` (`terra` if the task is complex)
+  remove the `access:` or `environment:` cause, repeat the task. Environment failures require one retry; unfinished
+  work alone is never a blocker. `malformed` — the same task to `codex` on `luna` (`terra` if the task is complex)
   with a description of what was tried. No free models left — one line to the user, the task goes to `codex`.
 - Codex unavailable — complex work also goes to a volunteer with a detailed brief, review — to general-purpose.
 

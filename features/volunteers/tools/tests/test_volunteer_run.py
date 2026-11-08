@@ -355,7 +355,8 @@ class SupervisorTests(Base):
 
     def test_malformed_recovery_and_restart(self):
         self.models("openrouter/a")
-        for first, second, prior, expected, count in [("bad", "STATUS: blocked\nBlocked by: access", 0, "blocked", 2),
+        for first, second, prior, expected, count in [("bad", "STATUS: blocked\nBlocked by: access: a credential is missing", 0, "blocked", 2),
+                                                       ("STATUS: blocked\nBlocked by: unfinished", "STATUS: blocked\nBlocked by: access:", 0, "malformed", 2),
                                                        ("bad", "bad again", 0, "malformed", 2),
                                                        ("bad again", "unused", 1, "malformed", 1)]:
             with self.subTest(expected=expected, prior=prior):
@@ -379,7 +380,7 @@ class SupervisorTests(Base):
                 if count == 2:
                     self.assertIn("STATUS", self.calls()[-1]["message"])
                 if expected == "malformed":
-                    self.assertIn("STATUS", st["report_error"])
+                    self.assertTrue(st["report_error"])
                 shutil.rmtree(d)
 
     def test_run_with_the_modules_own_rules_path_reaches_the_fake_opencode(self):
@@ -612,7 +613,7 @@ class ModelsCacheTests(Base):
 STARTING_STALE_SECONDS = 100  # above the 60 s the wait gives a supervisor to start
 REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
 NOT_REPLYABLE_STATUSES = ("running", "starting", "cancelled", "orphaned")
-BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: the access key is missing"
+BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: access: the access key is missing"
 REPORT_TEXT = "Result in short.\nSTATUS: done\nDone: - the secret report body\nChanged files: a.py"
 
 
@@ -714,7 +715,7 @@ class JobLifecycleTests(Base):
                                   report_error="no STATUS line")
                 (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
                 out = self.final_digest(d)
-                self.assertIn("Blocked by: the access key", out)
+                self.assertIn("Blocked by: access: the access key", out)
                 self.assertNotIn("error:", out)
                 self.assertEqual("report problem: no STATUS line" in out, status == "malformed")
                 shutil.rmtree(d)
@@ -727,7 +728,7 @@ class JobLifecycleTests(Base):
         self.assertNotIn("the access key", out)
 
     def test_a_report_outcome_clears_a_stale_error(self):
-        for first, status in [("STATUS: blocked\nBlocked by: the access key", "blocked"), ("bad", "malformed")]:
+        for first, status in [("STATUS: blocked\nBlocked by: access: the access key", "blocked"), ("bad", "malformed")]:
             with self.subTest(status=status):
                 d = self.job_with(status="starting", error="supervisor process died", malformed_follow_ups=1)
                 st, _ = self.run_turn(d, first, "unused")

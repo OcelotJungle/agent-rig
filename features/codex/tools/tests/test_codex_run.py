@@ -58,19 +58,33 @@ class RunRulesTest(unittest.TestCase):
     def test_report_validation(self):
         for report, expected in [("STATUS: done", ("done", None)),
                                  ("STATUS: question\nQuestions: choose A or B", ("question", None)),
-                                 ("STATUS: blocked\nBlocked by: access", ("blocked", None))]:
+                                 ("STATUS: blocked\nBlocked by: access: a credential is missing", ("blocked", None)),
+                                 ("STATUS: blocked\nBlocked by: ENVIRONMENT: the tool crashed twice", ("blocked", None)),
+                                 ("STATUS: blocked\nBlocked by:\n- access: the token is rejected", ("blocked", None)),
+                                 ("STATUS: blocked\nBlocked by: **environment:** the build tool is missing", ("blocked", None))]:
             self.assertEqual(cr.validate_report(report), expected)
         for report, missing in [("text", "STATUS"), ("STATUS: partial", "status"),
                                 ("STATUS: done extra", "status"),
                                 ("STATUS: question\nQuestions: none", "Questions"),
                                 ("STATUS: question\nQuestions:\nRisks: none", "Questions"),
-                                ("STATUS: blocked\nBlocked by: none", "Blocked by"),
-                                ("STATUS: blocked", "Blocked by")]:
+                                ("STATUS: blocked\nBlocked by: none", "access or environment"),
+                                ("STATUS: blocked", "access or environment")]:
             with self.subTest(report=report):
                 self.assertIn(missing.lower(), cr.validate_report(report)[1].lower())
 
+    def test_blocked_requires_a_specific_cause(self):
+        for cause in ("Implementation remains incomplete; no missing access or environment failure was identified.",
+                      "I could not complete the implementation in this turn. This is not a missing-access or environment failure, so it does not meet the brief's definition of a blocker.",
+                      "access:", "environment:   ", "other: a problem", "access: none"):
+            with self.subTest(cause=cause):
+                status, error = cr.validate_report("STATUS: blocked\nBlocked by: " + cause)
+                self.assertIsNone(status)
+                self.assertIn("access or environment", error.lower())
+                self.assertIn("unfinished work", error.lower())
+
     def test_malformed_recovery_and_restart(self):
-        for reports, prior, expected, calls in [(["bad", "STATUS: blocked\nBlocked by: access"], 0, "blocked", 2),
+        for reports, prior, expected, calls in [(["bad", "STATUS: blocked\nBlocked by: access: a credential is missing"], 0, "blocked", 2),
+                                                 (["STATUS: blocked\nBlocked by: unfinished", "STATUS: blocked\nBlocked by: access:"], 0, "malformed", 2),
                                                  (["bad", "bad again"], 0, "malformed", 2),
                                                  (["bad again"], 1, "malformed", 1)]:
             with self.subTest(expected=expected, prior=prior), tempfile.TemporaryDirectory() as tmp:
@@ -92,7 +106,7 @@ class RunRulesTest(unittest.TestCase):
                 if calls == 2:
                     self.assertIn("STATUS", prompts[1])
                 if expected == "malformed":
-                    self.assertIn("STATUS", state["report_error"])
+                    self.assertTrue(state["report_error"])
 
     def test_windows_rules_name_git_bash(self):
         self.assertIn(GIT_BASH_MARK, cr.run_rules(windows=True))
@@ -256,7 +270,7 @@ class StartPathTest(unittest.TestCase):
 STARTING_STALE_SECONDS = 100  # above the 60 s the wait gives a supervisor to start
 REPLY_STATUSES = ("done", "question", "blocked", "malformed", "limit")
 NOT_REPLYABLE_STATUSES = ("running", "starting", "cancelled", "orphaned")
-BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: the access key is missing"
+BLOCKED_REPORT = "Stopped.\nSTATUS: blocked\nBlocked by: access: the access key is missing"
 REPORT_TEXT = "Result in short.\nSTATUS: done\nDone: - the secret report body\nChanged files: a.py"
 
 
@@ -340,7 +354,7 @@ class JobLifecycleTest(unittest.TestCase):
                 d = self.make_job(status=status, started=cr.now(), ended=cr.now(), report_error="no STATUS line")
                 (d / "last.md").write_text(BLOCKED_REPORT, encoding="utf-8")
                 out = self.final_digest(d)
-                self.assertIn("Blocked by: the access key", out)
+                self.assertIn("Blocked by: access: the access key", out)
                 self.assertNotIn("error:", out)
                 self.assertEqual("report problem: no STATUS line" in out, status == "malformed")
                 shutil.rmtree(d)
@@ -385,7 +399,7 @@ class JobLifecycleTest(unittest.TestCase):
         self.assertIn("gpt-6.1-sol", commands[0][2])
 
     def test_a_report_outcome_clears_a_stale_error(self):
-        for report, status in [("STATUS: blocked\nBlocked by: the access key", "blocked"), ("bad", "malformed")]:
+        for report, status in [("STATUS: blocked\nBlocked by: access: the access key", "blocked"), ("bad", "malformed")]:
             with self.subTest(status=status):
                 d = self.make_job(status="starting", error="supervisor process died", malformed_follow_ups=1)
                 state, _ = self.run_supervisor(d, [report])
