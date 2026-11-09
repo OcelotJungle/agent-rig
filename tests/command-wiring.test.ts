@@ -153,7 +153,7 @@ describe("command wiring", () => {
 		// The plugin list is read on every apply (a hand-removed plugin must come back); nothing is changed.
 		const secondCalls = harness.processCalls.slice(pluginCallsAfterFirst).map((call) => call.args.join(" "));
 		expect(secondCalls.filter((args) => /^plugin (install|uninstall)\b|^plugin marketplace (add|remove)\b/.test(args))).toEqual([]);
-		expect(secondCalls.every((args) => args === "plugin list --json" || args === "plugin marketplace list")).toBe(true);
+		expect(secondCalls.every((args) => args === "plugin list --json" || args === "plugin marketplace list --json")).toBe(true);
 		expect(harness.timeline).toEqual(timelineAfterFirst);
 	});
 

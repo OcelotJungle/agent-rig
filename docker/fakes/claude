@@ -39,9 +39,15 @@ if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "list" ] &&
 fi
 
 if [ "${2:-}" = "marketplace" ] && [ "${3:-}" = "list" ]; then
+	# Like the real CLI with --json: an array of objects with a name.
+	separator=""
+	printf '['
 	while IFS= read -r marketplace; do
-		[ -n "$marketplace" ] && printf '❯ %s\n' "$marketplace"
+		[ -n "$marketplace" ] || continue
+		printf '%s{"name":"%s"}' "$separator" "$marketplace"
+		separator=","
 	done < "$marketplaces_file"
+	printf ']\n'
 	exit 0
 fi
 

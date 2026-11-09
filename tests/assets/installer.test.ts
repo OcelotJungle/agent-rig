@@ -7,6 +7,12 @@ const DAY = "2026-10-30";
 const LAST_CALL_INDEX = -1;
 const EXPECTED_DIRECTORY_FILE_COUNT = 2;
 const SUCCESS_EXIT_CODE = 0;
+const MARKETPLACE_LIST_JSON = "plugin marketplace list --json";
+
+// The text `claude plugin marketplace list --json` prints: an array of objects, each with a string `name`.
+function marketplaceListJson(names: readonly string[]): string {
+  return JSON.stringify(names.map((name) => ({ name })));
+}
 
 type TestFileSystem = FileSystem & { files: Map<string, string>; writes: string[] };
 
@@ -254,14 +260,14 @@ describe("applyPlugins", () => {
       { enabled: true, id: "telegram-hub@telegram-hub-local", marketplace: "telegram-hub-local", source: "C:/hub/plugin" },
     ];
     const runner = makeRunner({
-      "plugin marketplace list": "Configured marketplaces:\n  ❯ claude-plugins-official\n",
+      [MARKETPLACE_LIST_JSON]: marketplaceListJson(["claude-plugins-official"]),
       "plugin list --json": "[]",
     });
 
     const first = await applyPlugins({ runner, claudeCommand: "claude" }, plan);
     expect(first.ok).toBe(true);
     expect(runner.calls).toEqual([
-      ["claude", "plugin", "marketplace", "list"],
+      ["claude", "plugin", "marketplace", "list", "--json"],
       ["claude", "plugin", "list", "--json"],
       ["claude", "plugin", "marketplace", "add", "openai/codex-plugin-cc"],
       ["claude", "plugin", "install", "codex@openai-codex", "--scope", "user", "--yes"],
@@ -272,21 +278,21 @@ describe("applyPlugins", () => {
     if (!first.ok) return;
 
     const secondRunner = makeRunner({
-      "plugin marketplace list": "Configured marketplaces:\n  ❯ openai-codex\n  ❯ claude-plugins-official\n  ❯ telegram-hub-local\n",
+      [MARKETPLACE_LIST_JSON]: marketplaceListJson(["openai-codex", "claude-plugins-official", "telegram-hub-local"]),
       "plugin list --json": JSON.stringify(plan.map(({ id }) => ({ id }))),
     });
     const second = await applyPlugins({ runner: secondRunner, claudeCommand: "claude" }, plan, first.value.records);
     expect(second.ok).toBe(true);
     // The plugin list is always read (a hand-removed plugin must come back), but nothing is changed.
     expect(secondRunner.calls).toEqual([
-      ["claude", "plugin", "marketplace", "list"],
+      ["claude", "plugin", "marketplace", "list", "--json"],
       ["claude", "plugin", "list", "--json"],
     ]);
   });
 
   test("uninstalls a plugin when disabled", async () => {
     const runner = makeRunner({
-      "plugin marketplace list": "",
+      [MARKETPLACE_LIST_JSON]: "",
       "plugin list --json": JSON.stringify([{ id: "codex@openai-codex" }]),
     });
     const result = await applyPlugins(
@@ -307,7 +313,7 @@ describe("applyPlugins", () => {
 
   test("adopts an already installed plugin without reinstalling it", async () => {
     const runner = makeRunner({
-      "plugin marketplace list": "Configured marketplaces:\n  ❯ openai-codex\n",
+      [MARKETPLACE_LIST_JSON]: marketplaceListJson(["openai-codex"]),
       "plugin list --json": JSON.stringify([{ id: "codex@openai-codex" }]),
     });
     const result = await applyPlugins(
@@ -316,7 +322,51 @@ describe("applyPlugins", () => {
     );
     expect(result.ok).toBe(true);
     expect(runner.calls).toEqual([
-      ["claude", "plugin", "marketplace", "list"],
+      ["claude", "plugin", "marketplace", "list", "--json"],
+      ["claude", "plugin", "list", "--json"],
+    ]);
+  });
+
+  // The same JSON text answers the bare command too, so an old build that reads it without --json fails on the parser alone.
+  test("does not add a marketplace again when marketplace list --json already lists it", async () => {
+    const plan: readonly PluginPlan[] = [
+      { enabled: true, id: "codex@openai-codex", marketplace: "openai-codex", source: "openai/codex-plugin-cc" },
+    ];
+    const listing = marketplaceListJson(["openai-codex"]);
+    const runner = makeRunner({
+      [MARKETPLACE_LIST_JSON]: listing,
+      "plugin marketplace list": listing,
+      "plugin list --json": "[]",
+    });
+
+    const result = await applyPlugins({ runner, claudeCommand: "claude" }, plan);
+
+    expect(result.ok).toBe(true);
+    expect(runner.calls).toEqual([
+      ["claude", "plugin", "marketplace", "list", "--json"],
+      ["claude", "plugin", "list", "--json"],
+      ["claude", "plugin", "install", "codex@openai-codex", "--scope", "user", "--yes"],
+    ]);
+  });
+
+  test.each([
+    ["is not valid JSON", "Configured marketplaces:\n  > openai-codex\n"],
+    ["is a JSON object instead of an array", JSON.stringify({ name: "openai-codex" })],
+    ["has an item without a string name", JSON.stringify([{ source: "github" }])],
+  ])("stops with an error when marketplace list --json %s", async (_case, output) => {
+    const runner = makeRunner({
+      [MARKETPLACE_LIST_JSON]: output,
+      "plugin list --json": "[]",
+    });
+
+    const result = await applyPlugins(
+      { runner, claudeCommand: "claude" },
+      [{ enabled: true, id: "codex@openai-codex", marketplace: "openai-codex", source: "openai/codex-plugin-cc" }],
+    );
+
+    expect(result.ok).toBe(false);
+    expect(runner.calls).toEqual([
+      ["claude", "plugin", "marketplace", "list", "--json"],
       ["claude", "plugin", "list", "--json"],
     ]);
   });

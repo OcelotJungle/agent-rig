@@ -8,7 +8,6 @@ import { resolvePlaceholders } from "../placeholders.js";
 
 const EMPTY_LENGTH = 0;
 const PATH_SEPARATOR_LENGTH = 1;
-const MARKETPLACE_MARKER_LENGTH = 1;
 const ROOT_SEPARATOR_INDEX = 0;
 const SUCCESS_EXIT_CODE = 0;
 const ISO_DATE_LENGTH = 10;
@@ -230,7 +229,7 @@ export async function applyPlugins(
 
   // Every apply reads what is installed, so a plugin removed by hand comes back.
   const marketplaces = allPlans.some((plan) => plan.enabled)
-    ? await runClaude(environment, [...CLAUDE_PLUGIN_PREFIX, "marketplace", "list"])
+    ? await runClaude(environment, [...CLAUDE_PLUGIN_PREFIX, "marketplace", "list", "--json"])
     : null;
   if (marketplaces !== null && !marketplaces.ok) return marketplaces;
   const plugins = await runClaude(environment, [...CLAUDE_PLUGIN_PREFIX, "list", "--json"]);
@@ -563,12 +562,20 @@ async function runClaude(environment: PluginEnvironment, args: readonly string[]
 }
 
 function parseMarketplaces(output: string): Result<Set<string>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return { ok: false, error: "claude plugin marketplace list --json returned invalid JSON" };
+  }
+  if (!Array.isArray(parsed)) return { ok: false, error: "claude plugin marketplace list --json returned an unexpected value" };
+
   const names = new Set<string>();
-  for (const line of output.replace(/\u001b\[[0-9;]*m/g, "").split(/\r?\n/)) {
-    const markerIndex = line.indexOf("❯");
-    if (markerIndex < 0) continue;
-    const name = line.slice(markerIndex + MARKETPLACE_MARKER_LENGTH).trim().split(/\s+/)[0];
-    if (name !== undefined && name.length > EMPTY_LENGTH) names.add(name);
+  for (const item of parsed) {
+    if (!isRecord(item) || typeof item.name !== "string") {
+      return { ok: false, error: "claude plugin marketplace list --json returned a marketplace without a name" };
+    }
+    names.add(item.name);
   }
   return { ok: true, value: names };
 }

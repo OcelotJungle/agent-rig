@@ -262,8 +262,9 @@ export const createMemoryRuntime = (platform: RuntimePorts["platform"] = "linux"
 		process: {
 			run: async (command, args, options) => {
 				processCalls.push({ command, args, options });
-				if (command === "claude" && args.join(" ") === "plugin marketplace list") {
-					return ok({ stdout: "❯ claude-plugins-official\n❯ openai-codex\n❯ telegram-hub\n", stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
+				if (command === "claude" && args.join(" ") === "plugin marketplace list --json") {
+					const marketplaces = ["claude-plugins-official", "openai-codex", "telegram-hub"];
+					return ok({ stdout: JSON.stringify(marketplaces.map((name) => ({ name }))), stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
 				}
 				if (command === "claude" && args.join(" ") === "plugin list --json") {
 					return ok({ stdout: JSON.stringify([...installedPlugins].map((id) => ({ id }))), stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
