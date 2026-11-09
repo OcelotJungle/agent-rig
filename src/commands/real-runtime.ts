@@ -258,7 +258,8 @@ export const ownerStartTime = async (
 		return Number.isFinite(ticks) ? ok(ticks) : err(`Unexpected start time from powershell: ${text}`);
 	}
 	if (hostName === "darwin") {
-		const result = await processPorts.run("ps", ["-o", "lstart=", "-p", String(pid)]);
+		// BSD ps prints lstart in the user's locale; LC_ALL=C keeps the English format that Date.parse reads.
+		const result = await processPorts.run("ps", ["-o", "lstart=", "-p", String(pid)], { environment: { LC_ALL: "C" } });
 		if (!result.ok) return err(result.error);
 		const text = result.value.stdout.trim();
 		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return text.length === 0 && result.value.stderr.trim().length === 0 ? ok(null) : err(result.value.stderr);

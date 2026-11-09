@@ -1,4 +1,4 @@
-import type { ProcessOutput } from "../src/ports.js";
+import type { ProcessOptions, ProcessOutput } from "../src/ports.js";
 import type { Result } from "../src/result.js";
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -222,6 +222,19 @@ describe("owner start time", () => {
 		expect(await ownerStartTime(LINUX_ABSENT_PID, runner(output("")), "linux")).toEqual(ok(null));
 		const own = await ownerStartTime(process.pid, runner(output("")), "linux");
 		expect(own.ok && typeof own.value === "number").toBe(true);
+	});
+
+	test("darwin: ps runs under LC_ALL=C, so the lstart date is not localized", async () => {
+		const calls: Array<{ command: string; options: ProcessOptions | undefined }> = [];
+		const recorder = {
+			run: async (command: string, _args: readonly string[], options?: ProcessOptions): Promise<Result<ProcessOutput>> => {
+				calls.push({ command, options });
+				return output("");
+			},
+		};
+		await ownerStartTime(1, recorder, "darwin");
+		expect(calls.map((call) => call.command)).toEqual(["ps"]);
+		expect(calls[0]?.options?.environment?.LC_ALL).toBe("C");
 	});
 
 	test("an unsupported host is unknown", async () => {
