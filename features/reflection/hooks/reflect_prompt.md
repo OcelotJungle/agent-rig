@@ -4,6 +4,7 @@ You get:
 - `RULES`: the user's standing instructions (global CLAUDE.md, the project's CLAUDE.md, the index of the project memory).
 - `CONVERSATION`: the last few user messages and what the assistant did since: its messages, its tool calls with short inputs, their results with how long each took, all with times. Older tool events may be cut; the whole turn is in the file named in `FULL TURN`.
 - `FINAL MESSAGE`: the reply the assistant is about to end the turn with.
+- `ANALYSIS FILE`: present only when the user has the analysis gate on: `ok`, or why the project's analysis file is not valid.
 
 The reply has already been sent to the user. A problem wakes the assistant for a follow-up message, so report only serious faults, never wording, style, structure, or ways that could be a bit better. Flag a problem only when the conversation shows it concretely. What to look for:
 1. An anomaly passed by: something in the results is off (a step much slower, costlier or bigger than before or than expected, a failure, a retry, a number that does not add up, a result that contradicts an earlier one), and the assistant went on without finding the cause or without saying it plainly.
@@ -11,6 +12,7 @@ The reply has already been sent to the user. A problem wakes the assistant for a
 3. A claim the turn does not back: done, fixed, works, passes, faster, cheaper, without a check in the turn that shows it; a result told better than the tool output shows; a failure or a skipped step left out of the report.
 4. A broken instruction: the turn goes against something the user said in the recent messages or in the rules.
 5. Stopping short: part of what the user asked is not done and the reply does not say so; the reply contradicts itself.
+6. An estimate without the analysis file (only when the input has an `ANALYSIS FILE:` line; with no such line this check does not apply): the assistant's text in this turn names a time estimate for work not yet done (a number with a time unit, in English or Russian: minutes, min, hours, h, seconds, "~N m", and the Russian words for minutes, hours and seconds in any form), and the `ANALYSIS FILE:` line is not `ok`. Only number plus unit counts; a vague "by evening" does not. A measured duration of finished work ("took 50.8 s", "tests ran in 3.6 s", the same in Russian) is never an estimate. An estimate while the line says `ok` is fine. The fix: write `<project>/.tmp/analysis.md` with `## Unknowns` and `## Class`, and send the estimate again only after that, or drop it.
 
 Not reported at all: a narrow fix where a general one could be, waste, drifting into small extras.
 

@@ -33,9 +33,14 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(REPOSITORY_ROOT / "base" / "hooks"))
+sys.path.insert(0, str(REPOSITORY_ROOT / "features" / "analysis-gate" / "hooks"))
 from compact_history import block_text, clip, iter_line_events  # noqa: E402
+from analysis_file import check as analysis_check, project_root  # noqa: E402
 
 HOME_CLAUDE = Path.home() / ".claude"
+# rig apply records which features are on in this file: {"features": {"<name>": true|false}}.
+RIG_STATE = Path.home() / ".agent-rig" / "state.json"
+ANALYSIS_FEATURE = "analysis-gate"
 PROMPT_FILE = Path(__file__).with_name("reflect_prompt.md")
 STATE_DIR = HOME_CLAUDE / "reflect"
 LOG_FILE = STATE_DIR / "log.jsonl"
@@ -69,7 +74,7 @@ WAKE_EXIT = 2
 WAKE_GUARD_SECONDS = 600
 WAKE_DIR = STATE_DIR / "wake"
 WAKE_MARKER = "[reflect-catchup]"
-SERIOUS_KINDS = frozenset({1, 2, 3, 4, 5})
+SERIOUS_KINDS = frozenset({1, 2, 3, 4, 5, 6})
 
 REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
 EVENT_MARKS = ("<task-notification>", "[SYSTEM NOTIFICATION", "<agent-message", "Another Claude session sent a message")
@@ -292,6 +297,24 @@ def rules(payload: dict, transcript: Path) -> str:
     return "\n\n".join(parts) or "(none)"
 
 
+def feature_enabled(name: str) -> bool:
+    """True when rig's state file records the feature as on; a missing or unreadable file means off."""
+    try:
+        features = json.loads(RIG_STATE.read_text(encoding="utf-8")).get("features")
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(features, dict) and features.get(name) is True
+
+
+def analysis_section(payload: dict) -> str:
+    """The review input's ANALYSIS FILE block, or "" when the analysis-gate feature is off.
+    Under --replay the file state is today's, not the state at the time of the replayed turn."""
+    if not feature_enabled(ANALYSIS_FEATURE):
+        return ""
+    ok, why = analysis_check(project_root(payload), time.time())
+    return f"ANALYSIS FILE: {'ok' if ok else why}\n\n"
+
+
 def prune_turns() -> None:
     cutoff = time.time() - TURN_FILE_DAYS * 86_400
     for f in TURNS_DIR.glob("*.md"):
@@ -357,6 +380,7 @@ def review(payload: dict) -> tuple[str, dict | None]:
         f"RULES\n{rules(payload, transcript)}\n\n"
         f"CONVERSATION\n{conversation(shown)}\n\n"
         f"FINAL MESSAGE\n{final}\n\n"
+        f"{analysis_section(payload)}"
         f"FULL TURN\n{full_file}\n"
     )
     if os.environ.get("REFLECT_DRY"):
