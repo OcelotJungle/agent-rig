@@ -1,0 +1,45 @@
+{
+  "name": "analysis-gate",
+  "description": "Blocks Agent launches while the project's analysis file is missing, stale or incomplete.",
+  "translations": {
+    "ru": {
+      "description": "Блокирует запуск Agent, пока файл анализа проекта отсутствует, устарел или неполон."
+    }
+  },
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [],
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "Agent",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/features/analysis-gate/hooks/analysis_gate.py"
+      ],
+      "timeout": 30,
+      "statusMessage": "Checking the analysis file",
+      "translations": {
+        "ru": {
+          "statusMessage": "Проверка файла анализа"
+        }
+      }
+    }
+  ],
+  "settings": [],
+  "plugins": [],
+  "files": [
+    "hooks/analysis_gate.py",
+    "hooks/analysis_file.py"
+  ],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": []
+}

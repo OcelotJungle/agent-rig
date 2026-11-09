@@ -97,6 +97,7 @@
 | Hook | `PreToolUse` | base | — | all | always | `Bash` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/no_ampersand.py` | — | — | — |
 | Hook | `PreToolUse` | base | — | all | always | `Write\|Edit\|NotebookEdit\|Bash` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/system-temp-guard.py` | — | — | — |
 | Hook | `PreToolUse` | rtk | — | all | `rtk` on | `Bash` | `rtk hook claude` | — | — | — | — |
+| Hook | `PreToolUse` | analysis-gate | — | all | `analysis-gate` on | `Agent` | `{{PYTHON}}` | `{{CLONE}}/features/analysis-gate/hooks/analysis_gate.py` | 30 | `Checking the analysis file` | — |
 | Hook | `Stop` | reflection | — | all | `reflection` on | — | `{{PYTHON}}` | `-X utf8 {{CLONE}}/features/reflection/hooks/reflect.py` | 330 | `Reflecting on the turn` | `true` |
 
 Hook commands run from the clone. In a hook `command`, `{{PYTHON}}`, `{{BASH}}` and `rtk` become absolute paths at apply time (Git Bash on Windows). Elsewhere `{{PYTHON}}` is `python3` on Linux and `python` on Windows. Rule and hook paths use `{{CLONE}}` when rig needs an absolute path.
