@@ -11,6 +11,8 @@ import sys
 import time
 
 CHILD_SLEEP_SECONDS = 120
+WAIT_FOR_FILE_SECONDS = 30
+POLL_INTERVAL_SECONDS = 0.01
 
 
 def emit(session, kind, **fields):
@@ -69,6 +71,19 @@ def main():
             child = subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({CHILD_SLEEP_SECONDS})"])
             with open(act["child"], "w") as f:
                 f.write(str(child.pid))
+        elif "detached_child" in act:
+            child_code = f"import time; time.sleep({CHILD_SLEEP_SECONDS})"
+            if os.name == "nt":
+                flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                child = subprocess.Popen([sys.executable, "-c", child_code], creationflags=flags)
+            else:
+                child = subprocess.Popen([sys.executable, "-c", f"import os; os.setsid(); {child_code}"])
+            with open(act["detached_child"], "w", encoding="utf-8") as f:
+                f.write(str(child.pid))
+        elif "wait_for_file" in act:
+            deadline = time.monotonic() + WAIT_FOR_FILE_SECONDS
+            while not os.path.exists(act["wait_for_file"]) and time.monotonic() < deadline:
+                time.sleep(POLL_INTERVAL_SECONDS)
         elif "exit" in act:
             sys.exit(act["exit"])
     emit(session, "step_finish", part={"type": "step-finish", "reason": "stop", "tokens": {"input": 0}})

@@ -27,6 +27,34 @@ FAKE_MODELS = HERE / "fake_models.py"
 SCRIPT = TOOLS / "volunteer-run.py"
 WAIT_SECONDS = 30
 STALE_DAYS = 3
+PROCESS_EXIT_SECONDS = 10
+
+
+def kill_pid(pid):
+    if not pid:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
+        else:
+            os.kill(pid, 9)
+    except OSError:
+        pass
+
+
+def kill_pid_file(path):
+    try:
+        pid = int(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    kill_pid(pid)
+
+
+def wait_for_pid_exit(test_case, pid):
+    deadline = time.monotonic() + PROCESS_EXIT_SECONDS
+    while vr.pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    test_case.assertFalse(vr.pid_alive(pid), f"process {pid} survived job cleanup")
 
 def load_fresh_module():
     spec = importlib.util.spec_from_file_location("volunteer_run", SCRIPT)
@@ -418,6 +446,30 @@ class SupervisorTests(Base):
         self.assertIn("do the task", call["message"])
         self.assertNotIn(vr.proxy_token(), " ".join(call["argv"]))
 
+    def test_normal_finish_kills_detached_grandchild(self):
+        self.models("openrouter/a")
+        child = self.tmp / "detached-child.pid"
+        release = self.tmp / "release-opencode"
+        self.addCleanup(kill_pid_file, child)
+        self.scene(openrouter__a=[{"detached_child": str(child)}, {"wait_for_file": str(release)},
+                                  {"text": "All done.\nSTATUS: done"}])
+        d = self.make_job()
+        t = threading.Thread(target=lambda: vr.Supervisor(d).run(), daemon=True)
+        t.start()
+        self.addCleanup(t.join, WAIT_SECONDS)
+        self.addCleanup(release.touch)
+        deadline = time.monotonic() + WAIT_SECONDS
+        while not child.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(child.exists(), "fake opencode never started its detached grandchild")
+        child_pid = int(child.read_text(encoding="utf-8"))
+        self.assertTrue(vr.pid_alive(child_pid))
+        release.touch()
+        t.join(WAIT_SECONDS)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(vr.read_json(d / "state.json")["status"], "done")
+        wait_for_pid_exit(self, child_pid)
+
     def test_question_status(self):
         self.models("openrouter/a")
         self.scene(openrouter__a=[{"text": "STATUS: question\nQuestions: Which API? A or B; recommend A."}])
@@ -505,8 +557,8 @@ class SupervisorTests(Base):
         time.sleep(0.2)
         child_pid = int(child.read_text())
         parent_pid = vr.read_json(d / "state.json")["opencode_pid"]
-        self.addCleanup(vr.kill_tree, child_pid)
-        self.addCleanup(vr.kill_tree, parent_pid)
+        self.addCleanup(kill_pid, child_pid)
+        self.addCleanup(kill_pid, parent_pid)
         self.assertTrue(vr.pid_alive(child_pid))
         (d / "cancel").touch()
         t.join(WAIT_SECONDS)
@@ -517,6 +569,28 @@ class SupervisorTests(Base):
             time.sleep(0.1)
         self.assertFalse(vr.pid_alive(child_pid), "the child survived the cancel")
         self.assertFalse(vr.pid_alive(parent_pid))
+
+    def test_cancel_kills_detached_grandchild(self):
+        self.models("openrouter/a")
+        child = self.tmp / "detached-child-cancel.pid"
+        self.addCleanup(kill_pid_file, child)
+        d = self.make_job()
+        self.scene(openrouter__a=[{"detached_child": str(child)}, {"wait_for_file": str(d / "cancel")}])
+        t = threading.Thread(target=lambda: vr.Supervisor(d).run(), daemon=True)
+        t.start()
+        self.addCleanup(t.join, WAIT_SECONDS)
+        self.addCleanup((d / "cancel").touch)
+        deadline = time.monotonic() + WAIT_SECONDS
+        while not child.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(child.exists(), "fake opencode never started its detached grandchild")
+        child_pid = int(child.read_text(encoding="utf-8"))
+        self.assertTrue(vr.pid_alive(child_pid))
+        (d / "cancel").touch()
+        t.join(WAIT_SECONDS)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(vr.read_json(d / "state.json")["status"], "cancelled")
+        wait_for_pid_exit(self, child_pid)
 
     def test_orphaned_without_heartbeat(self):
         self.models("openrouter/a")
@@ -1098,7 +1172,7 @@ class NoWindowTests(Base):
 
         self.models("openrouter/a")
         with mock.patch.object(subprocess, "Popen", Recording), mock.patch.object(subprocess, "run", run):
-            vr.kill_tree(99999999)
+            vr.kill_pid(99999999)
             vr.changed_files(str(self.work))
             proc = vr.spawn_detached([sys.executable, "-I", "-c", "pass"], self.tmp / "spawn.log")
             proc.wait(WAIT_SECONDS) if hasattr(proc, "wait") else None
@@ -1161,7 +1235,7 @@ class JobObjectTests(unittest.TestCase):
             launcher.kill()
             launcher.wait()
             if child_pid:
-                vr.kill_tree(child_pid[0])
+                kill_pid(child_pid[0])
 
         self.addCleanup(cleanup)
         self.assertTrue(kernel32.AssignProcessToJobObject(job, int(launcher._handle)), "cannot put launcher in job")
