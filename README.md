@@ -16,6 +16,7 @@ A feature is a set of rules, hooks, plugins and programs under one name. The fea
 | --- | --- | --- | --- |
 | `base` | always on | Linux, Windows, macOS | Base rules and hooks. |
 | `reflection` | on | Linux, Windows, macOS | Reflection after Claude Code turns. |
+| `analysis-gate` | off | Linux, Windows, macOS | Requires a fresh `.tmp/analysis.md` (sections `## Unknowns` and `## Class`, valid 30 minutes) before agent launches and time estimates: Agent launches without it are blocked, and the reflection (if on) flags an estimate named without it. |
 | `codex` | on | Linux, Windows, macOS | Delegating tasks through Codex. |
 | `telegram` | on | Linux, Windows, macOS | Integration with the Telegram hub. |
 | `rtk` | on | Linux, Windows, macOS | Shortening tool output with RTK. |
