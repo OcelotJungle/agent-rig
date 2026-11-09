@@ -47,7 +47,7 @@ const EXPECTED_FEATURE_NAMES: string[] = [
 	"telegram",
 	"volunteers",
 ];
-const DEFAULT_ON_FEATURES = ["reflection", "codex", "telegram", "rtk", "superpowers", "skills", "analysis-gate"] as const;
+const DEFAULT_ON_FEATURES = ["reflection", "codex", "telegram", "rtk", "superpowers", "skills"] as const;
 const DEFAULT_OFF_FEATURES = ["volunteers", "pwsh", "cmd", "js-ts-rules"] as const;
 const WINDOWS_ONLY_FEATURES = ["volunteers", "pwsh", "cmd"] as const;
 const SOURCE_EXTENSIONS = [".md", ".py", ".sh", ".ps1"] as const;

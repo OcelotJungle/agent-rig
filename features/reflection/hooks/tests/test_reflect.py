@@ -19,8 +19,8 @@ REFLECT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(REFLECT)
 
 VALID_ANALYSIS = "## Unknowns\n- the size of the loader\n\n## Class\nno defect: a config loader refactor\n"
-# The tests are not allowed to hold Cyrillic, so the Russian turn is written with escapes: "займёт около 40 минут".
-RUSSIAN_ESTIMATE = "Рефакторинг займёт около 40 минут."
+# The tests are not allowed to hold Cyrillic, so the Russian turn is written with escapes (an estimate of about 40 minutes).
+RUSSIAN_ESTIMATE = "\u0420\u0435\u0444\u0430\u043a\u0442\u043e\u0440\u0438\u043d\u0433 \u0437\u0430\u0439\u043c\u0451\u0442 \u043e\u043a\u043e\u043b\u043e 40 \u043c\u0438\u043d\u0443\u0442."
 STAMP = "2026-01-01T10:00:0{}.000Z"
 ENV_KEYS = ("CLAUDE_PROJECT_DIR", REFLECT.CHILD_ENV)
 
@@ -104,10 +104,19 @@ class AnalysisLineTests(ProjectCase):
         self.assertNotIn("ANALYSIS FILE", text)
 
 
+ESTIMATE_KIND = 6  # check 6 of reflect_prompt.md: an estimate without the analysis file
+
+
+def kinds(answer):
+    return [p["kind"] for p in answer["problems"]] if answer else []
+
+
 @unittest.skipUnless(os.environ.get("REFLECT_LIVE_PROBE") == "1", "set REFLECT_LIVE_PROBE=1 to run the real reviewer probe")
 class ReflectLiveProbe(ProjectCase):
     """Real reviewer, three invented turns; the input is built by reflect.review like a Stop hook run."""
 
+    # The reviewer reads the user's real rules, so other checks may flag an invented turn (an English reply
+    # breaks the Russian rule); the probe judges only the estimate check.
     def verdict(self, user, final):
         _, answer = REFLECT.review(self.payload(user, final))
         return answer
@@ -116,20 +125,19 @@ class ReflectLiveProbe(ProjectCase):
         self.set_feature(True)
         answer = self.verdict("Please look at the config loader and tell me how long the refactor would take.",
                               f"I looked at the loader. Refactoring it will take about 40 minutes. {RUSSIAN_ESTIMATE}")
-        self.assertIsNotNone(answer)
-        self.assertIn(6, [p["kind"] for p in answer["problems"]])
+        self.assertIn(ESTIMATE_KIND, kinds(answer))
 
     def test_measured_duration_without_a_file_is_not_flagged(self):
         self.set_feature(True)
         answer = self.verdict("Run the config tests and report.", "The config tests passed: 12 pass, 0 fail. They ran in 3.6 s.")
-        self.assertIsNone(answer)
+        self.assertNotIn(ESTIMATE_KIND, kinds(answer))
 
     def test_estimate_with_a_valid_file_is_not_flagged(self):
         self.set_feature(True)
         self.write_analysis()
         answer = self.verdict("Please look at the config loader and tell me how long the refactor would take.",
                               "I looked at the loader. Refactoring it will take about 40 minutes.")
-        self.assertIsNone(answer)
+        self.assertNotIn(ESTIMATE_KIND, kinds(answer))
 
 
 if __name__ == "__main__":

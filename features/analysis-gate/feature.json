@@ -1,19 +1,27 @@
 {
   "name": "analysis-gate",
-  "description": "Blocks Agent launches while the project's analysis file is missing, stale or incomplete.",
+  "description": "Requires a fresh analysis file before agent launches and time estimates: blocks Agent launches without it, and the reflection flags estimates without it.",
   "translations": {
     "ru": {
-      "description": "Блокирует запуск Agent, пока файл анализа проекта отсутствует, устарел или неполон."
+      "description": "Требует свежий файл разбора перед запуском агентов и оценкой сроков: без него запуск Agent блокируется, а рефлексия отмечает названный срок."
     }
   },
-  "enabledByDefault": true,
+  "enabledByDefault": false,
   "platforms": [
     "linux",
     "windows",
     "darwin"
   ],
   "dependencies": [],
-  "rules": [],
+  "rules": [
+    {
+      "path": "rules/claude-analysis-gate.md",
+      "target": "claude",
+      "whenEnabled": [
+        "analysis-gate"
+      ]
+    }
+  ],
   "hooks": [
     {
       "event": "PreToolUse",

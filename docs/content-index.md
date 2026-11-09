@@ -65,6 +65,7 @@
 | Rule | `base/rules/shared-specs-are-living-documents.md` | base | — | shared | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/shared-temporary-files.md` | base | — | shared | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/shared-tests-and-runs.md` | base | — | shared | all | always | — | — | — | — | — | — |
+| Rule | `features/analysis-gate/rules/claude-analysis-gate.md` | analysis-gate | — | claude | all | `analysis-gate` on | — | — | — | — | — | — |
 | Rule | `features/codex/rules/claude-delegation-03-codex-01-heading.md` | codex | 03.01 | claude | all | `codex` on | — | — | — | — | — | — |
 | Rule | `features/codex/rules/claude-delegation-03-codex-02-orchestrator-codex-volunteers-on.md` | codex | 03.02 | claude | all | `codex` on; `volunteers` on | — | — | — | — | — | — |
 | Rule | `features/codex/rules/claude-delegation-03-codex-02-orchestrator-codex-volunteers-off.md` | codex | 03.02 | claude | all | `codex` on; `volunteers` off | — | — | — | — | — | — |
