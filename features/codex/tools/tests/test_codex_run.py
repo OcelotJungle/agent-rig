@@ -1,4 +1,6 @@
-"""Tests for codex-run.py: the run rules per platform, and a cancelled job stopping its children (POSIX only)."""
+"""Tests for codex-run.py, including process cleanup and an optional live probe."""
+import csv
+import ctypes
 import importlib.util
 import io
 import json
@@ -230,6 +232,150 @@ class TerraLineTest(unittest.TestCase):
 
 
 FAKE_CODEX = Path(__file__).resolve().parent / "fake_codex.py"
+
+
+class DetachedChildTest(unittest.TestCase):
+    def run_job(self, cancelled):
+        with tempfile.TemporaryDirectory(prefix="codex-detached-") as tmp:
+            job = Path(tmp)
+            pid_file = job / "child.pid"
+            cr.write_json(job / "state.json", {"cwd": tmp, "created": cr.now(), "notes": []})
+            sup = cr.Supervisor(job)
+            sup.command = lambda resume_text=None: ([sys.executable, str(FAKE_CODEX), "-o", str(job / "last.md")], "prompt")
+            env = {"FAKE_CODEX_CHILD_PID": str(pid_file), "FAKE_CODEX_WAIT": "1" if cancelled else ""}
+            outcome = {}
+            def run():
+                sup.run()
+                outcome.update(cr.read_json(job / "state.json"))
+            worker = threading.Thread(target=run, daemon=True)
+            try:
+                with mock.patch.dict(os.environ, env), mock.patch.object(cr, "POLL_SECONDS", 0.01):
+                    worker.start()
+                    deadline = time.monotonic() + JOB_STOP_TIMEOUT_SECONDS
+                    while not pid_file.exists() and time.monotonic() < deadline:
+                        threading.Event().wait(0.01)
+                    self.assertTrue(pid_file.exists(), "fake Codex did not start its child")
+                    if cancelled:
+                        (job / "cancel").touch()
+                    worker.join(JOB_STOP_TIMEOUT_SECONDS)
+                    self.assertFalse(worker.is_alive(), "supervisor did not stop")
+                    self.assertEqual(outcome.get("status"), "cancelled" if cancelled else "done")
+                    pid = int(pid_file.read_text(encoding="utf-8"))
+                    deadline = time.monotonic() + JOB_STOP_TIMEOUT_SECONDS
+                    while cr.pid_alive(pid) and time.monotonic() < deadline:
+                        threading.Event().wait(0.01)
+                    self.assertFalse(cr.pid_alive(pid), "detached child survived the job")
+            finally:
+                if pid_file.exists():
+                    pid = int(pid_file.read_text(encoding="utf-8"))
+                    if cr.pid_alive(pid):
+                        os.kill(pid, 9)
+
+    def test_normal_finish_stops_detached_child(self):
+        self.run_job(False)
+
+    def test_cancel_stops_detached_child(self):
+        self.run_job(True)
+
+
+JOB_OBJECT_BASIC_PROCESS_ID_LIST = 3  # JOBOBJECTINFOCLASS value for JOBOBJECT_BASIC_PROCESS_ID_LIST
+ERROR_MORE_DATA = 234
+# A Codex job holds a handful of processes (runner, shell, node); 256 ids fit with a wide margin, and a
+# bigger job is handled by the ERROR_MORE_DATA retry that doubles the buffer.
+INITIAL_JOB_PID_SLOTS = 256
+PROCESS_EXIT_WAIT_SECONDS = 15
+
+
+def job_process_ids(handle):
+    """PIDs currently assigned to a Windows job object."""
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                                   ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+    slots = INITIAL_JOB_PID_SLOTS
+    while True:
+        class PidList(ctypes.Structure):
+            _fields_ = [("NumberOfAssignedProcesses", wintypes.DWORD),
+                        ("NumberOfProcessIdsInList", wintypes.DWORD),
+                        ("ProcessIdList", ctypes.c_size_t * slots)]
+        info = PidList()
+        if kernel32.QueryInformationJobObject(handle, JOB_OBJECT_BASIC_PROCESS_ID_LIST, ctypes.byref(info),
+                                              ctypes.sizeof(info), None):
+            return list(info.ProcessIdList[:info.NumberOfProcessIdsInList])
+        if ctypes.get_last_error() != ERROR_MORE_DATA:
+            raise ctypes.WinError(ctypes.get_last_error())
+        slots = max(slots * 2, info.NumberOfAssignedProcesses)
+
+
+def image_names():
+    """PID to image name for every running process, from one tasklist call."""
+    out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, check=True).stdout
+    names = {}
+    for row in csv.reader(out.splitlines()):
+        if len(row) > 1 and row[1].isdigit():
+            names[int(row[1])] = row[0]
+    return names
+
+
+@unittest.skipUnless(os.environ.get("CODEX_RUN_LIVE_PROBE") == "1", "set CODEX_RUN_LIVE_PROBE=1 to run the real Codex probe")
+@unittest.skipUnless(os.name == "nt", "the probe reads the Windows job object")
+class LiveCodexProbe(unittest.TestCase):
+    """Set CODEX_RUN_LIVE_PROBE=1 to run a real, potentially billable Codex job (a `luna` job, medium effort).
+
+    Run: CODEX_RUN_LIVE_PROBE=1 python -B -m unittest discover -v -s features/codex/tools/tests -p test_codex_run.py -k LiveCodexProbe
+    """
+
+    def test_real_job_leaves_no_detached_processes(self):
+        with tempfile.TemporaryDirectory(prefix="codex-live-probe-") as tmp:
+            root = Path(tmp)
+            job = root / "job"
+            job.mkdir()
+            cwd = root / "work"
+            cwd.mkdir()
+            (job / "prompt.md").write_text(
+                "Start a long-lived detached process using node -e \"setInterval(()=>{},1000)\". "
+                "Then finish with STATUS: done.", encoding="utf-8")
+            slug, _ = cr.resolve_model("luna")
+            cr.write_json(job / "state.json", {"cwd": str(cwd), "created": cr.now(), "notes": [],
+                          "slug": slug, "line": "luna", "effort": "medium", "read_only": False})
+            sup = cr.Supervisor(job)
+            real_close = cr.process_job.close
+            recorded = []  # (pid, image name) of the processes in the job when it was first closed
+
+            def recording_close(job_handle):
+                if job_handle.handle is not None and not recorded:
+                    pids = job_process_ids(job_handle.handle)
+                    names = image_names()
+                    recorded.extend((pid, names[pid]) for pid in pids if pid in names)  # in the list and in tasklist: alive
+                    recorded.append(None)  # marks that the first close was seen, even with an empty job
+                return real_close(job_handle)
+
+            errors = []
+            def run():
+                try:
+                    sup.run()
+                except Exception as exc:
+                    errors.append(exc)
+            with mock.patch.object(cr.process_job, "close", side_effect=recording_close):
+                worker = threading.Thread(target=run, daemon=True)
+                worker.start()
+                worker.join()
+            self.assertFalse(errors, str(errors))
+            self.assertEqual(cr.read_json(job / "state.json")["status"], "done")
+            held = [entry for entry in recorded if entry is not None]
+            print("job processes at close:", held)
+            self.assertTrue(held, "the job held no live process at close, so the leak was not reproduced")
+
+            # cr.pid_alive cannot see processes of the Codex sandbox user (OpenProcess is denied), so liveness
+            # is the pid and image name still present in tasklist, which lists every user's processes.
+            def survivors():
+                names = image_names()
+                return [entry for entry in held if names.get(entry[0]) == entry[1]]
+            deadline = time.monotonic() + PROCESS_EXIT_WAIT_SECONDS
+            while survivors() and time.monotonic() < deadline:
+                threading.Event().wait(0.05)
+            self.assertEqual(survivors(), [], "processes survived the job close")
 
 
 class StartPathTest(unittest.TestCase):

@@ -38,6 +38,9 @@ report_spec = importlib.util.spec_from_file_location("run_report", Path(__file__
 report_module = importlib.util.module_from_spec(report_spec)
 report_spec.loader.exec_module(report_module)
 validate_report = report_module.validate_report
+job_spec = importlib.util.spec_from_file_location("process_job", Path(__file__).resolve().parents[3] / "base/tools/process-job.py")
+process_job = importlib.util.module_from_spec(job_spec)
+job_spec.loader.exec_module(process_job)
 
 HOME = Path.home()
 JOBS_DIR = HOME / ".claude" / "codex-jobs"
@@ -148,14 +151,14 @@ def pid_alive(pid):
     return bool(ok) and code.value == 259  # STILL_ACTIVE
 
 
-def kill_tree(pid):
+def kill_pid(pid):
     if not pid:
         return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
     else:
         try:
-            os.killpg(pid, 9)
+            os.kill(pid, 9)
         except OSError:
             pass
 
@@ -278,30 +281,32 @@ class Supervisor:
         self.last_event = now()
         flags = CREATE_NO_WINDOW if os.name == "nt" else 0
         with open(self.events_path, "ab") as sink, open(self.dir / "codex.err", "ab") as err:
-            # On POSIX the job is its own process group, so kill_tree's killpg reaches its children.
-            proc = subprocess.Popen(cmd, cwd=self.state["cwd"], stdin=subprocess.PIPE,
-                                    stdout=subprocess.PIPE, stderr=err, creationflags=flags,
-                                    start_new_session=os.name != "nt")
-            self.save(codex_pid=proc.pid, status="running")
-            if stdin_text is not None:
-                proc.stdin.write(stdin_text.encode("utf-8"))
-            proc.stdin.close()
-            reader = threading.Thread(target=self.pump, args=(proc, sink), daemon=True)
-            reader.start()
-            reason = None
-            while proc.poll() is None:
-                time.sleep(POLL_SECONDS)
-                if (self.dir / "cancel").exists():
-                    reason = "cancelled"
-                elif self.heartbeat_age() > ORPHAN_SECONDS:
-                    reason = "orphaned"
-                elif now() - self.last_event > (COMMAND_IDLE_SECONDS if self.running_commands else IDLE_SECONDS):
-                    reason = "hung"
-                if reason:
-                    kill_tree(proc.pid)
-                    break
-            proc.wait()
+            proc, job = process_job.start(cmd, cwd=self.state["cwd"], stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE, stderr=err, creationflags=flags)
+            try:
+                self.save(codex_pid=proc.pid, status="running")
+                if stdin_text is not None:
+                    proc.stdin.write(stdin_text.encode("utf-8"))
+                proc.stdin.close()
+                reader = threading.Thread(target=self.pump, args=(proc, sink), daemon=True)
+                reader.start()
+                reason = None
+                while proc.poll() is None:
+                    time.sleep(POLL_SECONDS)
+                    if (self.dir / "cancel").exists():
+                        reason = "cancelled"
+                    elif self.heartbeat_age() > ORPHAN_SECONDS:
+                        reason = "orphaned"
+                    elif now() - self.last_event > (COMMAND_IDLE_SECONDS if self.running_commands else IDLE_SECONDS):
+                        reason = "hung"
+                    if reason:
+                        process_job.close(job)
+                        break
+                proc.wait()
+            finally:
+                process_job.close(job)
             reader.join(timeout=10)
+            proc.stdout.close()
         return reason, proc.returncode
 
     def note(self, text):
@@ -539,8 +544,7 @@ def cmd_cancel(a):
         time.sleep(1)
     st = read_json(d / "state.json") or {}
     if st.get("status") not in TERMINAL:
-        kill_tree(st.get("codex_pid"))
-        kill_tree(st.get("supervisor_pid"))
+        kill_pid(st.get("supervisor_pid"))
         st.update(status="cancelled", ended=now())
         write_json(d / "state.json", st)
     print(f"job {a.job}: {st.get('status')}")

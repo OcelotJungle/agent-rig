@@ -125,6 +125,10 @@ Sections are headings in `CLAUDE.md` and `~/.codex/AGENTS.md`.
 The repository has no personal paths or project names. The folders in which a volunteer works are listed in the local file
 `~/.agent-rig/volunteer-projects.json` (`{"allowed": ["<folder>"]}`). Without this file the volunteer refuses all folders.
 
+The `codex` supervisor owns each Codex process tree through the shared process-job helper `base/tools/process-job.py`. It
+closes the job after every turn or stop, including normal completion; if cancellation times out, the client stops the
+supervisor by PID so the job is cleaned up with it.
+
 Base rules:
 
 | Target | Sections |
