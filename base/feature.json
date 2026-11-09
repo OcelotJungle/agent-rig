@@ -408,6 +408,14 @@
       "args": [
         "{{CLONE}}/base/hooks/no_ampersand.py"
       ]
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Write|Edit|NotebookEdit|Bash",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/base/hooks/system-temp-guard.py"
+      ]
     }
   ],
   "settings": [
@@ -428,6 +436,7 @@
   "files": [
     "hooks/compact_history.py",
     "hooks/no_ampersand.py",
+    "hooks/system-temp-guard.py",
     "hooks/project-tmp.sh",
     "hooks/project-tmp-settings.ps1",
     "tools/patchlib.py",

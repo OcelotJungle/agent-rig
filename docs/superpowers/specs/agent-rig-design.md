@@ -109,7 +109,7 @@ Sections are headings in `CLAUDE.md` and `~/.codex/AGENTS.md`.
 
 | Part | On at install | Platforms | Files | Hook | Rules |
 |---|---|---|---|---|---|
-| base | always | all | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (Windows only), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `tools/patchlib.py`, `agents/explore.md`, `agents/general-purpose.md` | all three | see below |
+| base | always | all | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (Windows only), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `hooks/system-temp-guard.py`, `tools/patchlib.py`, `agents/explore.md`, `agents/general-purpose.md` | SessionStart and PreToolUse | see below |
 | `reflection` | yes | all | `hooks/reflect.py`, `hooks/reflect_prompt.md` | `Stop` | — |
 | `codex` | yes | all | `tools/codex-run.py`, `agents/codex.md`, plugin `codex@openai-codex` | `SessionStart`: `codex-run.py session-hint` | "Delegating to Codex" |
 | `telegram` | yes | all | plugin `telegram-hub` from the hub clone, the hub service, including `/bash` | plugin hooks | "Attention chime", the line about Telegram mode |
@@ -132,6 +132,9 @@ supervisor by PID so the job is cleaned up with it.
 Base rules:
 
 | Target | Sections |
+The base PreToolUse hooks reject background Bash starts and explicit tool write targets in system temp. The temp guard
+allows project `.tmp` and home-directory sessions; variable-based and computed shell paths are outside its literal check.
+
 |---|---|
 | `shared` | "Addressing the user", "Temporary files", "Tests and runs", "Specs are living documents" |
 | `claude` | "Compact instructions", "Global rules vs project memory", "Ask-driven development", "Every message gets an answer", "Writing to the user", "Fixing a sent answer", "BLOCKERS GO FIRST", "Review and engineering method", "Subagent models", "Delegation: keep the main context small", "Commits", "No heredocs", "Background tasks and monitors" |

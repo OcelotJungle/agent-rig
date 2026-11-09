@@ -418,8 +418,8 @@ async function seedDirectory(fileSystem: MemoryFileSystem, source: string, targe
 function parseIndexRows(text: string): IndexRow[] {
 	return text.split(/\r?\n/)
 		.filter((line) => line.startsWith("| Rule |") || line.startsWith("| Hook |"))
-		.map((line) => line.slice(MARKDOWN_EDGE_WIDTH, -MARKDOWN_EDGE_WIDTH).split("|").map((value) => {
-			const trimmed = value.trim();
+		.map((line) => line.slice(MARKDOWN_EDGE_WIDTH, -MARKDOWN_EDGE_WIDTH).split(/(?<!\\)\|/).map((value) => {
+			const trimmed = value.trim().replaceAll("\\|", "|");
 			return trimmed.startsWith("`") && trimmed.endsWith("`") ? trimmed.slice(1, -1) : trimmed;
 		}));
 }
@@ -504,7 +504,7 @@ function jsonStrings(value: JsonValue): string[] {
 
 function isContentFile(path: string): boolean {
 	if (!path.startsWith(`${REPOSITORY_PATH}/base/`) && !path.startsWith(`${REPOSITORY_PATH}/features/`)) return false;
-	if (path.includes("/tools/tests/")) return false;
+	if (path.includes("/tools/tests/") || path.includes("/hooks/tests/")) return false;
 	return SOURCE_EXTENSIONS.some((extension) => path.endsWith(extension));
 }
 

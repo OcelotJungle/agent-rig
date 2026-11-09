@@ -95,6 +95,7 @@
 | Hook | `SessionStart` | base | — | all | always | — | `bash` | `{{CLONE}}/base/hooks/project-tmp.sh` | 60 | — | — |
 | Hook | `SessionStart` | codex | — | all | `codex` on | — | `{{PYTHON}}` | `-I {{CLONE}}/features/codex/tools/codex-run.py session-hint` | 10 | — | — |
 | Hook | `PreToolUse` | base | — | all | always | `Bash` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/no_ampersand.py` | — | — | — |
+| Hook | `PreToolUse` | base | — | all | always | `Write\|Edit\|NotebookEdit\|Bash` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/system-temp-guard.py` | — | — | — |
 | Hook | `PreToolUse` | rtk | — | all | `rtk` on | `Bash` | `rtk hook claude` | — | — | — | — |
 | Hook | `Stop` | reflection | — | all | `reflection` on | — | `{{PYTHON}}` | `-X utf8 {{CLONE}}/features/reflection/hooks/reflect.py` | 330 | `Reflecting on the turn` | `true` |
 
