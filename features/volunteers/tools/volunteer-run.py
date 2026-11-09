@@ -47,6 +47,10 @@ process_job_spec = importlib.util.spec_from_file_location(
     "process_job", Path(__file__).resolve().parents[3] / "base/tools/process-job.py")
 process_job = importlib.util.module_from_spec(process_job_spec)
 process_job_spec.loader.exec_module(process_job)
+failures_spec = importlib.util.spec_from_file_location("volunteer_failures", Path(__file__).resolve().parent / "volunteer-failures.py")
+failures_module = importlib.util.module_from_spec(failures_spec)
+failures_spec.loader.exec_module(failures_module)
+is_permanent_status = failures_module.is_permanent_status
 
 HOME = Path.home()
 PROJECTS_FILE = HOME / ".agent-rig" / "volunteer-projects.json"
@@ -111,8 +115,7 @@ BYTES_PER_TOKEN = 4  # rough size of English/code text; OpenCode's step_finish e
 # (volunteer-design.md, "Limits"). A provider missing here has an unknown window: the model is tried and an
 # overflow error then removes it for the job.
 PROVIDER_WINDOWS = {"groq": 8000}
-# Errors that no retry fixes: the session does not fit, or the request/credentials are wrong.
-PERMANENT_STATUSES = (400, 401, 403, 404, 413)
+# Errors that no retry fixes: the session does not fit, or the request/credentials are wrong (statuses: volunteer-failures.py).
 PERMANENT_MARKERS = ("ContextOverflowError", "exceeded the context window", "Prompt exceeds max length",
                      "context_length_exceeded", "maximum context length")
 OVERFLOW_TOKENS_RE = re.compile(r"input is ~([\d,]+) tokens", re.I)
@@ -437,7 +440,7 @@ def is_permanent_failure(why):
     if any(m in why for m in PERMANENT_MARKERS):
         return True
     found = re.match(r"\w+ (\d{3}):", why) or re.search(r"HTTP (\d{3})", why)
-    return bool(found) and int(found.group(1)) in PERMANENT_STATUSES
+    return bool(found) and is_permanent_status(int(found.group(1)))
 
 
 def model_fits(entry, session_tokens):

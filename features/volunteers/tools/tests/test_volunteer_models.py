@@ -113,10 +113,8 @@ class FakeServer:
                 if isinstance(kind, tuple):
                     kind, delay = kind
                     time.sleep(delay)
-                if kind == "429":
-                    return self.send(429, {"error": "rate limited"})
-                if kind == "413":
-                    return self.send(413, {"error": "too large"})
+                if kind.isdigit():
+                    return self.send(int(kind), {"error": "status " + kind})
                 msg = {"role": "assistant", "content": "I cannot do that"}
                 if kind == "ok":
                     msg["tool_calls"] = [tool_call("get_weather", '{"city": "Paris"}')]
@@ -267,10 +265,12 @@ class Ordering(unittest.TestCase):
 
 
 class SmokeClassification(unittest.TestCase):
-    def check(self, behaviour, ok, reason, timeout=5):
+    def check(self, behaviour, ok, reason, timeout=5, status=None):
         with FakeServer([], {"m/x": behaviour}) as srv:
-            got_ok, latency, got_reason = vm.smoke_test(srv.url, TOKEN, "m/x", timeout)
+            got_ok, latency, got_reason, got_status = vm.smoke_test(srv.url, TOKEN, "m/x", timeout)
             self.assertEqual((got_ok, got_reason), (ok, reason))
+            if status is not None:
+                self.assertEqual(got_status, status)
             self.assertGreaterEqual(latency, 0)
             return srv
 
@@ -290,16 +290,61 @@ class SmokeClassification(unittest.TestCase):
         self.check("wrong-tool", False, "wrong tool call")
 
     def test_429(self):
-        self.check("429", False, "http 429")
+        self.check("429", False, "http 429", status=429)
 
     def test_413(self):
-        self.check("413", False, "http 413")
+        self.check("413", False, "http 413", status=413)
+
+    def test_502_exposes_status(self):
+        self.check("502", False, "http 502", status=502)
 
     def test_malformed(self):
-        self.check("garbage", False, "malformed response")
+        self.check("garbage", False, "malformed response", status=200)
+
+    def test_content_failure_has_status_200(self):
+        self.check("text", False, "no tool call", status=200)
 
     def test_timeout(self):
-        self.check(("ok", 1.5), False, "timeout", timeout=0.3)
+        self.check(("ok", 1.5), False, "timeout", timeout=0.3, status=0)
+
+
+class UnverifiedOrdering(unittest.TestCase):
+    def test_kept_favorite_keeps_its_place(self):
+        out = vm.order_models([("openrouter/a:free", 1.0)], {FAV2: ("http 502", 99.0), FAV1: ("timeout", None)})
+        self.assertEqual([m["id"] for m in out], [FAV1, FAV2, "openrouter/a:free"])
+        self.assertEqual(out[0]["unverified"], "timeout")
+        self.assertNotIn("latency_s", out[0])
+
+    def test_unverified_goes_after_measured_of_its_group(self):
+        passed = [("openrouter/a:free", 1.0), ("openrouter/c:free", 5.0)]
+        out = vm.order_models(passed, {"openrouter/b:free": ("http 429", 3.0)})
+        self.assertEqual([m["id"] for m in out], ["openrouter/a:free", "openrouter/c:free", "openrouter/b:free"])
+        self.assertEqual(out[2]["latency_s"], 3.0)
+        self.assertEqual(out[2]["unverified"], "http 429")
+        self.assertNotIn("unverified", out[0])
+
+    def test_measured_first_even_when_unverified_had_lower_previous_latency(self):
+        passed = [("openrouter/c:free", 5.0), ("groq/g1", 5.0)]
+        unverified = {"openrouter/b:free": ("http 502", 1.0), "groq/g2": ("http 502", 1.0)}
+        out = vm.order_models(passed, unverified)
+        self.assertEqual([m["id"] for m in out], ["openrouter/c:free", "openrouter/b:free", "groq/g1", "groq/g2"])
+
+    def test_unverified_ordered_among_themselves_by_previous_latency_none_last(self):
+        unverified = {
+            "openrouter/n:free": ("timeout", None),
+            "openrouter/z:free": ("timeout", 4.0),
+            "openrouter/y:free": ("timeout", 2.0),
+            "openrouter/x:free": ("timeout", 2.0),
+        }
+        out = vm.order_models([], unverified)
+        self.assertEqual([m["id"] for m in out],
+                         ["openrouter/x:free", "openrouter/y:free", "openrouter/z:free", "openrouter/n:free"])
+
+    def test_without_latency_goes_last_in_its_group(self):
+        passed = [("openrouter/a:free", 1.0), ("groq/g1", 0.5)]
+        out = vm.order_models(passed, {"openrouter/b:free": ("timeout", None), "groq/g2": ("timeout", None)})
+        self.assertEqual([m["id"] for m in out], ["openrouter/a:free", "openrouter/b:free", "groq/g1", "groq/g2"])
+        self.assertEqual(out[3]["agent"], "minimal")
 
 
 class RefreshFlow(TempDirCase):
@@ -329,9 +374,12 @@ class RefreshFlow(TempDirCase):
         ids = [m["id"] for m in data["models"]]
         self.assertEqual(ids[:2], [FAV1, FAV2])
         self.assertEqual(ids[-1], "groq/openai/gpt-oss-120b")
-        self.assertEqual(set(ids), {FAV1, FAV2, "openrouter/meta/fast-model:free", "requesty/nvidia/free-one", "groq/openai/gpt-oss-120b"})
+        self.assertEqual(set(ids), {FAV1, FAV2, "openrouter/meta/fast-model:free", "requesty/nvidia/free-one",
+                                    "groq/openai/gpt-oss-120b", "zhipu/glm-4.7-flash"})
         rejected = {r["id"]: r["reason"] for r in data["rejected"]}
-        self.assertEqual(rejected["zhipu/glm-4.7-flash"], "http 429")
+        self.assertNotIn("zhipu/glm-4.7-flash", rejected)
+        self.assertEqual(
+            next(m for m in data["models"] if m["id"] == "zhipu/glm-4.7-flash")["unverified"], "http 429")
         self.assertEqual(rejected["openrouter/meta/slow-model:free"], "no tool call")
         self.assertNotIn("openrouter/meta/priced:free", asked)
         self.assertNotIn("gemini/gemini-2.5-flash", asked)
@@ -340,6 +388,54 @@ class RefreshFlow(TempDirCase):
         agents = {m["id"]: m["agent"] for m in data["models"]}
         self.assertEqual(agents["groq/openai/gpt-oss-120b"], "minimal")
         self.assertEqual(agents[FAV1], "full")
+
+    def refresh_with(self, behaviours, previous=None, **kw):
+        proxy_ids = [FAV1, "openrouter/meta/fast-model:free", "openrouter/meta/slow-model:free"]
+        if previous is not None:
+            self.cache.write_text(json.dumps({"models": previous}), encoding="utf-8")
+        with FakeServer(proxy_ids, behaviours) as srv:
+            code, data = self.run_refresh(srv, **kw)
+        return code, data, {m["id"]: m for m in data["models"]}, {r["id"]: r["reason"] for r in data["rejected"]}
+
+    def test_transient_failures_stay_unverified(self):
+        for kind, reason, extra in (("502", "http 502", {}), ("429", "http 429", {}), ("408", "http 408", {}),
+                                    (("ok", 1.5), "timeout", {"timeout": 0.3})):
+            with self.subTest(reason=reason):
+                _, data, models, rejected = self.refresh_with({"openrouter/meta/slow-model:free": kind}, **extra)
+                self.assertEqual(models["openrouter/meta/slow-model:free"]["unverified"], reason)
+                self.assertNotIn("openrouter/meta/slow-model:free", rejected)
+
+    def test_permanent_and_content_failures_are_rejected(self):
+        for kind, reason in (("404", "http 404"), ("410", "http 410"), ("400", "http 400"), ("text", "no tool call")):
+            with self.subTest(reason=reason):
+                _, data, models, rejected = self.refresh_with({"openrouter/meta/slow-model:free": kind})
+                self.assertNotIn("openrouter/meta/slow-model:free", models)
+                self.assertEqual(rejected["openrouter/meta/slow-model:free"], reason)
+
+    def test_all_models_transient_still_leaves_the_cache_populated(self):
+        code, data, models, rejected = self.refresh_with(
+            {m: "502" for m in (FAV1, "openrouter/meta/fast-model:free", "openrouter/meta/slow-model:free")})
+        self.assertEqual(len(models), 3)
+        self.assertEqual(rejected, {})
+        self.assertEqual(code, 0)
+
+    def test_kept_models_use_previous_cache_latency_and_favorite_place(self):
+        previous = [{"id": "openrouter/meta/slow-model:free", "agent": "full", "latency_s": 0.05},
+                    {"id": FAV1, "agent": "full", "latency_s": 9.0}]
+        _, data, models, _ = self.refresh_with(
+            {FAV1: "502", "openrouter/meta/slow-model:free": "502", "openrouter/meta/fast-model:free": ("ok", 0.2)},
+            previous=previous)
+        ids = [m["id"] for m in data["models"]]
+        self.assertEqual(ids[0], FAV1)
+        self.assertEqual(models["openrouter/meta/slow-model:free"]["latency_s"], 0.05)
+        self.assertEqual(ids[1:], ["openrouter/meta/fast-model:free", "openrouter/meta/slow-model:free"])
+
+    def test_kept_model_without_previous_latency_goes_last(self):
+        _, data, models, _ = self.refresh_with(
+            {"openrouter/meta/slow-model:free": "502", "openrouter/meta/fast-model:free": ("ok", 0.2)})
+        ids = [m["id"] for m in data["models"]]
+        self.assertEqual(ids[-1], "openrouter/meta/slow-model:free")
+        self.assertNotIn("latency_s", models["openrouter/meta/slow-model:free"])
 
     def test_request_cap(self):
         proxy_ids = [FAV1, FAV2, "openrouter/meta/fast-model:free", "openrouter/meta/slow-model:free"]
@@ -352,7 +448,7 @@ class RefreshFlow(TempDirCase):
         self.assertIn("not checked", reasons["openrouter/meta/fast-model:free"])
 
     def test_no_working_model(self):
-        with FakeServer([FAV1], {FAV1: "429"}) as srv:
+        with FakeServer([FAV1], {FAV1: "404"}) as srv:
             code, data = self.run_refresh(srv)
         self.assertEqual(code, vm.EXIT_NO_MODELS)
         self.assertEqual(data["models"], [])

@@ -9,13 +9,19 @@ Commands:
           models, smoke-test each one pinned as provider/model (one function-tool request),
           write the ordered result to the cache (default ~/.claude/volunteer-jobs/models.json).
 
-Cache: {"checked_at": ISO UTC, "models": [{"id", "agent": "full"|"minimal", "latency_s"}],
+Cache: {"checked_at": ISO UTC, "models": [{"id", "agent": "full"|"minimal", "latency_s", "unverified"?}],
         "rejected": [{"id", "reason"}]}; `models` is in preferred order. The file is replaced
 atomically; a lock file next to it stops two refreshes from running at once.
+A model whose check failed transiently (HTTP status not permanent per volunteer-failures.py, or no HTTP answer:
+timeout, connection error) stays in `models` with "unverified": "<reason>"; its latency_s is taken from the previous
+cache (absent when it had none). In its group it goes after every measured model, ordered among the unverified ones by
+that previous latency (None last). A permanent status, a wrong answer from a
+200 reply and a skipped check (request cap) go to `rejected`.
 Exit codes: 0 ok, 1 no working model found (cache still written), 2 proxy unusable,
 3 another refresh holds the lock.
 """
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -25,6 +31,11 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+failures_spec = importlib.util.spec_from_file_location("volunteer_failures", Path(__file__).resolve().parent / "volunteer-failures.py")
+failures_module = importlib.util.module_from_spec(failures_spec)
+failures_spec.loader.exec_module(failures_module)
+is_permanent_status = failures_module.is_permanent_status
 
 DEFAULT_CACHE = Path.home() / ".claude" / "volunteer-jobs" / "models.json"
 OPENROUTER_LIST_URL = "https://openrouter.ai/api/v1/models"
@@ -228,7 +239,8 @@ def test_order(candidates):
 
 
 def smoke_test(proxy_url, token, model_id, timeout=SMOKE_TIMEOUT_S):
-    """One chat completion with one function tool. Returns (ok, latency_s, reason)."""
+    """One chat completion with one function tool. Returns (ok, latency_s, reason, http_status); http_status is 0
+    when there was no HTTP answer (timeout, connection error)."""
     body = {
         "model": model_id,
         "messages": [{"role": "user", "content": SMOKE_PROMPT}],
@@ -239,44 +251,72 @@ def smoke_test(proxy_url, token, model_id, timeout=SMOKE_TIMEOUT_S):
     status, data, err = http_json(proxy_url.rstrip("/") + "/v1/chat/completions", token, body, timeout)
     latency = round(time.monotonic() - start, LATENCY_DIGITS)
     if err:
-        return False, latency, err
+        return False, latency, err, status
     if latency > timeout:
-        return False, latency, "timeout"
+        return False, latency, "timeout", 0
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError):
-        return False, latency, "malformed response"
+        return False, latency, "malformed response", status
     calls = message.get("tool_calls") if isinstance(message, dict) else None
     if not isinstance(calls, list) or not calls:
-        return False, latency, "no tool call"
+        return False, latency, "no tool call", status
     fn = calls[0].get("function") if isinstance(calls[0], dict) else None
     if not isinstance(fn, dict) or fn.get("name") != SMOKE_TOOL_NAME:
-        return False, latency, "wrong tool call"
+        return False, latency, "wrong tool call", status
     try:
         args = json.loads(fn.get("arguments") or "")
     except (TypeError, ValueError):
-        return False, latency, "invalid tool arguments"
+        return False, latency, "invalid tool arguments", status
     if not isinstance(args, dict):
-        return False, latency, "invalid tool arguments"
-    return True, latency, ""
+        return False, latency, "invalid tool arguments", status
+    return True, latency, "", status
 
 
-def order_models(passed):
-    """passed: list of (id, latency_s). Favorites, then non-minimal by latency, minimal last."""
-    by_id = dict(passed)
-    result = [m for m in FAVORITES if m in by_id]
-    rest = [(lat, mid) for mid, lat in passed if mid not in result]
-    full = sorted((lat, mid) for lat, mid in rest if provider_of(mid) not in MINIMAL_AGENT_PROVIDERS)
-    minimal = sorted((lat, mid) for lat, mid in rest if provider_of(mid) in MINIMAL_AGENT_PROVIDERS)
-    result += [mid for _, mid in full] + [mid for _, mid in minimal]
-    return [
-        {
-            "id": mid,
-            "agent": "minimal" if provider_of(mid) in MINIMAL_AGENT_PROVIDERS else "full",
-            "latency_s": by_id[mid],
-        }
-        for mid in result
-    ]
+def is_transient_failure(status):
+    """A failed check that says nothing about the model: no HTTP answer (status 0) or a non-permanent HTTP error
+    status. A 2xx answer with wrong content is a content failure of the model, not transient."""
+    return not is_permanent_status(status) and not 200 <= status < 300
+
+
+def order_models(passed, unverified=None):
+    """passed: list of (id, latency_s). unverified: {id: (reason, previous latency_s or None)} for models kept
+    after a transient failure. Favorites first (in FAVORITES order); then per group (non-minimal, minimal): every
+    measured model by latency, then the unverified models of the group by their previous latency (None last), then by id."""
+    unverified = unverified or {}
+    measured = {mid for mid, _ in passed}
+    latency = dict(passed)
+    for mid, (_, prev) in unverified.items():
+        latency[mid] = prev
+    result = [m for m in FAVORITES if m in latency]
+
+    def group(minimal):
+        ids = [m for m in latency if m not in result and (provider_of(m) in MINIMAL_AGENT_PROVIDERS) == minimal]
+        done = sorted((m for m in ids if m in measured), key=lambda m: (latency[m], m))
+        kept = sorted((m for m in ids if m not in measured),
+                      key=lambda m: (latency[m] is None, latency[m] if latency[m] is not None else 0.0, m))
+        return done + kept
+
+    result += group(False) + group(True)
+    out = []
+    for mid in result:
+        entry = {"id": mid, "agent": "minimal" if provider_of(mid) in MINIMAL_AGENT_PROVIDERS else "full"}
+        if latency[mid] is not None:
+            entry["latency_s"] = latency[mid]
+        if mid in unverified:
+            entry["unverified"] = unverified[mid][0]
+        out.append(entry)
+    return out
+
+
+def previous_latencies(cache):
+    """{id: latency_s} from the previous cache file; empty when it is missing or unreadable."""
+    try:
+        data = json.loads(Path(cache).read_text(encoding="utf-8"))
+        return {m["id"]: m["latency_s"] for m in data["models"]
+                if isinstance(m.get("id"), str) and isinstance(m.get("latency_s"), (int, float))}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
 
 
 def write_cache(path, data):
@@ -382,21 +422,28 @@ def do_refresh(a, token, cache):
     rq_free = fetch_free_set(a.requesty_url, requesty_free_ids, "requesty", rejected,
                              windows, "requesty", "context_window")
     candidates = test_order(select_candidates(proxy_ids, or_free, rq_free))
+    previous = previous_latencies(cache)
     passed = []
+    unverified = {}
     for i, mid in enumerate(candidates):
         if i >= a.max_requests:
             rejected.append({"id": mid, "reason": "not checked (request cap %d)" % a.max_requests})
             continue
-        ok, latency, reason = smoke_test(proxy, token, mid, a.timeout)
+        ok, latency, reason, http_status = smoke_test(proxy, token, mid, a.timeout)
         if ok:
             passed.append((mid, latency))
+        elif is_transient_failure(http_status):
+            unverified[mid] = (reason, previous.get(mid))
         else:
             rejected.append({"id": mid, "reason": reason})
-    models = add_windows(order_models(passed), windows)
+    models = add_windows(order_models(passed, unverified), windows)
     write_cache(cache, {"checked_at": now_iso(), "models": models, "rejected": rejected})
     print("candidates: %d, working: %d, rejected: %d -> %s" % (len(candidates), len(models), len(rejected), cache))
     for m in models:
-        print("  ok   %s  %s  %.1fs" % (m["id"], m["agent"], m["latency_s"]))
+        if "unverified" in m:
+            print("  kept %s  %s  unverified: %s" % (m["id"], m["agent"], m["unverified"]))
+        else:
+            print("  ok   %s  %s  %.1fs" % (m["id"], m["agent"], m["latency_s"]))
     for r in rejected:
         print("  fail %s  %s" % (r["id"], r["reason"]))
     return EXIT_OK if models else EXIT_NO_MODELS

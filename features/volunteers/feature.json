@@ -111,6 +111,7 @@
   "files": [
     "tools/volunteer-run.py",
     "tools/volunteer-models.py",
+    "tools/volunteer-failures.py",
     "tools/volunteer-launch.ps1",
     "tools/volunteer-design.md",
     "tools/volunteer-probes.md"
