@@ -14,8 +14,9 @@ Commands:
   prompt-path --cwd DIR                a fresh prompt file name under DIR/.tmp
 
 The model is never chosen by the caller: the supervisor takes them in order from the cache
-~/.claude/volunteer-jobs/models.json (built by volunteer-models.py), uses one model for the whole task and
+~/.claude/volunteer-jobs/models.json (built by volunteer-models.py), uses one model at a time and
 switches to the next one, continuing the same OpenCode session, only when the current one fails.
+The cache may change under a running job: every model choice re-reads it (a bad or empty read keeps the old list).
 The job's `slug` in state.json is always the model that is answering now.
 Every wait is a heartbeat: with no heartbeat for ORPHAN_SECONDS the supervisor stops the worker.
 """
@@ -497,10 +498,19 @@ def ensure_models():
         if cache is None:
             raise Fail("the model list could not be built (volunteer-models.py refresh produced no cache)")
     else:
-        age = cache_age(cache)
-        if age is None or age > MODELS_MAX_AGE:
-            spawn_detached(refresh_cmd(), JOBS_DIR / "refresh.log")
+        refresh_if_stale(cache)
     return cache
+
+
+def refresh_if_stale(cache):
+    """Start the background refresh when the cache is older than MODELS_MAX_AGE (a second one exits on the lock)."""
+    age = cache_age(cache)
+    if age is None or age > MODELS_MAX_AGE:
+        spawn_detached(refresh_cmd(), JOBS_DIR / "refresh.log")
+
+
+def usable_models(cache):
+    return [m for m in (cache or {}).get("models") or [] if m.get("id")]
 
 
 def first_model():
@@ -647,6 +657,7 @@ class Supervisor:
         self.fail_reason = ""
         self.last_text = ""
         self.token = ""
+        self.cache, self.models, self.refresh_started = {}, [], False  # the one current model list, see prepare()
 
     def save(self, **kw):
         self.state.update(kw)
@@ -746,11 +757,31 @@ class Supervisor:
     def prepare(self):
         self.token = ensure_proxy()
         cache = ensure_models()
-        models = [m for m in cache.get("models") or [] if m.get("id")]
+        models = usable_models(cache)
         if not models:
             rejected = "; ".join(f"{r.get('id')}: {short(r.get('reason'), 60)}" for r in (cache.get("rejected") or [])[:5])
             raise Fail("no free models available" + (f": {rejected}" if rejected else ""))
+        self.cache, self.models = cache, models
+        self.refresh_started = True  # ensure_models has just spawned the refresh when the cache was stale
         return models
+
+    def reload_models(self):
+        """Adopt the current models.json when it changed and holds models; True when the list was replaced.
+
+        A missing, unreadable or empty cache never replaces the list a running job already has."""
+        cache = read_json(models_cache_path())
+        models = usable_models(cache)
+        if not models or cache == self.cache:
+            return False
+        self.cache, self.models = cache, models
+        return True
+
+    def choice_point(self):
+        """Called before every model choice: follow the cache, and refresh it in the background when it went stale."""
+        self.reload_models()
+        if not self.refresh_started:
+            refresh_if_stale(self.cache)
+        self.refresh_started = False
 
     def finish(self, status_hint=None):
         report = self.last_text.strip()
@@ -816,10 +847,10 @@ class Supervisor:
         self.t0 = now()
         self.save(supervisor_pid=os.getpid(), status="running", started=self.state.get("started") or now())
         try:
-            models = self.prepare()
+            self.prepare()
         except Fail as f:
             return self.save(status="blocked", ended=now(), error=str(f))
-        by_id = {m["id"]: m for m in models}
+        by_id = {m["id"]: m for m in self.models}
         hard_timeout = lambda: f"hard timeout after {HARD_TIMEOUT_SECONDS // 60} min"
         banned, cooling, failures = {}, {}, []
         restarts = 0
@@ -829,8 +860,9 @@ class Supervisor:
         while True:
             entry, forced = forced, None
             if entry is None:
+                self.choice_point()
                 est = max(overflow_tokens, self.estimate_tokens())
-                alive = [m for m in models if m["id"] not in banned]
+                alive = [m for m in self.models if m["id"] not in banned]
                 if not alive:
                     tail = "; ".join(f"{i.split('/')[-1]}: {w[:70]}" for i, w in failures[-5:])
                     return self.save(status="blocked", ended=now(), error=f"no free models available: {tail}")
@@ -842,7 +874,8 @@ class Supervisor:
                 if not ready:
                     until = min(cooling[m["id"]] for m in fit)
                     self.note(f"all models cooling down, waiting until {hhmm(until)}")
-                    stop = self.pause("models", lambda: now() >= until, POLL_SECONDS, hard_timeout)
+                    stop = self.pause("models", lambda: now() >= until or self.reload_models(),
+                                      POLL_SECONDS, hard_timeout)
                     if stop:
                         return stop
                     continue
@@ -855,6 +888,8 @@ class Supervisor:
                     else:
                         text = self.follow_up(RESUME_TEXT, last_why)
             self.save(slug=entry["id"])
+            # a forced retry may name a model the fresh list dropped: OpenCode still needs it in its config
+            models = self.models if entry["id"] in {m["id"] for m in self.models} else self.models + [entry]
             reason, code = self.run_once(entry, text, models)
             if reason in ("cancelled", "orphaned"):
                 return self.save(status=reason, ended=now())
@@ -889,10 +924,11 @@ class Supervisor:
                 self.note(f"gateway was down, restarted; retrying {entry['id']}")
                 forced, text = entry, self.follow_up(RESUME_TEXT, last_why)
                 continue
-            if not network_up([m["id"] for m in models if m["id"] not in banned]):
+            up = lambda: network_up([m["id"] for m in self.models if m["id"] not in banned])
+            if not up():
                 since = now()
                 self.note("no network, waiting")
-                stop = self.pause("network", lambda: network_up([m["id"] for m in models if m["id"] not in banned]),
+                stop = self.pause("network", up,
                                   NETWORK_POLL_SECONDS, lambda: f"no network since {hhmm(since)}")
                 if stop:
                     return stop

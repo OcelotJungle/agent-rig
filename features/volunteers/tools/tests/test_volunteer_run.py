@@ -1153,6 +1153,98 @@ class CooldownAndWindowTests(Base):
         self.assertEqual(self.calls(), [])
 
 
+class LiveModelListTests(Base):
+    """A running job follows models.json: it is meant to change under the job (a background refresh)."""
+
+    def setUp(self):
+        super().setUp()
+        # the long cooldown must never be what ends a wait; a wait that does not follow the cache hits the short
+        # hard timeout and fails the test fast
+        for p in (mock.patch.object(vr, "MODEL_COOLDOWN_SECONDS", 600),
+                  mock.patch.object(vr, "HARD_TIMEOUT_SECONDS", 8),
+                  mock.patch.object(vr, "proxy_up", lambda token=None: True)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def after_run(self, n, action):
+        """Call action() once the n-th OpenCode run has ended."""
+        real_run_once = vr.Supervisor.run_once
+        count = []
+
+        def run_once(sup, *args, **kwargs):
+            result = real_run_once(sup, *args, **kwargs)
+            count.append(1)
+            if len(count) == n:
+                action()
+            return result
+
+        return mock.patch.object(vr.Supervisor, "run_once", run_once)
+
+    def test_a_switch_uses_a_model_added_by_a_refresh(self):
+        self.models("requesty/a", "requesty/b")
+        self.scene(requesty__a=[{"error": "bad gateway", "status": 502}, {"sleep": 60}],
+                   requesty__b=[{"error": "bad gateway", "status": 502}, {"sleep": 60}],
+                   openrouter__new=[{"text": "ok\nSTATUS: done"}])
+        with self.after_run(1, lambda: self.models("openrouter/new", "requesty/a", "requesty/b")):
+            st = self.run_job(self.make_job())
+        self.assertEqual(st["status"], "done", st)
+        self.assertEqual([c["model"] for c in self.calls()], ["requesty/a", "openrouter/new"])
+        self.assertEqual(st["slug"], "openrouter/new")
+
+    def test_a_model_gone_from_the_fresh_list_is_not_chosen(self):
+        self.models("requesty/a", "requesty/b")
+        self.scene(requesty__a=[{"error": "bad gateway", "status": 502}, {"sleep": 60}],
+                   requesty__b=[{"text": "wrong\nSTATUS: done"}], openrouter__new=[{"text": "ok\nSTATUS: done"}])
+        with self.after_run(1, lambda: self.models("openrouter/new")):
+            st = self.run_job(self.make_job())
+        self.assertEqual(st["status"], "done", st)
+        self.assertEqual([c["model"] for c in self.calls()], ["requesty/a", "openrouter/new"])
+
+    def test_cooling_wait_ends_when_the_cache_brings_a_model(self):
+        self.models("openrouter/a")
+        self.scene(openrouter__a=[{"error": "overloaded", "status": 503}, {"sleep": 60}],
+                   openrouter__new=[{"text": "ok\nSTATUS: done"}])
+        d = self.make_job()
+        self.start_thread(d)
+        self.wait_for(d, "waiting", "models")
+        self.models("openrouter/new", "openrouter/a")
+        self.wait_for(d, "status", "done")
+        self.assertEqual([c["model"] for c in self.calls()], ["openrouter/a", "openrouter/new"])
+
+    def keeps_the_old_list(self, write_bad_cache):
+        self.models("openrouter/a", "openrouter/b")
+        self.scene(openrouter__a=[{"error": "overloaded", "status": 503}, {"sleep": 60}],
+                   openrouter__b=[{"text": "ok\nSTATUS: done"}])
+        with self.after_run(1, write_bad_cache):
+            st = self.run_job(self.make_job())
+        self.assertEqual(st["status"], "done", st)
+        self.assertEqual([c["model"] for c in self.calls()], ["openrouter/a", "openrouter/b"])
+
+    def test_an_empty_fresh_cache_keeps_the_old_list(self):
+        empty = {"checked_at": stamp(), "models": [], "rejected": []}
+        self.keeps_the_old_list(lambda: (self.jobs / "models.json").write_text(json.dumps(empty), encoding="utf-8"))
+
+    def test_a_broken_fresh_cache_keeps_the_old_list(self):
+        self.keeps_the_old_list(lambda: (self.jobs / "models.json").write_text("{not json", encoding="utf-8"))
+
+    def test_a_missing_fresh_cache_keeps_the_old_list(self):
+        self.keeps_the_old_list(lambda: (self.jobs / "models.json").unlink())
+
+    def test_a_stale_cache_spawns_one_refresh_per_choice_point(self):
+        data = {"checked_at": stamp(timedelta(days=STALE_DAYS)),
+                "models": [{"id": "openrouter/a", "agent": "full", "latency_s": 1.0},
+                           {"id": "openrouter/b", "agent": "full", "latency_s": 1.0}], "rejected": []}
+        (self.jobs / "models.json").write_text(json.dumps(data), encoding="utf-8")
+        self.scene(openrouter__a=[{"error": "overloaded", "status": 503}, {"sleep": 60}],
+                   openrouter__b=[{"text": "ok\nSTATUS: done"}])
+        spawned = []
+        with mock.patch.object(vr, "spawn_detached", lambda cmd, *a, **kw: spawned.append(cmd)):
+            st = self.run_job(self.make_job())
+        self.assertEqual(st["status"], "done", st)
+        # one at the job start (ensure_models, which also serves the first choice) and one at the switch
+        self.assertEqual(len(spawned), 2, spawned)
+
+
 class NoWindowTests(Base):
     """Every child process on Windows must carry CREATE_NO_WINDOW, detached launches included."""
 
