@@ -278,9 +278,11 @@ export const createMemoryRuntime = (platform: RuntimePorts["platform"] = "linux"
 					setEnabledPlugin(fs, args[2], false);
 				}
 				if (command === "git" && args.includes("--show-toplevel")) return ok({ stdout: "/repo\n", stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
+				if (command === "git" && args.includes("--exec-path")) return ok({ stdout: "C:/Git/mingw64/libexec/git-core\n", stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
+				if (platform === "windows" && args[0] === "-I" && args[1] === "-c") return ok({ stdout: `${command}\n`, stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
 				return ok({ stdout: "abc\n", stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
 			},
-			isAvailable: async (command) => !unavailableCommands.has(command),
+			isAvailable: async (command) => !unavailableCommands.has(command) && !unavailableCommands.has(command.replaceAll("\\", "/").split("/").pop() ?? command),
 		},
 		lock: {
 			fs,
@@ -294,7 +296,7 @@ export const createMemoryRuntime = (platform: RuntimePorts["platform"] = "linux"
 		resolvePath: (...parts) => normalize(parts.join("/")),
 		executablePath: "/bun/bun",
 		pythonCommand: platform === "windows" ? "python" : "python3",
-		pathEnvironment: "/usr/bin:/bin",
+		pathEnvironment: platform === "windows" ? "C:/bin" : "/usr/bin:/bin",
 		platform,
 		clock: {
 			now: () => new Date(FAKE_TIME),

@@ -3,10 +3,12 @@ import type { Messages } from "../messages.js";
 import type { Result } from "../result.js";
 import type { RigState } from "../state.js";
 import type { RuntimePorts } from "../ports.js";
+import type { HookPrograms } from "../hook-programs.js";
 
 import { toSlashPath } from "../file-system.js";
 import { ensureClaudeImports } from "../rules/assemble-rules.js";
 import { resolvePlaceholders } from "../placeholders.js";
+import { resolveHookPrograms, resolvedHookCommand } from "../hook-programs.js";
 import { mergeSettings } from "../settings/merge-settings.js";
 import { messagesFor } from "../messages.js";
 import { err, errorText, ok } from "../result.js";
@@ -19,8 +21,6 @@ const CODEX_END_MARKER = "<!-- rig:end -->";
 const CODEX_IMPORT_LINE = "@../.codex/AGENTS.md";
 const GENERATED_IMPORT_LINE = "@../.agent-rig/generated/CLAUDE.md";
 const TEST_HOOK_NAME = "rig-check";
-// The same Git Bash path volunteer-run.py uses. A bare `bash` on Windows can resolve to WSL's System32\bash.exe.
-const GIT_BASH_PATH = "C:/Program Files/Git/bin/bash.exe";
 const TOOL_EVENTS = ["PreToolUse", "PostToolUse"] as const;
 const TOOL_TEST_NAME = "Bash";
 const TOOL_TEST_COMMAND = "echo rig-check";
@@ -45,8 +45,8 @@ type ExpectedHook = {
 const DEFAULT_HOOK_SHELL = "bash";
 const POWERSHELL_SHELL = "powershell";
 
-const shellInvocation = (shell: string, platform: RuntimePorts["platform"]): { program: string; flags: string[] } | undefined => {
-	if (shell === DEFAULT_HOOK_SHELL) return { program: platform === "windows" ? GIT_BASH_PATH : "bash", flags: ["-c"] };
+const shellInvocation = (shell: string, platform: RuntimePorts["platform"], bash: string): { program: string; flags: string[] } | undefined => {
+	if (shell === DEFAULT_HOOK_SHELL) return { program: bash, flags: ["-c"] };
 	if (shell === POWERSHELL_SHELL) return { program: platform === "windows" ? "powershell" : "pwsh", flags: ["-NoProfile", "-Command"] };
 	return undefined;
 };
@@ -71,7 +71,8 @@ export const inspectRig = async (runtime: RuntimePorts): Promise<Result<RigInspe
 	const features = featuresResult.value;
 	const enabled = new Set(features.filter((feature) => feature.name === "base" || state.features[feature.name] === true).map((feature) => feature.name));
 	const problems: string[] = [];
-	const expectedHooks = resolveExpectedHooks(runtime, state, features, enabled);
+	const programs = await resolveHookPrograms(runtime, features, enabled);
+	const expectedHooks = programs.ok ? resolveExpectedHooks(runtime, state, features, enabled, programs.value) : programs;
 	if (!expectedHooks.ok) problems.push(expectedHooks.error);
 	const codexPath = pathJoin(runtime.home, ".codex", "AGENTS.md");
 	const generatedPath = pathJoin(runtime.home, ".agent-rig", "generated", "CLAUDE.md");
@@ -96,22 +97,23 @@ export const inspectRig = async (runtime: RuntimePorts): Promise<Result<RigInspe
 	}
 	if (!settings.ok) problems.push(settings.error);
 	else {
+		problems.push(...await missingHookPrograms(runtime, settings.value, messages));
 		const parsed = mergeSettings({ currentText: settings.value, desiredEntries: [], ownershipRecords: [], mode: "apply", backupPath: "", messages });
 		if (!parsed.ok) problems.push(messages.check.settingsInvalid(parsed.error));
 		else if (expectedHooks.ok) problems.push(...missingSettingsHooks(settings.value, expectedHooks.value, messages));
 	}
-	if (!await runtime.process.isAvailable(runtime.pythonCommand)) problems.push(messages.check.interpreterMissing(runtime.pythonCommand));
-	const programs = await checkPrograms(runtime, features, enabled);
-	if (!programs.ok) problems.push(programs.error);
+	if (programs.ok && programs.value.python === "") problems.push(messages.check.interpreterMissing(runtime.pythonCommand));
+	const installedPrograms = await checkPrograms(runtime, features, enabled);
+	if (!installedPrograms.ok) problems.push(installedPrograms.error);
 	const temporary = await runtime.temporary.createDirectory("rig-check-");
 	if (!temporary.ok) problems.push(messages.check.temporaryCreateFailed(temporary.error));
 	else {
 		try {
 			if (expectedHooks.ok) {
-				const hooks = await runExpectedHooks(runtime, expectedHooks.value, temporary.value, messages);
+				const hooks = await runExpectedHooks(runtime, expectedHooks.value, temporary.value, messages, programs.ok ? programs.value.bash : "");
 				if (!hooks.ok) problems.push(hooks.error);
 			}
-			const projectTmp = await checkProjectTmp(runtime, state, temporary.value, messages);
+			const projectTmp = await checkProjectTmp(runtime, state, temporary.value, messages, programs.ok ? programs.value.bash : "");
 			if (!projectTmp.ok) problems.push(projectTmp.error);
 		} finally {
 			const removed = await runtime.temporary.removeDirectory(temporary.value);
@@ -149,6 +151,7 @@ const resolveExpectedHooks = (
 	state: RigState,
 	features: readonly FeatureManifest[],
 	enabled: ReadonlySet<string>,
+	programs: HookPrograms,
 ): Result<ExpectedHook[]> => {
 	const placeholders = {
 		CLONE: toSlashPath(state.paths.repo),
@@ -161,7 +164,7 @@ const resolveExpectedHooks = (
 		if (!enabled.has(feature.name) || !feature.platforms.includes(runtime.platform)) continue;
 		for (const hook of feature.hooks) {
 			if (hook.platform !== undefined && hook.platform !== runtime.platform) continue;
-			const command = resolvePlaceholders(hook.command, placeholders, `${feature.name}/${hook.event} command`);
+			const command = resolvePlaceholders(resolvedHookCommand(hook.command, programs, hook.args !== undefined, hook.shell), placeholders, `${feature.name}/${hook.event} command`);
 			if (!command.ok) return command;
 			let args: string[] | undefined;
 			if (hook.args !== undefined) {
@@ -178,7 +181,7 @@ const resolveExpectedHooks = (
 	return ok(hooks);
 };
 
-const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedHook[], temporaryPath: string, messages: Messages): Promise<Result<void>> => {
+const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedHook[], temporaryPath: string, messages: Messages, bash: string): Promise<Result<void>> => {
 	for (const hook of hooks) {
 		const hookEvent: Record<string, unknown> = {
 			hook_event_name: hook.event,
@@ -191,7 +194,7 @@ const runExpectedHooks = async (runtime: RuntimePorts, hooks: readonly ExpectedH
 		let program = hook.command;
 		let programArgs: string[] = hook.args ?? [];
 		if (hook.args === undefined) {
-			const invocation = shellInvocation(hook.shell ?? DEFAULT_HOOK_SHELL, runtime.platform);
+			const invocation = shellInvocation(hook.shell ?? DEFAULT_HOOK_SHELL, runtime.platform, bash);
 			if (invocation === undefined) return err(messages.check.hookShellUnknown(hook.feature, hook.event, hook.shell ?? ""));
 			program = invocation.program;
 			programArgs = [...invocation.flags, hook.command];
@@ -214,9 +217,8 @@ const toolFields = (event: string): Record<string, unknown> => TOOL_EVENTS.some(
 	? { tool_name: TOOL_TEST_NAME, tool_input: { command: TOOL_TEST_COMMAND } }
 	: {};
 
-const checkProjectTmp = async (runtime: RuntimePorts, state: RigState, temporaryPath: string, messages: Messages): Promise<Result<void>> => {
+const checkProjectTmp = async (runtime: RuntimePorts, state: RigState, temporaryPath: string, messages: Messages, bash: string): Promise<Result<void>> => {
 	const scriptPath = pathJoin(state.paths.repo, "base", "hooks", "project-tmp.sh");
-	const bash = runtime.platform === "windows" ? GIT_BASH_PATH : "bash";
 	const bashAvailable = await runtime.process.isAvailable(bash);
 	if (!bashAvailable) return err(messages.check.bashMissing(bash));
 	const result = await runtime.process.run(bash, [scriptPath], {
@@ -236,6 +238,28 @@ const missingSettingsHooks = (text: string, hooks: readonly ExpectedHook[], mess
 	return hooks
 		.filter((hook) => !isRecordedHook(settings.value, hook))
 		.map((hook) => messages.check.hookNotRecorded(hook.feature, hook.event));
+};
+
+const missingHookPrograms = async (runtime: RuntimePorts, text: string, messages: Messages): Promise<string[]> => {
+	const parsed = parseJson(text);
+	if (!parsed.ok || !isRecord(parsed.value) || !isRecord(parsed.value.hooks)) return [];
+	const paths = new Set<string>();
+	for (const groups of Object.values(parsed.value.hooks)) {
+		if (!isUnknownArray(groups)) continue;
+		for (const group of groups) {
+			if (!isRecord(group) || !isUnknownArray(group.hooks)) continue;
+			for (const hook of group.hooks) {
+				if (!isRecord(hook) || hook.type !== "command" || typeof hook.command !== "string") continue;
+				// With `args` the command is the program path itself (it may contain spaces); without, a shell line whose first word is the program.
+				const match = hook.command.replace(/^&\s+/, "").match(/^(?:'([^']+)'|"([^"]+)"|(\S+))/);
+				const path = isUnknownArray(hook.args) ? hook.command : match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
+				if (/^(?:[A-Za-z]:\/|\/)/.test(path)) paths.add(path);
+			}
+		}
+	}
+	const missing: string[] = [];
+	for (const path of paths) if (!await runtime.process.isAvailable(path)) missing.push(messages.check.hookProgramGone(path));
+	return missing;
 };
 
 const parseJson = (text: string): Result<unknown> => {

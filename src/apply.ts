@@ -7,6 +7,7 @@ import type { RigState } from "./state.js";
 import type { Result } from "./result.js";
 import type { RuntimePorts } from "./ports.js";
 import type { FileSystem } from "./file-system.js";
+import type { HookPrograms } from "./hook-programs.js";
 
 import { buildJournal, emitJournalEvents, isRigRecordKey, planEvents, recoverRecords } from "./apply-journal.js";
 import { executeAssetOperations, planAssets, applyPlugins } from "./assets/installer.js";
@@ -14,6 +15,7 @@ import { chooseBackupPath } from "./backup-path.js";
 import { hashText } from "./content-hash.js";
 import { assembleRules, ensureClaudeImports, executeRuleFilePlan, planRuleFiles } from "./rules/assemble-rules.js";
 import { resolveJsonPlaceholders, resolvePlaceholders } from "./placeholders.js";
+import { resolveHookPrograms, resolvedHookCommand } from "./hook-programs.js";
 import { mergeSettings } from "./settings/merge-settings.js";
 import { isTranslatedLanguage, messagesFor } from "./messages.js";
 import { atomicWrite, joinPath, toSlashPath } from "./file-system.js";
@@ -98,16 +100,19 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 
 	const today = runtime.clock.nowText().slice(0, ISO_DATE_LENGTH);
 	const settingsBackupBase = `${settingsPath}.bak-${today}`;
+	const hookPrograms = await resolveHookPrograms(runtime, manifests, enabled);
+	if (!hookPrograms.ok) return hookPrograms;
 	const placeholders = {
 		CLONE: toSlashPath(request.state.paths.repo),
 		HUB: toSlashPath(request.state.paths.hub),
 		HOME: toSlashPath(runtime.home),
+		// Text placeholders (rules, agents, permission strings) keep the bare name agents type; only hook commands are absolute.
 		PYTHON: toSlashPath(runtime.pythonCommand),
 	};
 	const chunksResult = await loadRuleChunks(runtime, manifests, enabled, platform, request.state.paths.repo, placeholders);
 	if (!chunksResult.ok) return chunksResult;
 	const assembled = assembleRules(chunksResult.value, { codex: codexRead.value ?? "" });
-	const desiredSettingsResult = buildDesiredSettings(manifests, enabled, runtime, placeholders, request.state.mode);
+	const desiredSettingsResult = buildDesiredSettings(manifests, enabled, runtime, placeholders, request.state.mode, hookPrograms.value);
 	if (!desiredSettingsResult.ok) return desiredSettingsResult;
 	const settingRecords = parseSettingRecords(records);
 	const messages = messagesFor(runtime.language);
@@ -130,7 +135,7 @@ export const applyRig = async (runtime: RuntimePorts, request: ApplyRequest): Pr
 		now: () => runtime.clock.nowText(),
 		boundaryPath: claudeHome,
 	};
-	const assetPlanned = await planAssets(assetEnvironment, buildAssetPlans(manifests, enabled, request.state, runtime), readAssetRecords(records));
+	const assetPlanned = await planAssets(assetEnvironment, buildAssetPlans(manifests, enabled, request.state, runtime),readAssetRecords(records));
 	if (!assetPlanned.ok) return assetPlanned;
 	const ruleFiles = [
 		{ path: codexPath, content: assembled.codex },
@@ -278,6 +283,7 @@ const buildDesiredSettings = (
 	runtime: RuntimePorts,
 	placeholders: Readonly<Record<string, string>>,
 	mode: RigState["mode"],
+	programs: HookPrograms,
 ): Result<DesiredSettingEntry[]> => {
 	const entries: DesiredSettingEntry[] = mode === "server"
 		? [{ id: UPDATE_CHANNEL_SETTING_ID, kind: "install-default", path: UPDATE_CHANNEL_PATH, value: SERVER_UPDATE_CHANNEL }]
@@ -286,7 +292,7 @@ const buildDesiredSettings = (
 		if (!enabled.has(feature.name) || !feature.platforms.includes(runtime.platform)) continue;
 		for (const hook of feature.hooks) {
 			if (hook.platform !== undefined && hook.platform !== runtime.platform) continue;
-			const value = hookSettingValue(hook, placeholders, runtime.language);
+			const value = hookSettingValue(hook, placeholders, runtime.language, programs);
 			if (!value.ok) return value;
 			entries.push({
 				id: `${feature.name}:hook:${hook.event}:${hook.matcher}:${hookScriptName(hook)}`,
@@ -323,8 +329,9 @@ const hookSettingValue = (
 	hook: HookManifest,
 	placeholders: Readonly<Record<string, string>>,
 	language: Language,
+	programs: HookPrograms,
 ): Result<JsonObject> => {
-	const command = resolvePlaceholders(hook.command, placeholders, `${hook.event} hook command`);
+	const command = resolvePlaceholders(resolvedHookCommand(hook.command, programs, hook.args !== undefined, hook.shell), placeholders, `${hook.event} hook command`);
 	if (!command.ok) return command;
 	const value: JsonObject = { type: "command", command: command.value };
 	if (hook.args !== undefined) {

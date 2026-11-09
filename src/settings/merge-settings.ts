@@ -1449,7 +1449,8 @@ const hookMatchesIdentity = (entry: JsonObjectNode, scriptName: string): boolean
         if (item.kind === "string") argumentValues.push(item.value);
       }
     }
-    return normalizeCommand([commandProperty.value.value, ...argumentValues].join(" ")) === scriptName;
+    const command = normalizeCommand([commandProperty.value.value, ...argumentValues].join(" "));
+    return /(?:^|[/'"\\])rtk(?:\.exe)?["']? hook claude$/i.test(command);
   }
 
   if (commandProperty !== undefined

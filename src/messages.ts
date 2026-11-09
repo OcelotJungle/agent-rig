@@ -46,6 +46,7 @@ export const en = {
 		waiting: (): string => "Another rig command is running, waiting for it to finish.",
 	},
 	apply: {
+		hookProgramMissing: (program: string, feature: string): string => `Cannot resolve hook program ${program} required by feature ${feature}.`,
 		upToDate: (): string => "The rig configuration is already up to date.",
 		updatedFiles: (count: number): string => `Files updated: ${count}.`,
 		settingsInvalid: (error: string, settingsPath: string): string =>
@@ -94,6 +95,7 @@ export const en = {
 		crontabWriteFailed: (detail: string): string => `Could not write the crontab: ${detail}`,
 	},
 	check: {
+		hookProgramGone: (program: string): string => `Hook program ${program} no longer exists; run rig apply.`,
 		ruleBlockMissing: (path: string): string => `The built rules block was not found: ${path}`,
 		importsMissing: (path: string): string => `The rig imports were not found in ${path}`,
 		settingsInvalid: (error: string): string => `settings.json is invalid: ${error}`,

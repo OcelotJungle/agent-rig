@@ -255,7 +255,7 @@ describe("command wiring", () => {
 
 		const result = await checkRig(harness.runtime);
 		expect(result.ok).toBe(true);
-		const hookCall = harness.processCalls.find((call) => call.command === "python3" && call.args[0]?.endsWith("reflect.py"));
+		const hookCall = harness.processCalls.find((call) => call.command === "/usr/bin/python3" && call.args[0]?.endsWith("reflect.py"));
 		expect(hookCall?.options?.input).toContain('"stop_hook_active":true');
 		expect(harness.processCalls.some((call) => call.command === "claude" && call.args.includes("-p"))).toBe(false);
 	});
@@ -306,7 +306,7 @@ describe("command wiring", () => {
 		seedCheckableRig(harness.fs, GUARD_HOOK_SETTINGS);
 
 		await checkRig(harness.runtime);
-		const hookCall = harness.processCalls.find((call) => call.command === "python3" && call.args[0]?.endsWith("no_ampersand.py"));
+		const hookCall = harness.processCalls.find((call) => call.command === "/usr/bin/python3" && call.args[0]?.endsWith("no_ampersand.py"));
 		const event: unknown = JSON.parse(hookCall?.options?.input ?? "null");
 		expect(event).toMatchObject({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command: "echo rig-check" } });
 	});
@@ -319,7 +319,7 @@ describe("command wiring", () => {
 		seedCheckableRig(harness.fs, REFLECT_HOOK_SETTINGS);
 
 		await checkRig(harness.runtime);
-		const hookCall = harness.processCalls.find((call) => call.command === "python3" && call.args[0]?.endsWith("reflect.py"));
+		const hookCall = harness.processCalls.find((call) => call.command === "/usr/bin/python3" && call.args[0]?.endsWith("reflect.py"));
 		expect(hookCall?.options?.cwd).toBeDefined();
 		expect(hookCall?.options?.environment?.CLAUDE_PROJECT_DIR).toBe(hookCall?.options?.cwd);
 		const projectTmpCall = harness.processCalls.find((call) => call.args[0]?.endsWith("project-tmp.sh"));
@@ -346,17 +346,17 @@ describe("command wiring", () => {
 		seedFeature(harness.fs, REPO, featureManifest("reflection", { hooks: [REFLECT_HOOK] }));
 		seedState(harness.fs, { rtk: true, reflection: true });
 		seedCheckableRig(harness.fs, settingsWithHooks({
-			PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "rtk hook claude" }] }],
-			Stop: [{ matcher: "", hooks: [{ type: "command", command: "python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
+			PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "'/usr/bin/rtk' hook claude" }] }],
+			Stop: [{ matcher: "", hooks: [{ type: "command", command: "/usr/bin/python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
 		}));
 
 		const result = await checkRig(harness.runtime);
 		expect(result.ok).toBe(true);
-		const shellCall = harness.processCalls.find((call) => call.args.includes("rtk hook claude"));
-		expect(shellCall?.command).toBe("bash");
-		expect(shellCall?.args).toEqual(["-c", "rtk hook claude"]);
+		const shellCall = harness.processCalls.find((call) => call.args.includes("'/usr/bin/rtk' hook claude"));
+		expect(shellCall?.command).toBe("/usr/bin/bash");
+		expect(shellCall?.args).toEqual(["-c", "'/usr/bin/rtk' hook claude"]);
 		expect(harness.processCalls.some((call) => call.command === "rtk hook claude")).toBe(false);
-		expect(harness.processCalls.some((call) => call.command === "python3" && call.args[0]?.endsWith("reflect.py"))).toBe(true);
+		expect(harness.processCalls.some((call) => call.command === "/usr/bin/python3" && call.args[0]?.endsWith("reflect.py"))).toBe(true);
 	});
 
 	test("a shell hook names its shell, and an unknown shell fails the check clearly", async () => {
@@ -365,12 +365,12 @@ describe("command wiring", () => {
 		seedFeature(harness.fs, REPO, baseManifest());
 		seedFeature(harness.fs, REPO, featureManifest("shelly", { hooks: [hook] }));
 		seedState(harness.fs, { shelly: true });
-		const settings = (shell: string): string => settingsWithHooks({ Stop: [{ matcher: "", hooks: [{ type: "command", command: "echo hi", shell }] }] });
+		const settings = (shell: string): string => settingsWithHooks({ Stop: [{ matcher: "", hooks: [{ type: "command", command: shell === "powershell" ? "& 'C:/bin/echo.exe' hi" : "'C:/bin/echo.exe' hi", shell }] }] });
 		seedCheckableRig(harness.fs, settings("powershell"));
 
 		const ran = await checkRig(harness.runtime);
 		expect(ran.ok).toBe(true);
-		expect(harness.processCalls.some((call) => call.command === "powershell" && call.args.at(-1) === "echo hi")).toBe(true);
+		expect(harness.processCalls.some((call) => call.command === "powershell" && call.args.at(-1) === "& 'C:/bin/echo.exe' hi")).toBe(true);
 
 		const unknown = createMemoryRuntime("windows");
 		seedFeature(unknown.fs, REPO, baseManifest());
@@ -635,7 +635,7 @@ const seedState = (fs: ReturnType<typeof createMemoryRuntime>["fs"], features: R
 };
 
 const CODEX_RULE_BLOCK = "<!-- rig:begin -->\n<!-- rig:end -->\n";
-const GIT_BASH_PATH = "C:/Program Files/Git/bin/bash.exe";
+const GIT_BASH_PATH = "C:/Git/bin/bash.exe";
 const REFLECT_HOOK = {
 	event: "Stop",
 	matcher: "",
@@ -650,13 +650,13 @@ const GUARD_HOOK = {
 };
 const settingsWithHooks = (hooks: Record<string, unknown>): string => `${JSON.stringify({ hooks }, null, 2)}\n`;
 const REFLECT_HOOK_SETTINGS = settingsWithHooks({
-	Stop: [{ matcher: "", hooks: [{ type: "command", command: "python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
+	Stop: [{ matcher: "", hooks: [{ type: "command", command: "/usr/bin/python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
 });
 const REFLECT_HOOK_OTHER_MATCHER_SETTINGS = settingsWithHooks({
-	Stop: [{ matcher: "Bash", hooks: [{ type: "command", command: "python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
+	Stop: [{ matcher: "Bash", hooks: [{ type: "command", command: "/usr/bin/python3", args: [`${REPO}/features/reflection/hooks/reflect.py`] }] }],
 });
 const GUARD_HOOK_SETTINGS = settingsWithHooks({
-	PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "python3", args: [`${REPO}/base/hooks/no_ampersand.py`] }] }],
+	PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "/usr/bin/python3", args: [`${REPO}/base/hooks/no_ampersand.py`] }] }],
 });
 
 const eventLine = (id: string, time: string, type: string, level: "info" | "warn" | "error", text: string): string => `${JSON.stringify({ id, time, level, type, text })}\n`;

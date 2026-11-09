@@ -87,7 +87,7 @@ of the array. `platform`, `whenEnabled` and `whenDisabled` restrict rules. `hook
 `args`, `platform`, `timeout`, `statusMessage`, `translations`, `async`, `asyncRewake` and `shell` are optional;
 `statusMessage` is a plain English string and the hook's `translations`, `{ "ru": { "statusMessage": "..." } }`, holds
 its texts in the other languages (see "Language"). The substitutions
-`{{CLONE}}`, `{{HUB}}`, `{{HOME}}` and `{{PYTHON}}` are resolved by one mechanism at apply time for rules, hooks, settings
+`{{CLONE}}`, `{{HUB}}`, `{{HOME}}`, `{{BASH}}` and `{{PYTHON}}` are resolved at apply time for rules, hooks, settings
 values, agents, skills and copied files. `settings` sets a dotted key and a value; `id`, `kind` and `platform` are
 optional. `kind` is `value`, `list-entry` or `install-default`; without `kind`, the permission lists `permissions.allow`,
 `permissions.deny` and `autoMode.allow` are extended, other values are replaced. `assets` holds `sourcePath`/`targetPath`
@@ -95,6 +95,16 @@ pairs relative to the feature clone and to `~/.claude`; paths cannot leave these
 that stay in the clone; `agents` and `skills` list the source files and directories to copy. Programs can be restricted by
 `platform`. Plugins are given by the selector `plugin@marketplace`; the hub's local plugin is taken from the hub clone.
 `hubCommands` is a list of command names the feature declares for the hub.
+
+The program a hook `command` names (`{{PYTHON}}`, `{{BASH}}`, `rtk`) is resolved once, in the rig process at apply time,
+to an absolute path, and `rig check` uses the same resolution. A bare name would be looked up in the PATH of whatever
+process starts the hook (Claude Code), where on Windows `bash` finds the WSL launcher in System32 and `python` the
+WindowsApps stub. On Windows `bash` is the Git Bash derived from the installed Git (`git --exec-path`), never a fixed
+path, and `python` must be a real interpreter, not a WindowsApps alias. A program that cannot be resolved fails
+`rig apply` naming the program and the feature; `rig check` reports a recorded hook program that no longer exists and
+asks for `rig apply`, which also replaces older bare-name entries. Only the hook `command` is absolute: `{{PYTHON}}` in
+rules, agents and permission strings stays the bare name, because that is what agents type and what the permission
+patterns must match.
 
 If a needed program is missing at `enable` or update, `rig` installs it itself when root is not needed. It does not install
 system packages: it prints the command, and at update `rig check` fails, the rollback runs and an event with that command
@@ -122,6 +132,9 @@ Sections are headings in `CLAUDE.md` and `~/.codex/AGENTS.md`.
 
 `tools/tests/` go into the repository together with the scripts. The `volunteers` tests live in its feature.
 
+The base PreToolUse hooks reject background Bash starts and explicit tool write targets in system temp. The temp guard
+allows project `.tmp` and home-directory sessions; variable-based and computed shell paths are outside its literal check.
+
 The repository has no personal paths or project names. The folders in which a volunteer works are listed in the local file
 `~/.agent-rig/volunteer-projects.json` (`{"allowed": ["<folder>"]}`). Without this file the volunteer refuses all folders.
 
@@ -132,9 +145,6 @@ supervisor by PID so the job is cleaned up with it.
 Base rules:
 
 | Target | Sections |
-The base PreToolUse hooks reject background Bash starts and explicit tool write targets in system temp. The temp guard
-allows project `.tmp` and home-directory sessions; variable-based and computed shell paths are outside its literal check.
-
 |---|---|
 | `shared` | "Addressing the user", "Temporary files", "Tests and runs", "Specs are living documents" |
 | `claude` | "Compact instructions", "Global rules vs project memory", "Ask-driven development", "Every message gets an answer", "Writing to the user", "Fixing a sent answer", "BLOCKERS GO FIRST", "Review and engineering method", "Subagent models", "Delegation: keep the main context small", "Commits", "No heredocs", "Background tasks and monitors" |

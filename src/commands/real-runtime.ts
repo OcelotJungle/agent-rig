@@ -7,7 +7,7 @@ import type { RigState } from "../state.js";
 import type { RepositoryName, UpdatePorts } from "../update/update.js";
 
 import { createHash, randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { constants, promises as fs } from "node:fs";
 import { homedir, platform as hostPlatform, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -213,7 +213,7 @@ const createProcessPorts = (pathEnvironment: string) => ({
 	isAvailable: async (command: string): Promise<boolean> => {
 		if (command.includes("/") || command.includes("\\")) {
 			try {
-				await fs.access(command);
+				await fs.access(command, hostPlatform() === "win32" ? constants.F_OK : constants.X_OK);
 				return true;
 			} catch {
 				return false;

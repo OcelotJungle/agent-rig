@@ -33,6 +33,7 @@ export const ru: Messages = {
 		waiting: (): string => "Другая команда rig работает, жду её конца.",
 	},
 	apply: {
+		hookProgramMissing: (program: string, feature: string): string => `Не найдена программа хука ${program}, нужная для функции ${feature}.`,
 		upToDate: (): string => "Конфигурация rig уже актуальна.",
 		updatedFiles: (count: number): string => `Обновлено файлов: ${count}.`,
 		settingsInvalid: (error: string, settingsPath: string): string =>
@@ -81,6 +82,7 @@ export const ru: Messages = {
 		crontabWriteFailed: (detail: string): string => `Не удалось записать crontab: ${detail}`,
 	},
 	check: {
+		hookProgramGone: (program: string): string => `Программа хука ${program} больше не существует; запусти rig apply.`,
 		ruleBlockMissing: (path: string): string => `Не найден собранный блок правил: ${path}`,
 		importsMissing: (path: string): string => `Не найдены импорты rig в ${path}`,
 		settingsInvalid: (error: string): string => `settings.json недопустим: ${error}`,

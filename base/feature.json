@@ -395,7 +395,7 @@
     {
       "event": "SessionStart",
       "matcher": "",
-      "command": "bash",
+      "command": "{{BASH}}",
       "args": [
         "{{CLONE}}/base/hooks/project-tmp.sh"
       ],
