@@ -92,6 +92,7 @@
 | Rule | `features/telegram/rules/claude-telegram-mode.md` | telegram | — | claude | all | `telegram` on | — | — | — | — | — | — |
 | Rule | `features/skills/rules/claude-measurement-runs.md` | skills | — | claude | all | `skills` on | — | — | — | — | — | — |
 | Rule | `features/js-ts-rules/rules/shared-js-ts-code-conventions.md` | js-ts-rules | — | shared | all | `js-ts-rules` on | — | — | — | — | — | — |
+| Rule | `features/subagent-tasks-guard/rules/claude-subagent-tasks-guard.md` | subagent-tasks-guard | — | claude | all | `subagent-tasks-guard` on | — | — | — | — | — | — |
 | Hook | `SessionStart` | base | — | all | always | `compact` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/compact_history.py` | 30 | `Saving pre-compaction history` | — |
 | Hook | `SessionStart` | base | — | all | always | — | `{{BASH}}` | `{{CLONE}}/base/hooks/project-tmp.sh` | 60 | — | — |
 | Hook | `SessionStart` | codex | — | all | `codex` on | — | `{{PYTHON}}` | `-I {{CLONE}}/features/codex/tools/codex-run.py session-hint` | 10 | — | — |
@@ -99,6 +100,8 @@
 | Hook | `PreToolUse` | base | — | all | always | `Write\|Edit\|NotebookEdit\|Bash` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/system-temp-guard.py` | — | — | — |
 | Hook | `PreToolUse` | rtk | — | all | `rtk` on | `Bash` | `rtk hook claude` | — | — | — | — |
 | Hook | `PreToolUse` | analysis-gate | — | all | `analysis-gate` on | `Agent` | `{{PYTHON}}` | `{{CLONE}}/features/analysis-gate/hooks/analysis_gate.py` | 30 | `Checking the analysis file` | — |
+| Hook | `PreToolUse` | subagent-tasks-guard | — | all | `subagent-tasks-guard` on | `SubagentHandback` | `{{PYTHON}}` | `{{CLONE}}/features/subagent-tasks-guard/hooks/subagent_tasks_guard.py` | 30 | `Checking background tasks of the subagent` | — |
+| Hook | `SubagentStop` | subagent-tasks-guard | — | all | `subagent-tasks-guard` on | — | `{{PYTHON}}` | `{{CLONE}}/features/subagent-tasks-guard/hooks/subagent_tasks_guard.py` | 30 | `Checking background tasks of the subagent` | — |
 | Hook | `Stop` | reflection | — | all | `reflection` on | — | `{{PYTHON}}` | `-X utf8 {{CLONE}}/features/reflection/hooks/reflect.py` | 330 | `Reflecting on the turn` | `true` |
 
 Hook commands run from the clone. In a hook `command`, `{{PYTHON}}`, `{{BASH}}` and `rtk` become absolute paths at apply time (Git Bash on Windows). Elsewhere `{{PYTHON}}` is `python3` on Linux and `python` on Windows. Rule and hook paths use `{{CLONE}}` when rig needs an absolute path.

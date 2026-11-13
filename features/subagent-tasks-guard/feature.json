@@ -1,0 +1,68 @@
+{
+  "name": "subagent-tasks-guard",
+  "description": "Blocks a subagent from reporting or ending while a background task it started (Monitor, background Bash, background Agent) is still alive.",
+  "translations": {
+    "ru": {
+      "description": "Не даёт субагенту отчитаться или завершиться, пока жив запущенный им фоновый процесс (Monitor, фоновый Bash, фоновый Agent)."
+    }
+  },
+  "enabledByDefault": true,
+  "platforms": [
+    "linux",
+    "windows",
+    "darwin"
+  ],
+  "dependencies": [],
+  "rules": [
+    {
+      "path": "rules/claude-subagent-tasks-guard.md",
+      "target": "claude",
+      "whenEnabled": [
+        "subagent-tasks-guard"
+      ]
+    }
+  ],
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "matcher": "SubagentHandback",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/features/subagent-tasks-guard/hooks/subagent_tasks_guard.py"
+      ],
+      "timeout": 30,
+      "statusMessage": "Checking background tasks of the subagent",
+      "translations": {
+        "ru": {
+          "statusMessage": "Проверка фоновых процессов субагента"
+        }
+      }
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": "",
+      "command": "{{PYTHON}}",
+      "args": [
+        "{{CLONE}}/features/subagent-tasks-guard/hooks/subagent_tasks_guard.py"
+      ],
+      "timeout": 30,
+      "statusMessage": "Checking background tasks of the subagent",
+      "translations": {
+        "ru": {
+          "statusMessage": "Проверка фоновых процессов субагента"
+        }
+      }
+    }
+  ],
+  "settings": [],
+  "plugins": [],
+  "files": [
+    "hooks/subagent_tasks_guard.py",
+    "hooks/subagent_tasks.py"
+  ],
+  "assets": [],
+  "agents": [],
+  "skills": [],
+  "hubCommands": [],
+  "programs": []
+}
