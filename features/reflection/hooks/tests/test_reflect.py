@@ -7,6 +7,7 @@ REFLECT_LIVE_PROBE=1:
 import importlib.util
 import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -102,6 +103,30 @@ class AnalysisLineTests(ProjectCase):
     def test_no_line_when_rig_state_is_missing(self):
         text = self.review_input(self.payload("How long will the refactor take?", "It will take about 40 minutes."))
         self.assertNotIn("ANALYSIS FILE", text)
+
+
+class AskCommandTests(ProjectCase):
+    """The reviewer command: no budget flag, since claude then injects a budget line into the reviewer's context."""
+
+    def captured_command(self, model):
+        envelope = json.dumps({"structured_output": {"verdict": "ok", "problems": []}, "total_cost_usd": 0})
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=envelope, stderr="")
+        with mock.patch.object(REFLECT.shutil, "which", return_value="claude"), \
+                mock.patch.object(REFLECT.subprocess, "run", return_value=completed) as run:
+            answer, _, _ = REFLECT.ask(model, ["ok", "problem", "unsure"], "turn text", str(self.project), [], time.monotonic())
+        self.assertEqual(answer, {"verdict": "ok", "problems": []})
+        return run.call_args.args[0]
+
+    def test_command_has_no_budget_flag(self):
+        cmd = self.captured_command(REFLECT.FIRST_MODEL)
+        self.assertIn("--model", cmd)
+        self.assertNotIn("--max-budget-usd", cmd)
+
+    def test_no_argument_mentions_a_budget(self):
+        cmd = self.captured_command(REFLECT.SECOND_MODEL)
+        self.assertIn("--model", cmd)
+        for arg in cmd:
+            self.assertNotIn("budget", arg.lower(), f"budget in argument {arg!r}")
 
 
 ESTIMATE_KIND = 6  # check 6 of reflect_prompt.md: an estimate without the analysis file

@@ -49,7 +49,6 @@ CHILD_ENV = "REFLECT_CHILD"
 
 FIRST_MODEL = "haiku"
 SECOND_MODEL = "sonnet"
-BUDGET_USD = {FIRST_MODEL: "0.15", SECOND_MODEL: "0.40"}
 USER_MESSAGES = 3
 CONVERSATION_BUDGET = 40_000
 RULES_LIMIT = 14_000
@@ -334,7 +333,6 @@ def ask(model: str, verdicts: list[str], text: str, cwd: str, dirs: list[Path], 
         "--no-session-persistence", "--disable-slash-commands", "--strict-mcp-config",
         "--setting-sources", "", "--system-prompt-file", str(PROMPT_FILE),
         "--json-schema", schema(verdicts), "--output-format", "json",
-        "--max-budget-usd", BUDGET_USD[model],
     ]
     env = dict(os.environ, **{CHILD_ENV: "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"})
     cost, error = 0.0, ""
