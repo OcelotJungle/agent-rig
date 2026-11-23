@@ -8,7 +8,7 @@
 - A Monitor tails the run's own output path from the run_in_background reply, armed after that reply; never `ls -t`.
 - Jobs over a minute or two run in the background; no `&` in a foreground call.
 - Before (re)starting a run, check `tasklist` (Git Bash `ps` misses other shells). TaskStop leaves a run's children
-  alive: kill them by match and confirm 0. Never edit a running script.
+  alive: kill them by PID and confirm 0. Never edit a running script.
 - Every `tail -f`/`-F` in a monitor or background shell carries `--pid=$$` (TaskStop leaves `tail -f` running).
 - Stop a background shell or monitor with TaskStop once its result is read. Before each final report, check for orphans
-  (`tasklist | grep -ci tail.exe`) and kill the ones no live task uses.
+  (`tasklist | grep -ci tail.exe`) and kill by PID the ones no live task uses (a left-over `tail` keeps a subagent shown as working).

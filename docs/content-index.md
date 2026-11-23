@@ -30,16 +30,13 @@
 | Rule | `base/rules/claude-delegation-01-subagent-models-03-routing-codex-off-volunteers-off.md` | base | 01.03 | claude | all | `codex` off; `volunteers` off | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-04-most-tasks-codex-on.md` | base | 01.04 | claude | all | `codex` on | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-04-most-tasks-codex-off.md` | base | 01.04 | claude | all | `codex` off | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-01-subagent-models-04-instructions-codex-on.md` | base | 01.04 | claude | all | `codex` on | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-01-subagent-models-04-instructions-codex-off.md` | base | 01.04 | claude | all | `codex` off | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-on.md` | base | 01.05 | claude | all | `codex` on | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-off.md` | base | 01.05 | claude | all | `codex` off | — | — | — | — | — | — |
+| Rule | `base/rules/claude-delegation-01-subagent-models-04-instructions.md` | base | 01.04 | claude | all | always | — | — | — | — | — | — |
+| Rule | `base/rules/claude-delegation-01-subagent-models-05-complex-tasks.md` | base | 01.05 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-06-final-review-codex-on.md` | base | 01.06 | claude | all | `codex` on | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-06-final-review-codex-off.md` | base | 01.06 | claude | all | `codex` off | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-07-leftovers.md` | base | 01.07 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-01-subagent-models-08-agent-guidance.md` | base | 01.08 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-01-heading.md` | base | 02.01 | claude | all | always | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-02-main-context-02-context-cost.md` | base | 02.02 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-03-orchestrator.md` | base | 02.03 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-04-locating-codex-on-volunteers-on.md` | base | 02.04 | claude | all | `codex` on; `volunteers` on | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-04-locating-codex-on-volunteers-off.md` | base | 02.04 | claude | all | `codex` on; `volunteers` off | — | — | — | — | — | — |
@@ -57,11 +54,11 @@
 | Rule | `base/rules/claude-delegation-02-main-context-11-read-files.md` | base | 02.11 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-12-estimates.md` | base | 02.12 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-delegation-02-main-context-13-limit-pause.md` | base | 02.13 | claude | all | always | — | — | — | — | — | — |
-| Rule | `base/rules/claude-delegation-02-main-context-14-scan-skills.md` | base | 02.14 | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-commits.md` | base | — | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-no-heredocs.md` | base | — | claude | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-windows-commands-go-through-bash.md` | base | — | claude | Windows | always | — | — | — | — | — | — |
 | Rule | `base/rules/claude-background-tasks-and-monitors.md` | base | — | claude | all | always | — | — | — | — | — | — |
+| Rule | `base/rules/shared-design.md` | base | — | shared | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/shared-specs-are-living-documents.md` | base | — | shared | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/shared-temporary-files.md` | base | — | shared | all | always | — | — | — | — | — | — |
 | Rule | `base/rules/shared-tests-and-runs.md` | base | — | shared | all | always | — | — | — | — | — | — |
@@ -88,9 +85,7 @@
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-06-failure-codex-on.md` | volunteers | 04.06 | claude | Windows | `volunteers` on; `codex` on | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-06-failure-codex-off.md` | volunteers | 04.06 | claude | Windows | `volunteers` on; `codex` off | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-07-commits.md` | volunteers | 04.07 | claude | Windows | `volunteers` on | — | — | — | — | — | — |
-| Rule | `features/telegram/rules/claude-attention-chime.md` | telegram | — | claude | all | `telegram` on | — | — | — | — | — | — |
 | Rule | `features/telegram/rules/claude-telegram-mode.md` | telegram | — | claude | all | `telegram` on | — | — | — | — | — | — |
-| Rule | `features/skills/rules/claude-measurement-runs.md` | skills | — | claude | all | `skills` on | — | — | — | — | — | — |
 | Rule | `features/js-ts-rules/rules/shared-js-ts-code-conventions.md` | js-ts-rules | — | shared | all | `js-ts-rules` on | — | — | — | — | — | — |
 | Rule | `features/subagent-tasks-guard/rules/claude-subagent-tasks-guard.md` | subagent-tasks-guard | — | claude | all | `subagent-tasks-guard` on | — | — | — | — | — | — |
 | Hook | `SessionStart` | base | — | all | always | `compact` | `{{PYTHON}}` | `{{CLONE}}/base/hooks/compact_history.py` | 30 | `Saving pre-compaction history` | — |

@@ -13,15 +13,7 @@
     "darwin"
   ],
   "dependencies": [],
-  "rules": [
-    {
-      "path": "rules/claude-measurement-runs.md",
-      "target": "claude",
-      "whenEnabled": [
-        "skills"
-      ]
-    }
-  ],
+  "rules": [],
   "hooks": [],
   "settings": [],
   "plugins": [],

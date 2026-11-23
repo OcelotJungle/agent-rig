@@ -1,1 +1,1 @@
-- Read big files by search and fragments. Reuse paid outputs; never pay for the same work twice.
+- Reuse paid outputs; never pay for the same work twice.

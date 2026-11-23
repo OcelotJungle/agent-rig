@@ -1,1 +1,1 @@
-- Review of important changes: `/codex:review` or `/codex:adversarial-review`. The `codex:codex-rescue` subagent is forbidden.
+- Never use the `codex:rescue` skill or the `codex:codex-rescue` subagent.

@@ -1,4 +1,4 @@
-## Temporary files
+# Temporary files
 
 - TEMP, TMP and TMPDIR already point to `.tmp/` in the project root (hook `{{CLONE}}/base/hooks/project-tmp.sh`; Codex
   inherits them). Take the temp path from `$TEMP` in the shell, not from a summary or an old brief.

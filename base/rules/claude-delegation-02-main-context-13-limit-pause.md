@@ -1,1 +1,1 @@
-- On a limit pause let running jobs finish (ask if stopping one would waste a lot); only new work waits.
+- On a limit pause running jobs finish; no new work starts until the reset.

@@ -1,1 +1,0 @@
-- Before a task, scan the user's skills and use the matching one from the start.

@@ -177,32 +177,12 @@
       ]
     },
     {
-      "path": "rules/claude-delegation-01-subagent-models-04-instructions-codex-on.md",
-      "target": "claude",
-      "whenEnabled": [
-        "codex"
-      ]
+      "path": "rules/claude-delegation-01-subagent-models-04-instructions.md",
+      "target": "claude"
     },
     {
-      "path": "rules/claude-delegation-01-subagent-models-04-instructions-codex-off.md",
-      "target": "claude",
-      "whenDisabled": [
-        "codex"
-      ]
-    },
-    {
-      "path": "rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-on.md",
-      "target": "claude",
-      "whenEnabled": [
-        "codex"
-      ]
-    },
-    {
-      "path": "rules/claude-delegation-01-subagent-models-05-complex-tasks-codex-off.md",
-      "target": "claude",
-      "whenDisabled": [
-        "codex"
-      ]
+      "path": "rules/claude-delegation-01-subagent-models-05-complex-tasks.md",
+      "target": "claude"
     },
     {
       "path": "rules/claude-delegation-01-subagent-models-06-final-review-codex-on.md",
@@ -228,10 +208,6 @@
     },
     {
       "path": "rules/claude-delegation-02-main-context-01-heading.md",
-      "target": "claude"
-    },
-    {
-      "path": "rules/claude-delegation-02-main-context-02-context-cost.md",
       "target": "claude"
     },
     {
@@ -343,10 +319,6 @@
       "target": "claude"
     },
     {
-      "path": "rules/claude-delegation-02-main-context-14-scan-skills.md",
-      "target": "claude"
-    },
-    {
       "path": "rules/claude-commits.md",
       "target": "claude"
     },
@@ -362,6 +334,10 @@
     {
       "path": "rules/claude-background-tasks-and-monitors.md",
       "target": "claude"
+    },
+    {
+      "path": "rules/shared-design.md",
+      "target": "shared"
     },
     {
       "path": "rules/shared-specs-are-living-documents.md",

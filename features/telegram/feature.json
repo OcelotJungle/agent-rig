@@ -15,13 +15,6 @@
   "dependencies": [],
   "rules": [
     {
-      "path": "rules/claude-attention-chime.md",
-      "target": "claude",
-      "whenEnabled": [
-        "telegram"
-      ]
-    },
-    {
       "path": "rules/claude-telegram-mode.md",
       "target": "claude",
       "whenEnabled": [

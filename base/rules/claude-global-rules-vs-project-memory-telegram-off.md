@@ -1,1 +1,1 @@
-- a new rule only for Claude (delegation, subagents, hooks, answer format, working with the user) goes into
+A new rule only for Claude (delegation, subagents, hooks, answer format, working with the user) goes into `{{HOME}}/.claude/CLAUDE.md`, below its two import lines, which stay untouched; or into a global skill under `{{HOME}}/.claude/skills/` when it applies only in a rare situation.
