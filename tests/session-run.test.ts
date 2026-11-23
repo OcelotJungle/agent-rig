@@ -10,7 +10,9 @@ import { messagesFor } from "../src/messages.js";
 import { lookupSession } from "../src/session-core.js";
 import { apiFail, apiOk } from "../src/output.js";
 import { ok } from "../src/result.js";
+import { withSessionEnding } from "../src/session-ending.js";
 import { baseManifest, createMemoryRuntime, FAKE_OWNER_CREATED, seedFeature, seedHubManifest } from "./fakes/memory-runtime.js";
+import { ACCOUNT_ONE, answerOwnerQueries, DEFAULT_LOGIN, ownerLine, seedDefaultLogin } from "./fakes/session-owner-fixture.js";
 
 const ID = "11111111-1111-1111-1111-111111111111";
 const ROOT = "/home/test/.agent-rig";
@@ -30,7 +32,9 @@ const setup = () => {
 	const h = createMemoryRuntime();
 	h.fs.directories.add("/work");
 	h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify(raw));
-	h.fs.seed("/transcript", "{}");
+	h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+	seedDefaultLogin(h);
+	answerOwnerQueries(h, { 1: ACCOUNT_ONE });
 	h.fs.seed(`${ROOT}/state.json`, JSON.stringify({ mode: "dev", paths: { repo: "/repo", hub: "/hub" }, features: {}, records: {}, badPairs: [], pendingHubRestart: null }));
 	let now = 0;
 	h.runtime.clock.now = () => new Date(now);
@@ -105,7 +109,7 @@ describe("session run and mode", () => {
 		h.runtime.process.createdAt = async () => ok({ "43": CREATED });
 		const result = await runSession(h.runtime, session, "plan", null, async () => { launched = true; h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
 		expect(launched).toBe(true);
-		expect(result).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: null }));
+		expect(result).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: null, ownerSwitch: "unchanged" }));
 	});
 	test("a recorded account without cswap is refused like a requested one", async () => {
 		const h = setup();
@@ -288,7 +292,90 @@ describe("session run and mode", () => {
 		h.runtime.process.createdAt = async () => ok({ "42": CREATED, "43": CREATED });
 		expect(code(await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1"))).toBe("session-running");
 		const answer = await runSession(h.runtime, session, "plan", "1", async () => { h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
-		expect(answer).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: 1 }));
+		expect(answer).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: 1, ownerSwitch: "written" }));
+	});
+	test("an account the helper does not know fails before the spawn and before the transcript is touched", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		const before = await h.fs.readText("/transcript");
+		let launched = false;
+		const result = await runSession(h.runtime, session, "plan", "7", async () => { launched = true; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		expect(code(result)).toBe("launch-account-lookup");
+		expect(launched).toBe(false);
+		expect(await h.fs.readText("/transcript")).toBe(before);
+	});
+	test("a live session is refused before the transcript is touched", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		h.runtime.process.createdAt = async () => ok({ "42": CREATED });
+		const ownerAtSpawn: string[] = [];
+		const result = await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1", async () => { ownerAtSpawn.push("spawned"); return apiOk(0); });
+		expect(code(result)).toBe("session-running");
+		expect(ownerAtSpawn).toEqual([]);
+		expect(await h.fs.readText("/transcript")).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+	});
+	test("an unavailable switch launches without writing and returns right after the grace with no pid", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		h.fs.files.delete("/home/test/.claude.json");
+		h.fs.files.delete("/usr/bin/cswap");
+		const before = await h.fs.readText("/transcript");
+		const sleeps: number[] = [];
+		const advance = h.runtime.clock.sleep;
+		h.runtime.clock.sleep = async (ms) => { sleeps.push(ms); await advance(ms); };
+		let spawned = 0;
+		const result = await runSession(h.runtime, session, "plan", null, async () => { spawned++; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		expect(spawned).toBe(1);
+		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "ids-unreadable" }));
+		expect(sleeps).toEqual([]);
+		expect(await h.fs.readText("/transcript")).toBe(before);
+	});
+	test("with cswap and no account number the switch is unavailable as account-unknown", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":null}},"categories":{}}', stderr: "", exitCode: 0 });
+		const result = await runSession(h.runtime, session, "plan", null, async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())));
+		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "account-unknown" }));
+	});
+	describe("the ending marker of a launch", () => {
+		const OTHER_PID = 11;
+		const OTHER_CREATED = "other-rig-creation";
+		// A second rig process: its own pid, known to the process table next to the runtime's own.
+		const other = (h: ReturnType<typeof setup>) => {
+			h.runtime.process.createdAt = async () => ok({ [String(h.runtime.lock.process.pid)]: FAKE_OWNER_CREATED, [String(OTHER_PID)]: OTHER_CREATED });
+			return { ...h.runtime, lock: { ...h.runtime.lock, process: { ...h.runtime.lock.process, pid: OTHER_PID } } };
+		};
+		test("run is refused with session-ending while a mode holds the marker", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			let spawned = false;
+			h.runtime.process.spawnDetached = async () => { spawned = true; return ok({ exited: false, exitCode: null, stderr: "" }); };
+			const holder = other(h);
+			let refused = "";
+			const held = await withSessionEnding(holder, ID, async () => {
+				const lines: string[] = [];
+				await runCli(["session", "run", ID], (line) => lines.push(line), h.runtime);
+				refused = lines.join("");
+				return apiOk(null);
+			});
+			expect(held.ok).toBe(true);
+			expect(JSON.parse(refused)).toMatchObject({ error: { code: "session-ending" } });
+			expect(spawned).toBe(false);
+		});
+		test("a mode started while a run is spawning is refused with session-ending", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const rival = other(h);
+			let refused = "";
+			h.runtime.process.spawnDetached = async () => {
+				refused = code(await modeCommand(rival, [ID, "auto"], () => {}));
+				return ok({ exited: false, exitCode: null, stderr: "" });
+			};
+			const result = await runCli(["session", "run", ID, "--account", "1"], () => {}, h.runtime);
+			expect(refused).toBe("session-ending");
+			expect(result).toBe(1);
+			expect(await h.fs.stat(`${ROOT}/sessions/${ID}/ending.json`)).toBeNull();
+		});
 	});
 	test("CLI writes one JSON object on a mode success and run failure", async () => {
 		const h = setup();

@@ -1,6 +1,7 @@
 import type { RuntimePorts } from "../ports.js";
 import type { Result } from "../result.js";
 
+import { retryWhileBusy } from "../busy-retry.js";
 import { joinPath, toSlashPath } from "../file-system.js";
 import { messagesFor } from "../messages.js";
 import { err, errorText, ok } from "../result.js";
@@ -9,16 +10,11 @@ import { err, errorText, ok } from "../result.js";
 const CHUNK_BYTES = 1024 * 1024;
 // Backups kept after a cleanup; older ones are removed.
 const KEEP_BACKUPS = 3;
-// A rename that fails on a busy file (EPERM, EBUSY or EACCES) is tried this many times...
-const RENAME_TRIES = 10;
-// ...with this pause between tries (ms), about two seconds in all.
-const RENAME_RETRY_MS = 200;
 const LF = 10;
 const CR = 13;
 const MARK = Buffer.from('"invoked_skills"');
 type Edit = { start: number; end: number; bytes: Buffer; line: number; uuid: string | null; text: string };
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-const busy = (value: unknown): boolean => object(value) && (value.code === "EPERM" || value.code === "EBUSY" || value.code === "EACCES");
 
 export const cleanTranscript = async (runtime: RuntimePorts, path: string, replace: (from: string, to: string) => Promise<void> = (from, to) => runtime.fs.rename(from, to)): Promise<Result<{ backup: string; skillsRemoved: number }>> => {
 	const m = messagesFor(runtime.language).session;
@@ -91,12 +87,7 @@ export const cleanTranscript = async (runtime: RuntimePorts, path: string, repla
 			}
 		}
 		if ((await runtime.fs.stat(path))?.size !== size) throw new Error(m.transcriptChanged());
-		for (let attempt = 1; ; attempt++) {
-			try { await replace(temp, path); break; } catch (error) {
-				if (attempt >= RENAME_TRIES || !busy(error)) throw error;
-				await runtime.clock.sleep(RENAME_RETRY_MS);
-			}
-		}
+		await retryWhileBusy(runtime, () => replace(temp, path));
 		backupWritten = false;
 		tempWritten = false;
 		const names = (await runtime.fs.listDirectory(directory)).filter((entry) => !entry.directory).map((entry) => entry.name).filter((name) => name.startsWith(prefix) && /^\d+\.jsonl$/.test(name.slice(prefix.length))).sort((a, b) => Number(b.slice(prefix.length, -6)) - Number(a.slice(prefix.length, -6)));

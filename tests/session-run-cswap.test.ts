@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveLaunch } from "../src/commands/session-run.js";
 import { ok } from "../src/result.js";
 import { createMemoryRuntime } from "./fakes/memory-runtime.js";
+import { ACCOUNT_ONE, answerOwnerQueries } from "./fakes/session-owner-fixture.js";
 
 const ID = "11111111-1111-1111-1111-111111111111";
 const ROOT = "/home/test/.agent-rig";
@@ -19,6 +20,7 @@ const windows = (pathEnvironment: string, files: string[]) => {
 	h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify(raw));
 	h.fs.seed(`${ROOT}/state.json`, JSON.stringify({ mode: "dev", paths: { repo: "/repo", hub: "/hub" }, features: {}, records: {}, badPairs: [], pendingHubRestart: null }));
 	h.runtime.pathEnvironment = pathEnvironment;
+	answerOwnerQueries(h, { 12: ACCOUNT_ONE });
 	for (const file of files) h.fs.seed(file, "");
 	return h;
 };
@@ -39,6 +41,7 @@ describe("cswap lookup of a launch", () => {
 	test("one lookup serves the account decision and the launch", async () => {
 		const h = windows("C:/bin", ["C:/bin/cswap.cmd"]);
 		h.runtime.process.run = async () => ok({ stdout: ACCOUNT_LOOKUP, stderr: "", exitCode: 0 });
+		answerOwnerQueries(h, { 12: ACCOUNT_ONE });
 		const paths = statPaths(h);
 		const result = await resolveLaunch(h.runtime, session, null, null);
 		expect(result.ok && result.value.account).toBe("12");

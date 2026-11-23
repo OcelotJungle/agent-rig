@@ -13,6 +13,7 @@ import { err, ok } from "../src/result.js";
 import { withSessionEnding } from "../src/session-ending.js";
 import { SESSION_POLL_MS } from "../src/session-core.js";
 import { createMemoryRuntime, FAKE_OWNER_CREATED } from "./fakes/memory-runtime.js";
+import { DEFAULT_LOGIN, ownerLine, seedDefaultLogin } from "./fakes/session-owner-fixture.js";
 
 const ID = "11111111-1111-1111-1111-111111111111";
 const ROOT = "/home/test/.agent-rig";
@@ -33,7 +34,8 @@ const LAUNCHED_CREATED = "resumed-claude-creation";
 // The incident's usage, above rig's 120,000-token stop threshold; a successful compact shrinks it.
 const TOKENS_BEFORE = 164_000;
 const TOKENS_AFTER = 80_000;
-const SKILLS = '{"type":"attachment","attachment":{"type":"invoked_skills","skills":[{"name":"sample","content":"invented"}]}}\n';
+// The transcript opens with the owner line of the default login, so a launch finds nothing to switch.
+const SKILLS = `${ownerLine(DEFAULT_LOGIN, ID)}\n` + '{"type":"attachment","attachment":{"type":"invoked_skills","skills":[{"name":"sample","content":"invented"}]}}\n';
 const SESSION: SessionRecord = { id: ID, cwd: "/work", transcriptPath: TRANSCRIPT, copyOf: null, startedAt: "start", processes: [CLAUDE_PID, WINDOW_PID].map((pid) => ({ pid, pidCreated: CLAUDE_CREATED, startedAt: "start" })) };
 const code = (result: { ok: true } | { ok: false; error: { code: string } }): string => result.ok ? "ok" : result.error.code;
 const gate = () => {
@@ -48,6 +50,7 @@ const setup = () => {
 	h.fs.seed(`${DIRECTORY}/usage.json`, "{}");
 	for (const process of SESSION.processes) h.fs.seed(`${DIRECTORY}/processes/${process.pid}.json`, JSON.stringify({ pid: process.pid, pid_created: process.pidCreated, started_at: process.startedAt }));
 	h.fs.seed(TRANSCRIPT, SKILLS);
+	seedDefaultLogin(h);
 	h.fs.seed(`${ROOT}/state.json`, JSON.stringify({ mode: "dev", paths: { repo: "/repo", hub: "/hub" }, features: {}, records: {}, badPairs: [], pendingHubRestart: null }));
 	h.fs.directories.add("/work");
 	h.fs.seed("/usr/bin/tmux", "");
@@ -360,7 +363,7 @@ describe("session ending ownership", () => {
 			h.fs.seed(`${DIRECTORY}/processes/${LAUNCHED_PID}.json`, JSON.stringify({ pid: LAUNCHED_PID, pid_created: LAUNCHED_CREATED, started_at: "resumed" }));
 			return ok({ exited: false, exitCode: null, stderr: "", pid: LAUNCHED_PID });
 		};
-		expect(await modeCommand(h.runtime, [ID, "auto"], () => {})).toEqual(apiOk({ session: ID, mode: "auto", pid: LAUNCHED_PID }));
+		expect(await modeCommand(h.runtime, [ID, "auto"], () => {})).toEqual(apiOk({ session: ID, mode: "auto", pid: LAUNCHED_PID, ownerSwitch: "unchanged" }));
 		expect(await h.fs.stat(MARKER)).toBeNull();
 	});
 

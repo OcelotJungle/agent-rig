@@ -31,6 +31,7 @@ export const ru: Messages = {
 		allowlistBadJson: (): string => "Вспомогательный скрипт списка аккаунтов вернул неверный JSON",
 		allowlistBadAccount: (): string => "Вспомогательный скрипт списка аккаунтов вернул некорректный ответ об аккаунте",
 		allowlistBadCategory: (category: string): string => `Вспомогательный скрипт списка аккаунтов вернул некорректный ответ для ${category}`,
+		allowlistBadOwner: (): string => "Вспомогательный скрипт списка аккаунтов вернул некорректный ответ о владельце сессии",
 		allowlistItemFailed: (detail: string): string => `Вспомогательный скрипт списка аккаунтов не смог проверить один элемент: ${detail}`,
 	},
 	exec: {

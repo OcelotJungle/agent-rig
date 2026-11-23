@@ -83,6 +83,14 @@ const readProcesses = async (r: RuntimePorts, id: string, legacy: SessionProcess
 	return apiOk(processes);
 };
 
+// The Claude config dir a session record names ("" for the default one, also when the record has none).
+const configDirOf = (record: unknown): string => object(record) && typeof record.config_dir === "string" ? record.config_dir : "";
+
+// The config dir of a session's record, read afresh; an unreadable record names the default one.
+export const recordedConfigDir = async (r: RuntimePorts, id: string): Promise<string> => {
+	try { return configDirOf(JSON.parse(await r.fs.readText(joinPath(root(r), `${id}.json`)))); } catch { return ""; }
+};
+
 // Reads registration facts without retention or a process-table query; ending polls batch identity checks themselves.
 export const readSession = async (r: RuntimePorts, id: string): Promise<ApiResult<SessionRecord>> => {
 	const m = messagesFor(r.language).session;
@@ -99,7 +107,7 @@ export const readSession = async (r: RuntimePorts, id: string): Promise<ApiResul
 	const processes = await readProcesses(r, id, legacy);
 	if (!processes.ok) return processes;
 	// The record keeps the path Claude Code named; every reader gets the transcript file that really exists.
-	const transcriptPath = await resolveTranscriptPath(r, id, value.transcript_path, typeof value.config_dir === "string" ? value.config_dir : "");
+	const transcriptPath = await resolveTranscriptPath(r, id, value.transcript_path, configDirOf(value));
 	if (!transcriptPath.ok) return transcriptPath;
 	let cwd = value.cwd;
 	let copyOf: string | null = null;

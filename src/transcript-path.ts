@@ -19,17 +19,24 @@ export const resolveTranscriptPath = async (r: RuntimePorts, id: string, named: 
 	const m = messagesFor(r.language).session;
 	try {
 		if (named !== null && await r.fs.stat(named) !== null) return apiOk(named);
-		const projects = joinPath(configDir === "" ? joinPath(r.home, DEFAULT_CONFIG_DIR) : configDir, PROJECTS_DIR);
-		let entries;
-		try { entries = await r.fs.listDirectory(projects); }
-		catch (e) { if (missing(e)) return apiOk(named); throw e; }
-		let best: { path: string; mtimeMs: number } | null = null;
-		for (const entry of entries) {
-			if (!entry.directory) continue;
-			const path = joinPath(projects, entry.name, `${id}.jsonl`);
-			const stat = await r.fs.stat(path);
-			if (stat !== null && (best === null || stat.mtimeMs > best.mtimeMs)) best = { path, mtimeMs: stat.mtimeMs };
-		}
-		return apiOk(best === null ? named : best.path);
+		const [newest] = (await projectTranscripts(r, id, configDir)).sort((a, b) => b.mtimeMs - a.mtimeMs);
+		return apiOk(newest === undefined ? named : newest.path);
 	} catch (e) { return apiFail(SESSION_IO, m.io(errorText(e))); }
+};
+
+// Every existing `<config dir>/projects/*/<id>.jsonl` with its modification time; a missing projects directory is none.
+// A read error is thrown to the caller.
+export const projectTranscripts = async (r: RuntimePorts, id: string, configDir: string): Promise<{ path: string; mtimeMs: number }[]> => {
+	const projects = joinPath(configDir === "" ? joinPath(r.home, DEFAULT_CONFIG_DIR) : configDir, PROJECTS_DIR);
+	let entries;
+	try { entries = await r.fs.listDirectory(projects); }
+	catch (e) { if (missing(e)) return []; throw e; }
+	const found: { path: string; mtimeMs: number }[] = [];
+	for (const entry of entries) {
+		if (!entry.directory) continue;
+		const path = joinPath(projects, entry.name, `${id}.jsonl`);
+		const stat = await r.fs.stat(path);
+		if (stat !== null) found.push({ path, mtimeMs: stat.mtimeMs });
+	}
+	return found;
 };

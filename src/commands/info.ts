@@ -4,6 +4,7 @@ import type { ApiResult } from "../output.js";
 import type { RigState } from "../state.js";
 import type { RuntimePorts } from "../ports.js";
 import type { Result } from "../result.js";
+import type { OwnerIds } from "../session-owner.js";
 
 import { readCodexLimits } from "../codex-rollout.js";
 import { joinPath, toSlashPath } from "../file-system.js";
@@ -139,6 +140,19 @@ export const accountOf = async (runtime: RuntimePorts, state: RigState, configDi
 	const messages = messagesFor(runtime.language);
 	const answer = await runAllowlistTool(runtime, state, messages, ["batch", "--config-dir", configDir]);
 	return accountInAnswer(answer, configDir, messages);
+};
+
+// The ids Claude Code compares for the owner of a session, of one cswap account, from the helper's `owner --account N`
+// query. The answer is `{accountUuid, organizationUuid}` or `{error: text}`; the values stay in rig's pipe.
+export const ownerIdsOf = async (runtime: RuntimePorts, state: RigState, account: number): Promise<Result<OwnerIds>> => {
+	const messages = messagesFor(runtime.language);
+	const answer = await runAllowlistTool(runtime, state, messages, ["owner", "--account", String(account)]);
+	if (!answer.ok) return answer;
+	const failed = itemError(answer.value, messages);
+	if (failed !== null) return err(failed);
+	const { accountUuid, organizationUuid } = answer.value;
+	if (typeof accountUuid !== "string" || accountUuid === "" || typeof organizationUuid !== "string" || organizationUuid === "") return err(messages.info.allowlistBadOwner());
+	return ok({ accountUuid, organizationUuid });
 };
 
 const categoryShown = (state: RigState, category: "codex" | "volunteers", answer: Result<Record<string, unknown>>, messages: Messages): Result<boolean> => {
