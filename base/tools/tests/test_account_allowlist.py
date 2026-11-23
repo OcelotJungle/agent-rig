@@ -371,5 +371,77 @@ class BatchIsolationTest(unittest.TestCase):
         self.assertIn("unreadable", result["categories"]["codex"]["error"])
 
 
+class OwnerCliTest(CliRunner):
+    """`owner --account <N>` prints {"accountUuid", "organizationUuid"} of cswap account N, or {"error"}; exit 0 in both cases."""
+
+    FAKE_ENTRY = {"uuid": "fake-account-uuid", "organizationUuid": "fake-org-uuid"}
+
+    def owner(self, home, account):
+        proc = self.run_cli(home, ["owner", "--account", account])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(proc.stdout.splitlines()), 1, proc.stdout)
+        return json.loads(proc.stdout)
+
+    def sequence_with(self, home, accounts):
+        home.sequence(json.dumps({"activeAccountNumber": 1, "accounts": accounts}))
+
+    def test_found_account_prints_both_uuids(self):
+        home = Home(self)
+        self.sequence_with(home, {"4": self.FAKE_ENTRY})
+        self.assertEqual(self.owner(home, "4"),
+                         {"accountUuid": "fake-account-uuid", "organizationUuid": "fake-org-uuid"})
+
+    def test_leading_zeros_name_the_same_decimal_account(self):
+        home = Home(self)
+        self.sequence_with(home, {"4": self.FAKE_ENTRY})
+        self.assertEqual(self.owner(home, "04")["accountUuid"], "fake-account-uuid")
+
+    def test_unknown_account_is_an_error_line(self):
+        home = Home(self)
+        self.sequence_with(home, {"4": self.FAKE_ENTRY})
+        result = self.owner(home, "9")
+        self.assertEqual(list(result), ["error"])
+        self.assertIn("9", result["error"])
+
+    def test_missing_sequence_file_is_an_error_line(self):
+        home = Home(self)
+        result = self.owner(home, "4")
+        self.assertEqual(list(result), ["error"])
+        self.assertIn("sequence.json", result["error"])
+
+    def test_malformed_sequence_is_an_error_line(self):
+        for bad in ("{not json", "[]", json.dumps({"activeAccountNumber": 4})):
+            home = Home(self)
+            home.sequence(bad)
+            result = self.owner(home, "4")
+            self.assertEqual(list(result), ["error"], bad)
+            self.assertIn("sequence.json", result["error"], bad)
+
+    def test_missing_or_empty_field_is_an_error_line(self):
+        bad_entries = [{"organizationUuid": "fake-org-uuid"},
+                       {"uuid": "fake-account-uuid"},
+                       {"uuid": "", "organizationUuid": "fake-org-uuid"},
+                       {"uuid": "fake-account-uuid", "organizationUuid": None},
+                       {"uuid": 7, "organizationUuid": "fake-org-uuid"}]
+        for entry in bad_entries:
+            home = Home(self)
+            self.sequence_with(home, {"4": entry})
+            result = self.owner(home, "4")
+            self.assertEqual(list(result), ["error"], entry)
+            self.assertIn("accounts[4]", result["error"], entry)
+
+    def test_non_decimal_account_is_a_usage_error(self):
+        home = Home(self)
+        self.sequence_with(home, {"4": self.FAKE_ENTRY})
+        for bad in ("four", "4a", "1.5", "-1", "+1", "1e3", "", " 4"):
+            proc = self.run_cli(home, ["owner", "--account", bad])
+            self.assertEqual(proc.returncode, 2, bad)
+            self.assertEqual(proc.stdout, "", bad)
+            self.assertIn("--account", proc.stderr, bad)
+        proc = self.run_cli(home, ["owner"])
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(proc.stdout, "")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,9 @@ Malformed config: every category is refused, naming the file.
 Query from outside (the telegram hub's /info):
   python -I account-allowlist.py check <codex|volunteers> --config-dir <dir>
 prints {"allowed": bool, "reason": str} as one JSON line; an empty or omitted --config-dir is the main login.
+Owner of a cswap account (the session launchers' owner lookup):
+  python -I account-allowlist.py owner --account <N>
+prints {"accountUuid": str, "organizationUuid": str} from accounts[N] of sequence.json, or {"error": str}; exit 0 in both cases.
 """
 import argparse
 import json
@@ -21,6 +24,9 @@ from pathlib import Path
 
 # cswap names a side profile dir "<account number>-<name>"
 PROFILE_NAME = re.compile(r"^([0-9]+)-")
+DECIMAL = re.compile(r"[0-9]+")
+# output key -> field of one account in cswap's sequence.json
+OWNER_FIELDS = (("accountUuid", "uuid"), ("organizationUuid", "organizationUuid"))
 
 SEQUENCE_PARTS = (".claude-swap-backup", "sequence.json")
 MAIN_PROFILE = ".claude"
@@ -46,6 +52,36 @@ def _read_sequence(home):
 
 def _is_number(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def account_number(text):
+    """argparse type: a decimal cswap account number; leading zeros name the same account ("04" is 4)."""
+    if not DECIMAL.fullmatch(text):
+        raise argparse.ArgumentTypeError("must be a decimal account number, for example 4")
+    return int(text)
+
+
+def owner(number, home=None):
+    """{"accountUuid", "organizationUuid"} of cswap account `number`, or {"error": text}."""
+    home = Path.home() if home is None else Path(home)
+    present, sequence = _read_sequence(home)
+    if not present:
+        return {"error": "cswap sequence.json not found"}
+    if sequence is None:
+        return {"error": "cswap sequence.json is unreadable or not a JSON object"}
+    accounts = sequence.get("accounts")
+    if not isinstance(accounts, dict):
+        return {"error": "cswap sequence.json has no accounts object"}
+    entry = accounts.get(str(number))
+    if not isinstance(entry, dict):
+        return {"error": f"account {number} is not in cswap sequence.json"}
+    result = {}
+    for key, field in OWNER_FIELDS:
+        value = entry.get(field)
+        if not isinstance(value, str) or not value:
+            return {"error": f"accounts[{number}].{field} is missing or empty in cswap sequence.json"}
+        result[key] = value
+    return result
 
 
 def current_account(env=None, home=None):
@@ -135,6 +171,8 @@ def build_parser():
     batch =commands.add_parser("batch", help="query accounts and categories in one process")
     batch.add_argument("--config-dir", action="append", required=True)
     batch.add_argument("--category", action="append", choices=CATEGORIES, default=[])
+    owner_parser = commands.add_parser("owner", help="print the accountUuid and organizationUuid of a cswap account")
+    owner_parser.add_argument("--account", type=account_number, required=True, help="the cswap account number")
     return parser
 
 
@@ -143,10 +181,14 @@ def main(argv=None):
     `batch --config-dir <dir>... [--category <name>...]`: one line of JSON {"accounts", "categories"}; accounts maps
     each dir to {"present", "account"} (account is null when unknown) and categories maps each category to
     {"allowed", "reason"}. An item whose check raised is {"error": text} instead; the other items are unaffected.
+    `owner --account <N>`: one line of JSON {"accountUuid", "organizationUuid"} of cswap account N, or {"error": text}.
 
     The process's own CLAUDE_CONFIG_DIR is ignored: --config-dir alone names the session's config dir.
     """
     args = build_parser().parse_args(argv)
+    if args.command == "owner":
+        print(json.dumps(owner(args.account), ensure_ascii=True))
+        return 0
     if args.command == "batch":
         accounts = {}
         for directory in args.config_dir:
