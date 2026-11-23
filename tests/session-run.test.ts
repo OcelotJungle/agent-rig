@@ -237,7 +237,7 @@ describe("session run and mode", () => {
 		const h = setup();
 		seedLaunchers(h);
 		expect(code(await runSession(h.runtime, session, "plan", "1", async () => apiFail("launch-failed", "stderr")))).toBe("launch-failed");
-		expect(code(await runSession(h.runtime, session, "plan", "1", async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime()))))).toBe("launch-timeout");
+		expect(code(await runSession(h.runtime, session, "plan", "1", async (_command, before) => { const prepared = await before(); return prepared.ok ? apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())) : prepared; }))).toBe("launch-timeout");
 	});
 	test("reports stderr from detached launch failure", async () => {
 		const h = setup();
@@ -291,7 +291,7 @@ describe("session run and mode", () => {
 		seedLaunchers(h);
 		h.runtime.process.createdAt = async () => ok({ "42": CREATED, "43": CREATED });
 		expect(code(await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1"))).toBe("session-running");
-		const answer = await runSession(h.runtime, session, "plan", "1", async () => { h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const answer = await runSession(h.runtime, session, "plan", "1", async (_command, before) => { const prepared = await before(); if (!prepared.ok) return prepared; h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
 		expect(answer).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: 1, ownerSwitch: "written" }));
 	});
 	test("an account the helper does not know fails before the spawn and before the transcript is touched", async () => {
@@ -336,6 +336,91 @@ describe("session run and mode", () => {
 		h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":null}},"categories":{}}', stderr: "", exitCode: 0 });
 		const result = await runSession(h.runtime, session, "plan", null, async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())));
 		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "account-unknown" }));
+	});
+	describe("the owner line is written under a fresh check", () => {
+		const REGISTERED_PID = 43;
+		const MARKER_PATH = `${ROOT}/sessions/${ID}/ending.json`;
+		// A line another writer appends to the transcript after the owner scan.
+		const LATE_LINE = '{"type":"user","message":"late"}\n';
+		const registeredRecord = JSON.stringify({ ...raw, pid: REGISTERED_PID, ended_at: null });
+		// The process table of a launch: rig's own pid, and the process that registers late (alive once it is recorded).
+		const answerProcessTable = (h: ReturnType<typeof setup>): void => {
+			const own = String(h.runtime.lock.process.pid);
+			h.runtime.process.createdAt = async (pids) => ok(Object.fromEntries(pids.map((pid) => [String(pid), String(pid) === own ? FAKE_OWNER_CREATED : pid === REGISTERED_PID ? CREATED : null])));
+		};
+		// Runs the action once, at the first account-helper query: after run's and mode's first live check and record read.
+		const afterFirstLiveCheck = (h: ReturnType<typeof setup>, action: () => void): void => {
+			const query = h.runtime.process.run.bind(h.runtime.process);
+			let done = false;
+			h.runtime.process.run = async (command, args, options) => {
+				if (!done) { done = true; action(); }
+				return query(command, args, options);
+			};
+		};
+		// Runs the action when the launch transition reads the marker for its takeover check (the second marker read of a run).
+		const atLaunchTransition = (h: ReturnType<typeof setup>, action: () => Promise<void>): void => {
+			const read = h.fs.readText.bind(h.fs);
+			let reads = 0;
+			h.fs.readText = async (path) => {
+				if (path === MARKER_PATH && ++reads === 2) await action();
+				return read(path);
+			};
+		};
+		const countSpawns = (h: ReturnType<typeof setup>): { count: () => number } => {
+			let spawned = 0;
+			h.runtime.process.spawnDetached = async () => { spawned++; return ok({ exited: false, exitCode: null, stderr: "" }); };
+			return { count: () => spawned };
+		};
+		const runJson = async (h: ReturnType<typeof setup>, args: string[]): Promise<unknown> => {
+			const lines: string[] = [];
+			await runCli(args, (line) => lines.push(line), h.runtime);
+			return JSON.parse(lines.join(""));
+		};
+		test("run refuses session-running when a process registers after its first live check", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			answerProcessTable(h);
+			const before = await h.fs.readText("/transcript");
+			afterFirstLiveCheck(h, () => h.fs.seed(`${ROOT}/sessions/${ID}.json`, registeredRecord));
+			const spawns = countSpawns(h);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ error: { code: "session-running" } });
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			expect(spawns.count()).toBe(0);
+		});
+		test("run writes nothing and launches without the owner switch when the transcript grew after the scan", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const before = await h.fs.readText("/transcript");
+			atLaunchTransition(h, async () => { await h.fs.appendBytes("/transcript", new TextEncoder().encode(LATE_LINE)); });
+			const spawns = countSpawns(h);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ pid: null, ownerSwitch: "unavailable", ownerSwitchReason: "transcript-changed" });
+			expect(await h.fs.readText("/transcript")).toBe(`${before}${LATE_LINE}`);
+			expect(spawns.count()).toBe(1);
+		});
+		test("a stop that took the marker over before the launch transition is seen before the owner line is written", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const before = await h.fs.readText("/transcript");
+			atLaunchTransition(h, async () => { h.fs.seed(MARKER_PATH, JSON.stringify({ ...JSON.parse(await h.fs.readText(MARKER_PATH)), takenOver: true })); });
+			const spawns = countSpawns(h);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ error: { code: "session-ending" } });
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			expect(spawns.count()).toBe(0);
+		});
+		test("mode uses the record read after its stop: a process registered after the first read is seen", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			answerProcessTable(h);
+			h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n${JSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
+			const before = await h.fs.readText("/transcript");
+			const owners = h.runtime.process.run.bind(h.runtime.process);
+			h.runtime.process.run = async (command, args, options) => args.includes("owner") ? owners(command, args, options) : ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}', stderr: "", exitCode: 0 });
+			afterFirstLiveCheck(h, () => h.fs.seed(`${ROOT}/sessions/${ID}.json`, registeredRecord));
+			const spawns = countSpawns(h);
+			expect(code(await modeCommand(h.runtime, [ID, "auto"], () => {}))).toBe("session-running");
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			expect(spawns.count()).toBe(0);
+		});
 	});
 	describe("the ending marker of a launch", () => {
 		const OTHER_PID = 11;

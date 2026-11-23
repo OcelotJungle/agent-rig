@@ -1,9 +1,12 @@
+import type { ApiResult } from "../src/output.js";
+import type { RuntimePorts } from "../src/ports.js";
 import type { SessionRecord } from "../src/session-core.js";
-import type { OwnerTarget } from "../src/session-owner.js";
+import type { OwnerSwitch, OwnerTarget } from "../src/session-owner.js";
 
 import { describe, expect, test } from "bun:test";
 
-import { ensureOwner } from "../src/session-owner.js";
+import { apiOk } from "../src/output.js";
+import { readOwner, writeOwner } from "../src/session-owner.js";
 import { ok } from "../src/result.js";
 import { createMemoryRuntime } from "./fakes/memory-runtime.js";
 import { ACCOUNT_ONE, DEFAULT_LOGIN, ownerLine } from "./fakes/session-owner-fixture.js";
@@ -41,9 +44,15 @@ const busyAppends = (h: ReturnType<typeof setup>, failures: number): { attempts:
 	};
 	return { attempts: () => attempts };
 };
+// A launch with nothing in between: the reading part, then the writing part right after it when the reading asks for a write.
+const ensureOwner = async (runtime: RuntimePorts, session: SessionRecord, target: OwnerTarget): Promise<ApiResult<OwnerSwitch>> => {
+	const reading = await readOwner(runtime, session, target);
+	if (!reading.ok) return reading;
+	return reading.value.kind === "settled" ? apiOk(reading.value.owner) : writeOwner(runtime, reading.value);
+};
 const outcome = (result: Awaited<ReturnType<typeof ensureOwner>>): string => result.ok ? JSON.stringify(result.value) : result.error.code;
 
-describe("ensureOwner", () => {
+describe("readOwner and writeOwner", () => {
 	test("appends an owner line for the target when the last owner line names another account", async () => {
 		const h = setup();
 		const result = await ensureOwner(h.runtime, SESSION, TARGET);

@@ -312,6 +312,7 @@ export const en = {
 		processTableQueryFailed: (): string => "Process table query failed",
 		processTableInvalid: (): string => "Invalid process table response",
 		processTableIncomplete: (): string => "Incomplete process table response",
+		ownerNotDecided: (): string => "The launch did not reach the owner step",
 		processGroupsUnavailable: (): string => "Process groups are not available on Windows",
 		procStatUnreadable: (pid: number): string => `Unreadable /proc/${pid}/stat`,
 		procStartUnreadable: (pid: number): string => `Unreadable start time in /proc/${pid}/stat`,

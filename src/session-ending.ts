@@ -15,7 +15,9 @@ type ObserveEnding = (pids: readonly number[]) => Promise<ApiResult<EndingObserv
 export type SessionEnding = {
 	takenOver(): Promise<ApiResult<boolean>>;
 	// Records pending registration and starts a launch atomically with takeover; its promise is awaited outside the guard.
-	startLaunch<T>(action: (deadline: number) => T, deadline: () => number): Promise<ApiResult<T>>;
+	// `before` runs inside the same guard right after the takeover check and before the marker records the launch (the
+	// owner line is written there); a failure of it ends the launch without a spawn.
+	startLaunch<T>(before: () => Promise<ApiResult<void>>, action: (deadline: number) => T, deadline: () => number): Promise<ApiResult<T>>;
 };
 
 const markerPath = (runtime: RuntimePorts, id: string): string => joinPath(runtime.home, ".agent-rig", "sessions", id, "ending.json");
@@ -150,10 +152,12 @@ export const withSessionEnding = async <T>(runtime: RuntimePorts, id: string, ac
 	});
 	const ending: SessionEnding = {
 		takenOver: () => guarded(runtime, id, takenOver),
-		startLaunch: (start, deadline) => guarded(runtime, id, async () => {
+		startLaunch: (before, start, deadline) => guarded(runtime, id, async () => {
 			const interrupted = await takenOver();
 			if (!interrupted.ok) return interrupted;
 			if (interrupted.value) return apiFail(SESSION_ENDING, messagesFor(runtime.language).session.ending());
+			const prepared = await before();
+			if (!prepared.ok) return prepared;
 			const registrationDeadline = deadline();
 			marker.launch = { registrationDeadline };
 			const recorded = await atomicWrite(runtime.fs, path, JSON.stringify(marker), messagesFor(runtime.language));
