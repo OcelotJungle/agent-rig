@@ -50,6 +50,17 @@ const comparable = (runtime: RuntimePorts, path: string): string => runtime.plat
 
 const unavailableSwitch = (reason: OwnerSwitchReason): OwnerSwitch => ({ ownerSwitch: "unavailable", ownerSwitchReason: reason });
 
+// Whether a recorded process with an unknown creation time may be alive: `sessionLive` ignores those, so the reading and
+// the writing part both ask this on the record each one has. A pid with no process is gone (null in the table); anything
+// else (a creation time, or an incomplete table) may be a live one.
+const unknownCreationMayBeAlive = async (runtime: RuntimePorts, session: SessionRecord): Promise<ApiResult<boolean>> => {
+	const unknownCreation = [...new Set(session.processes.filter((process) => process.pidCreated === null).map((process) => process.pid))];
+	if (unknownCreation.length === 0) return apiOk(false);
+	const created = await runtime.process.createdAt(unknownCreation);
+	if (!created.ok) return apiFail(SESSION_IO, messagesFor(runtime.language).session.io(created.error));
+	return apiOk(unknownCreation.some((pid) => created.value[String(pid)] !== null));
+};
+
 // What the reading part found: the launch needs no write (`settled`), or the line to append at the scanned size.
 export type OwnerReading = { kind: "settled"; owner: OwnerSwitch } | { kind: "write"; session: string; path: string; scannedSize: number; line: string };
 
@@ -67,13 +78,9 @@ export const readOwner = async (runtime: RuntimePorts, session: SessionRecord, t
 		if (target.kind === "unavailable") return settled(unavailableSwitch(target.reason));
 		const found = await projectTranscripts(runtime, session.id, await recordedConfigDir(runtime, session.id));
 		if (new Set([path, ...found.map((entry) => entry.path)].map((entry) => comparable(runtime, entry))).size !== 1) return settled(unavailableSwitch("several-transcripts"));
-		const unknownCreation = [...new Set(session.processes.filter((process) => process.pidCreated === null).map((process) => process.pid))];
-		if (unknownCreation.length > 0) {
-			const created = await runtime.process.createdAt(unknownCreation);
-			if (!created.ok) return apiFail(SESSION_IO, m.io(created.error));
-			// null is a pid with no process; anything else (a creation time, or an incomplete table) may be a live one.
-			if (unknownCreation.some((pid) => created.value[String(pid)] !== null)) return settled(unavailableSwitch("process-unknown"));
-		}
+		const unknownAlive = await unknownCreationMayBeAlive(runtime, session);
+		if (!unknownAlive.ok) return unknownAlive;
+		if (unknownAlive.value) return settled(unavailableSwitch("process-unknown"));
 		const current = await scanTranscriptBackwards(runtime, path, readOwnerLine);
 		if (current === null) return settled(unavailableSwitch("no-owner-line"));
 		if (current.kind === "unknown") return settled(unavailableSwitch("owner-line-unknown"));
@@ -94,6 +101,9 @@ export const writeOwner = async (runtime: RuntimePorts, plan: Extract<OwnerReadi
 		const live = await sessionLive(runtime, fresh.value);
 		if (!live.ok) return live;
 		if (live.value) return apiFail(SESSION_RUNNING, m.alreadyRunning());
+		const unknownAlive = await unknownCreationMayBeAlive(runtime, fresh.value);
+		if (!unknownAlive.ok) return unknownAlive;
+		if (unknownAlive.value) return apiOk(unavailableSwitch("process-unknown"));
 		const stat = await runtime.fs.stat(plan.path);
 		if (stat === null || stat.size !== plan.scannedSize) return apiOk(unavailableSwitch("transcript-changed"));
 		const [last] = await runtime.fs.readRange(plan.path, plan.scannedSize - LAST_BYTE_LENGTH, LAST_BYTE_LENGTH);

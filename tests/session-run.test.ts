@@ -1,3 +1,4 @@
+import type { SpawnLaunch } from "../src/commands/session-run.js";
 import type { Platform } from "../src/feature.js";
 import type { SessionRecord } from "../src/session-core.js";
 
@@ -27,6 +28,13 @@ const CONTROL = ["\t", "\n", "\r", "\x03", "\x15"];
 const CMD_LINE = ["&", "|", "<", ">", "^", "%", "\"", "!"];
 const NOT_IDENTIFIER = [...CONTROL, ...CMD_LINE, ";", "#", "(", ")", "'", "$", "~", "+", "=", ",", "[", "]", "\\", "/", "*", "?", ":", " "];
 // The launch as resolveLaunch does it: one cswap lookup, handed to prepareLaunch.
+// A spawn that runs the launch step like the real one, then `after`, and answers with the step's decision and a deadline.
+const fakeSpawn = (h: ReturnType<typeof setup>, after: () => void = () => undefined, deadline: number | null = null): SpawnLaunch => async (_command, before) => {
+	const decision = await before();
+	if (!decision.ok) return decision;
+	after();
+	return apiOk({ decision: decision.value, deadline: deadline ?? launchRegistrationDeadline(h.runtime.clock.now().getTime()) });
+};
 const prepare = async (h: ReturnType<typeof createMemoryRuntime>, record: SessionRecord, account: string, mode: string | null) => prepareLaunch(h.runtime, record, account, mode, await findCswap(h.runtime));
 const setup = () => {
 	const h = createMemoryRuntime();
@@ -81,7 +89,7 @@ describe("session run and mode", () => {
 		h.fs.seed(`${ROOT}/state.json`, JSON.stringify({ mode: "dev", paths: { repo: "/repo", hub: "/hub" }, features: {}, records: {}, badPairs: [], pendingHubRestart: null }));
 		const calls: string[][] = [];
 		h.runtime.process.run = async (_command, args) => { calls.push([...args]); return ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":12}},"categories":{}}', stderr: "", exitCode: 0 }); };
-		await runSession(h.runtime, session, "plan", null, async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())));
+		await runSession(h.runtime, session, "plan", null, fakeSpawn(h));
 		expect(calls.length).toBe(1);
 		expect(calls[0]).toContain("batch");
 		expect(calls[0]).toContain("/cfg/1-test");
@@ -93,12 +101,12 @@ describe("session run and mode", () => {
 		for (const output of [ok({ stdout: "", stderr: "broken", exitCode: 2 }), ok({ stdout: "garbage", stderr: "", exitCode: 0 })]) {
 			h.runtime.process.run = async () => output;
 			let launched = false;
-			const result = await runSession(h.runtime, session, "plan", null, async () => { launched = true; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+			const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h, () => { launched = true; }));
 			expect(code(result)).toBe("launch-account-lookup");
 			expect(launched).toBe(false);
 		}
 		h.runtime.process.run = async () => ok({ stdout: "", stderr: "broken", exitCode: 2 });
-		const failed = await runSession(h.runtime, session, "plan", null, async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())));
+		const failed = await runSession(h.runtime, session, "plan", null, fakeSpawn(h));
 		expect(failed.ok ? "ok" : failed.error.message).toContain("broken");
 	});
 	test("account helper failure with cswap absent still launches without an account", async () => {
@@ -107,7 +115,7 @@ describe("session run and mode", () => {
 		h.runtime.process.run = async () => ok({ stdout: "", stderr: "broken", exitCode: 2 });
 		let launched = false;
 		h.runtime.process.createdAt = async () => ok({ "43": CREATED });
-		const result = await runSession(h.runtime, session, "plan", null, async () => { launched = true; h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h, () => { launched = true; h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); }));
 		expect(launched).toBe(true);
 		expect(result).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: null, ownerSwitch: "unchanged" }));
 	});
@@ -116,7 +124,7 @@ describe("session run and mode", () => {
 		h.fs.seed("/usr/bin/tmux", "");
 		h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":12}},"categories":{}}', stderr: "", exitCode: 0 });
 		let launched = false;
-		const result = await runSession(h.runtime, session, "plan", null, async () => { launched = true; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h, () => { launched = true; }));
 		expect(code(result)).toBe("launch-invalid");
 		expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchNoCswap());
 		expect(launched).toBe(false);
@@ -237,7 +245,7 @@ describe("session run and mode", () => {
 		const h = setup();
 		seedLaunchers(h);
 		expect(code(await runSession(h.runtime, session, "plan", "1", async () => apiFail("launch-failed", "stderr")))).toBe("launch-failed");
-		expect(code(await runSession(h.runtime, session, "plan", "1", async (_command, before) => { const prepared = await before(); return prepared.ok ? apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())) : prepared; }))).toBe("launch-timeout");
+		expect(code(await runSession(h.runtime, session, "plan", "1", fakeSpawn(h)))).toBe("launch-timeout");
 	});
 	test("reports stderr from detached launch failure", async () => {
 		const h = setup();
@@ -291,15 +299,33 @@ describe("session run and mode", () => {
 		seedLaunchers(h);
 		h.runtime.process.createdAt = async () => ok({ "42": CREATED, "43": CREATED });
 		expect(code(await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1"))).toBe("session-running");
-		const answer = await runSession(h.runtime, session, "plan", "1", async (_command, before) => { const prepared = await before(); if (!prepared.ok) return prepared; h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const answer = await runSession(h.runtime, session, "plan", "1", fakeSpawn(h, () => { h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); }));
 		expect(answer).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: 1, ownerSwitch: "written" }));
+	});
+	test("a process of unknown creation time recorded between the reading and the writing: no owner line, the spawn goes on with pid null", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		const before = await h.fs.readText("/transcript");
+		h.runtime.process.createdAt = async () => ok({ "44": CREATED });
+		let spawned = 0;
+		const spawn: SpawnLaunch = async (_command, step) => {
+			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 44, pid_created: null, ended_at: null }));
+			const decision = await step();
+			if (!decision.ok) return decision;
+			spawned++;
+			return apiOk({ decision: decision.value, deadline: launchRegistrationDeadline(h.runtime.clock.now().getTime()) });
+		};
+		const result = await runSession(h.runtime, session, "plan", "1", spawn);
+		expect(spawned).toBe(1);
+		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: 1, ownerSwitch: "unavailable", ownerSwitchReason: "process-unknown" }));
+		expect(await h.fs.readText("/transcript")).toBe(before);
 	});
 	test("an account the helper does not know fails before the spawn and before the transcript is touched", async () => {
 		const h = setup();
 		seedLaunchers(h);
 		const before = await h.fs.readText("/transcript");
 		let launched = false;
-		const result = await runSession(h.runtime, session, "plan", "7", async () => { launched = true; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const result = await runSession(h.runtime, session, "plan", "7", fakeSpawn(h, () => { launched = true; }));
 		expect(code(result)).toBe("launch-account-lookup");
 		expect(launched).toBe(false);
 		expect(await h.fs.readText("/transcript")).toBe(before);
@@ -309,7 +335,7 @@ describe("session run and mode", () => {
 		seedLaunchers(h);
 		h.runtime.process.createdAt = async () => ok({ "42": CREATED });
 		const ownerAtSpawn: string[] = [];
-		const result = await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1", async () => { ownerAtSpawn.push("spawned"); return apiOk(0); });
+		const result = await runSession(h.runtime, { ...session, processes: [{ pid: 42, pidCreated: CREATED, startedAt: CREATED }] }, "plan", "1", fakeSpawn(h, () => { ownerAtSpawn.push("spawned"); }, 0));
 		expect(code(result)).toBe("session-running");
 		expect(ownerAtSpawn).toEqual([]);
 		expect(await h.fs.readText("/transcript")).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n`);
@@ -324,7 +350,7 @@ describe("session run and mode", () => {
 		const advance = h.runtime.clock.sleep;
 		h.runtime.clock.sleep = async (ms) => { sleeps.push(ms); await advance(ms); };
 		let spawned = 0;
-		const result = await runSession(h.runtime, session, "plan", null, async () => { spawned++; return apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())); });
+		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h, () => { spawned++; }));
 		expect(spawned).toBe(1);
 		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "ids-unreadable" }));
 		expect(sleeps).toEqual([]);
@@ -334,7 +360,7 @@ describe("session run and mode", () => {
 		const h = setup();
 		seedLaunchers(h);
 		h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":null}},"categories":{}}', stderr: "", exitCode: 0 });
-		const result = await runSession(h.runtime, session, "plan", null, async () => apiOk(launchRegistrationDeadline(h.runtime.clock.now().getTime())));
+		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h));
 		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "account-unknown" }));
 	});
 	describe("the owner line is written under a fresh check", () => {

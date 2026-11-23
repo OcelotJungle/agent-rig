@@ -139,6 +139,18 @@ describe("readOwner and writeOwner", () => {
 			expect(outcome(await ensureOwner(h.runtime, unknown, TARGET))).toBe('{"ownerSwitch":"unavailable","ownerSwitchReason":"process-unknown"}');
 		}
 	});
+	test("a process of unknown creation time that appears between the reading and the writing makes the write unavailable with process-unknown", async () => {
+		const h = setup();
+		const empty: SessionRecord = { ...SESSION, processes: [] };
+		const reading = await readOwner(h.runtime, empty, TARGET);
+		expect(reading.ok && reading.value.kind).toBe("write");
+		if (!reading.ok || reading.value.kind !== "write") return;
+		const before = await h.fs.readText(TRANSCRIPT);
+		h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ session_id: ID, cwd: "/work", transcript_path: TRANSCRIPT, started_at: CREATED, config_dir: "", pid: 43, pid_created: null, ended_at: null }));
+		h.runtime.process.createdAt = async () => ok({ "43": CREATED });
+		expect(outcome(await writeOwner(h.runtime, reading.value))).toBe('{"ownerSwitch":"unavailable","ownerSwitchReason":"process-unknown"}');
+		expect(await h.fs.readText(TRANSCRIPT)).toBe(before);
+	});
 	test("writes when a process of unknown creation time is known to be gone", async () => {
 		const h = setup();
 		h.runtime.process.createdAt = async () => ok({ "42": null });

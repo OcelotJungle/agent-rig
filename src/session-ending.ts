@@ -17,7 +17,8 @@ export type SessionEnding = {
 	// Records pending registration and starts a launch atomically with takeover; its promise is awaited outside the guard.
 	// `before` runs inside the same guard right after the takeover check and before the marker records the launch (the
 	// owner line is written there); a failure of it ends the launch without a spawn.
-	startLaunch<T>(before: () => Promise<ApiResult<void>>, action: (deadline: number) => T, deadline: () => number): Promise<ApiResult<T>>;
+	// What `before` yields (the decision it made) is handed to `action`.
+	startLaunch<D, T>(before: () => Promise<ApiResult<D>>, action: (deadline: number, decision: D) => T, deadline: () => number): Promise<ApiResult<T>>;
 };
 
 const markerPath = (runtime: RuntimePorts, id: string): string => joinPath(runtime.home, ".agent-rig", "sessions", id, "ending.json");
@@ -161,7 +162,7 @@ export const withSessionEnding = async <T>(runtime: RuntimePorts, id: string, ac
 			const registrationDeadline = deadline();
 			marker.launch = { registrationDeadline };
 			const recorded = await atomicWrite(runtime.fs, path, JSON.stringify(marker), messagesFor(runtime.language));
-			return recorded.ok ? apiOk(start(registrationDeadline)) : io(runtime, recorded.error);
+			return recorded.ok ? apiOk(start(registrationDeadline, prepared.value)) : io(runtime, recorded.error);
 		}),
 	};
 	let result: ApiResult<T>;

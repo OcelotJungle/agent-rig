@@ -41,9 +41,11 @@ const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 // `pid` is null when the owner switch was unavailable: the launch is not waited for, only its exit grace is checked.
 type LaunchResult = { session: string; pid: number | null; mode: string | null; account: number | null } & OwnerSwitch;
-// The step a launch runs right before its spawn, inside the ending marker's guarded transition when there is one.
-type LaunchStep = () => Promise<ApiResult<void>>;
-type SpawnLaunch = (command: string[], before: LaunchStep) => Promise<ApiResult<number>>;
+// The step a launch runs right before its spawn, inside the ending marker's guarded transition when there is one; what it
+// yields (the decision) comes back with the registration deadline.
+type LaunchStep<D> = () => Promise<ApiResult<D>>;
+type Spawned<D> = { decision: D; deadline: number };
+export type SpawnLaunch = <D>(command: string[], before: LaunchStep<D>) => Promise<ApiResult<Spawned<D>>>;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const validMode = (value: string): boolean => MODES.some((mode) => mode === value);
 const invalid = (message: string): ApiResult<never> => apiFail(LAUNCH_INVALID, message);
@@ -110,12 +112,12 @@ export const transcriptMode = async (runtime: RuntimePorts, path: string | null)
 };
 
 // A launch without an ending marker has no guard: the step and the start simply run in order.
-const startUnguarded = async <T>(before: LaunchStep, start: (deadline: number) => T, deadline: () => number): Promise<ApiResult<T>> => {
+const startUnguarded = async <D, T>(before: LaunchStep<D>, start: (deadline: number, decision: D) => T, deadline: () => number): Promise<ApiResult<T>> => {
 	const prepared = await before();
-	return prepared.ok ? apiOk(start(deadline())) : prepared;
+	return prepared.ok ? apiOk(start(deadline(), prepared.value)) : prepared;
 };
 
-const spawnLaunch = async (runtime: RuntimePorts, command: string[], before: LaunchStep, ending?: SessionEnding): Promise<ApiResult<number>> => {
+const spawnLaunch = async <D>(runtime: RuntimePorts, command: string[], before: LaunchStep<D>, ending?: SessionEnding): Promise<ApiResult<Spawned<D>>> => {
 	const directory = joinPath(runtime.home, ".agent-rig", "launch-stderr");
 	const now = runtime.clock.now().getTime();
 	const path = joinPath(directory, `${now}-${runtime.ids.next()}.log`);
@@ -128,7 +130,7 @@ const spawnLaunch = async (runtime: RuntimePorts, command: string[], before: Lau
 		}
 	} catch (error) { return apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.io(errorText(error))); }
 	const deadline = () => launchRegistrationDeadline(runtime.clock.now().getTime());
-	const start = (registrationDeadline: number) => ({ registrationDeadline, process: runtime.process.spawnDetached(command, LAUNCH_EXIT_GRACE_MS, STDERR_LIMIT, path) });
+	const start = (registrationDeadline: number, decision: D) => ({ registrationDeadline, decision, process: runtime.process.spawnDetached(command, LAUNCH_EXIT_GRACE_MS, STDERR_LIMIT, path) });
 	const started = ending === undefined ? await startUnguarded(before, start, deadline) : await ending.startLaunch(before, start, deadline);
 	if (!started.ok) {
 		await runtime.fs.remove(path).catch(() => undefined);
@@ -138,7 +140,7 @@ const spawnLaunch = async (runtime: RuntimePorts, command: string[], before: Lau
 	// On Windows the child may still hold the file; the next launch retries it.
 	await runtime.fs.remove(path).catch(() => undefined);
 	if (!result.ok) return apiFail(LAUNCH_FAILED, result.error);
-	return !result.value.exited || result.value.exitCode === 0 ? apiOk(started.value.registrationDeadline) : apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.launchExited(result.value.exitCode, result.value.stderr));
+	return !result.value.exited || result.value.exitCode === 0 ? apiOk({ decision: started.value.decision, deadline: started.value.registrationDeadline }) : apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.launchExited(result.value.exitCode, result.value.stderr));
 };
 
 type ResolvedLaunch = { command: string[]; account: string; target: OwnerTarget };
@@ -171,22 +173,14 @@ const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, lau
 	if (!reading.ok) return reading;
 	const plan = reading.value;
 	// The owner line is appended by `before`, inside the launch transition; a reading that needs no write is settled already.
-	let decided: OwnerSwitch | null = plan.kind === "settled" ? plan.owner : null;
-	const before = async (): Promise<ApiResult<void>> => {
-		if (plan.kind === "settled") return apiOk(undefined);
-		const written = await writeOwner(runtime, plan);
-		if (!written.ok) return written;
-		decided = written.value;
-		return apiOk(undefined);
-	};
+	const before = async (): Promise<ApiResult<OwnerSwitch>> => plan.kind === "settled" ? apiOk(plan.owner) : writeOwner(runtime, plan);
 	const account = launch.account === "" ? null : Number(launch.account);
 	const spawned = await spawnCommand(launch.command, before);
 	if (!spawned.ok) return spawned;
-	const owner: OwnerSwitch | null = decided;
-	if (owner === null) return apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.io(messagesFor(runtime.language).failure.ownerNotDecided()));
+	const owner = spawned.value.decision;
 	// Without the owner switch Claude Code may refuse the session at once: the grace check is all the launch can tell.
 	if (owner.ownerSwitch === "unavailable") return apiOk({ session: session.id, pid: null, mode, account, ...owner });
-	const deadline = spawned.value;
+	const deadline = spawned.value.deadline;
 	for (;;) {
 		const current = await lookupSession(runtime, session.id);
 		if (!current.ok) return current;
