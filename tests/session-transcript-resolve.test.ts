@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { cleanupSession } from "../src/commands/session-cleanup.js";
 import { transcriptMode } from "../src/commands/session-run.js";
-import { listSessions, lookupSession, TRANSCRIPT_HEAD_BYTES, transcriptHeadCwd } from "../src/session-core.js";
+import { listSessions, lookupSession, TRANSCRIPT_HEAD_BYTES, transcriptHead } from "../src/session-core.js";
 import { ok } from "../src/result.js";
 import { createMemoryRuntime, FAKE_OWNER_CREATED } from "./fakes/memory-runtime.js";
 
@@ -49,16 +49,39 @@ describe("a session's transcript is the existing <id>.jsonl", () => {
 	test("falls back to the recorded cwd for missing, unreadable, or cwd-free transcripts", async () => {
 		const h = setup(NAMED);
 		expect((await loaded(h)).cwd).toBe("/work");
-		for (const head of ['{"type":"mode"}\n', 'invalid\n{"cwd":"/other"}\n']) {
-			h.fs.seed(NAMED, head);
-			expect((await loaded(h)).cwd).toBe("/work");
-		}
+		h.fs.seed(NAMED, '{"type":"mode"}\n');
+		expect((await loaded(h)).cwd).toBe("/work");
 		h.fs.readHead = async () => { throw new Error("unreadable"); };
 		expect((await loaded(h)).cwd).toBe("/work");
 	});
 	test("the head parser skips lines without string cwd and ignores a cut last line", () => {
-		expect(transcriptHeadCwd('{"type":"mode"}\n{"cwd":42}\n{"cwd":"/root"}\n{"cwd":"/later"}\n')).toBe("/root");
-		expect(transcriptHeadCwd('{"type":"mode"}\n{"cwd":"/cut"}')).toBeNull();
+		expect(transcriptHead('{"type":"mode"}\n{"cwd":42}\n{"cwd":"/root"}\n{"cwd":"/later"}\n').cwd).toBe("/root");
+		expect(transcriptHead('{"type":"mode"}\n{"cwd":"/cut"}').cwd).toBeNull();
+	});
+	test("a malformed line is skipped, not a stop: the cwd after it still counts", () => {
+		expect(transcriptHead('invalid\n{"cwd":"/other"}\n').cwd).toBe("/other");
+	});
+	test("a leading BOM is stripped before the first line parses", () => {
+		expect(transcriptHead('\uFEFF{"cwd":"/bom"}\n')).toEqual({ cwd: "/bom", copyOf: null });
+		expect(transcriptHead('\uFEFF{"forkedFrom":{"sessionId":"src"}}\n').copyOf).toBe("src");
+	});
+	test("copyOf is the sessionId of the first forkedFrom that holds a string", () => {
+		expect(transcriptHead('{"type":"mode"}\n{"cwd":"/work","forkedFrom":{"sessionId":"src-1","messageUuid":"m"}}\n{"forkedFrom":{"sessionId":"src-2"}}\n')).toEqual({ cwd: "/work", copyOf: "src-1" });
+		expect(transcriptHead('{"forkedFrom":{"sessionId":7}}\n{"forkedFrom":"src-x"}\n{"forkedFrom":{"sessionId":"src-3"}}\n').copyOf).toBe("src-3");
+	});
+	test("copyOf is null without a forkedFrom line, and an incomplete last line does not count", () => {
+		expect(transcriptHead('{"cwd":"/work"}\n')).toEqual({ cwd: "/work", copyOf: null });
+		expect(transcriptHead('{"cwd":"/work"}\n{"forkedFrom":{"sessionId":"cut"').copyOf).toBeNull();
+	});
+	test("a copy's cwd and copyOf come from one head read; list reports copyOf", async () => {
+		const h = setup(NAMED);
+		h.fs.seed(REAL, '{"type":"mode"}\n{"forkedFrom":{"sessionId":"src-1"},"cwd":"/work"}\n');
+		const record = await loaded(h);
+		expect(record.copyOf).toBe("src-1");
+		expect(record.cwd).toBe("/work");
+		expect(h.fs.rangeReads.filter((read) => read.path === REAL)).toEqual([{ path: REAL, start: 0, length: TRANSCRIPT_HEAD_BYTES }]);
+		const list = await listSessions(h.runtime);
+		expect(list.ok && list.value.sessions[0] && "copyOf" in list.value.sessions[0] ? list.value.sessions[0].copyOf : null).toBe("src-1");
 	});
 	test("a missing named file resolves to the one existing match; list reports it", async () => {
 		const h = setup(NAMED);

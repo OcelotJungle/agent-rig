@@ -68,7 +68,7 @@ describe("a session with several Claude processes", () => {
 		if (!session.ok) throw new Error("lookup failed");
 		expect(await sessionLive(h.runtime, session.value)).toEqual(apiOk(true));
 		const listed = await listSessions(h.runtime);
-		expect(listed.ok && listed.value.sessions).toEqual([{ id: ID, cwd: "/work", transcriptPath: "/transcript", pid: HEADLESS_PID, processes: [{ pid: HEADLESS_PID, startedAt: "2026-01-01T10:03:01Z" }], startedAt: START, live: true, module: true }]);
+		expect(listed.ok && listed.value.sessions).toEqual([{ id: ID, cwd: "/work", transcriptPath: "/transcript", pid: HEADLESS_PID, processes: [{ pid: HEADLESS_PID, startedAt: "2026-01-01T10:03:01Z" }], startedAt: START, live: true, module: true, copyOf: null }]);
 	});
 	test("list shows the earliest started live process as pid and all live ones", async () => {
 		const { h } = setup({ [String(WINDOW_PID)]: WINDOW_CREATED, [String(HEADLESS_PID)]: HEADLESS_CREATED });
@@ -76,7 +76,7 @@ describe("a session with several Claude processes", () => {
 		addProcess(h, HEADLESS_PID, HEADLESS_CREATED, "2026-01-01T10:03:01Z");
 		addProcess(h, WINDOW_PID, WINDOW_CREATED, "2026-01-01T10:00:01Z");
 		const listed = await listSessions(h.runtime);
-		expect(listed.ok && listed.value.sessions).toEqual([{ id: ID, cwd: "/work", transcriptPath: "/transcript", pid: WINDOW_PID, processes: [{ pid: WINDOW_PID, startedAt: "2026-01-01T10:00:01Z" }, { pid: HEADLESS_PID, startedAt: "2026-01-01T10:03:01Z" }], startedAt: START, live: true, module: true }]);
+		expect(listed.ok && listed.value.sessions).toEqual([{ id: ID, cwd: "/work", transcriptPath: "/transcript", pid: WINDOW_PID, processes: [{ pid: WINDOW_PID, startedAt: "2026-01-01T10:00:01Z" }, { pid: HEADLESS_PID, startedAt: "2026-01-01T10:03:01Z" }], startedAt: START, live: true, module: true, copyOf: null }]);
 	});
 	test("a legacy record counts as one process while its identity holds and not after an end", async () => {
 		const { h } = setup({ [String(WINDOW_PID)]: WINDOW_CREATED });

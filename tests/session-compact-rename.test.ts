@@ -13,7 +13,7 @@ import { createMemoryRuntime } from "./fakes/memory-runtime.js";
 
 const ROOT = "/home/test/.agent-rig/sessions";
 const CREATED = "2026-01-01T00:00:00.000000Z";
-const record: SessionRecord = { id: "abc", cwd: "/work", transcriptPath: "/transcript", startedAt: "2026-01-01T00:00:00Z", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "2026-01-01T00:00:00Z" }] };
+const record: SessionRecord = { id: "abc", cwd: "/work", transcriptPath: "/transcript", copyOf: null, startedAt: "2026-01-01T00:00:00Z", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "2026-01-01T00:00:00Z" }] };
 const raw = { session_id: record.id, cwd: record.cwd, transcript_path: record.transcriptPath, started_at: record.startedAt };
 const processFile = { pid: 42, pid_created: CREATED, started_at: record.startedAt, source: "startup", config_dir: "" };
 

@@ -27,20 +27,32 @@ export const SESSION_TIMEOUTS: Record<Op, number> = { compact: COMPACT_TIMEOUT_M
 // One Claude process of a session, from its file ~/.agent-rig/sessions/<id>/processes/<pid>.json (or a legacy record).
 // A process with no recorded creation time cannot be told from a reused pid, so it never counts as live.
 export type SessionProcess = { pid: number; pidCreated: string | null; startedAt: string };
-export type SessionRecord = { id: string; cwd: string | null; transcriptPath: string | null; startedAt: string; processes: SessionProcess[] };
+export type SessionRecord = { id: string; cwd: string | null; transcriptPath: string | null; copyOf: string | null; startedAt: string; processes: SessionProcess[] };
 export type LiveProcess = { pid: number; startedAt: string };
-export type SessionSummary = { id: string; cwd: string | null; transcriptPath: string | null; pid: number | null; processes: LiveProcess[]; startedAt: string; live: boolean; module: boolean };
+export type SessionSummary = { id: string; cwd: string | null; transcriptPath: string | null; pid: number | null; processes: LiveProcess[]; startedAt: string; live: boolean; module: boolean; copyOf: string | null };
 export type SessionListEntry = SessionSummary | { id: string; error: { code: string; message: string } };
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-export const transcriptHeadCwd = (head: string): string | null => {
-	const lines = head.split("\n");
+// The facts a transcript head gives: the cwd of its first line with a string cwd, and the session id of the first line whose forkedFrom holds a string sessionId.
+export type TranscriptHead = { cwd: string | null; copyOf: string | null };
+const BYTE_ORDER_MARK = "\uFEFF";
+// One pass over the complete lines of the head; a line that does not parse is skipped, and the scan stops once both facts are known.
+export const transcriptHead = (head: string): TranscriptHead => {
+	const text = head.startsWith(BYTE_ORDER_MARK) ? head.slice(BYTE_ORDER_MARK.length) : head;
+	const lines = text.split("\n");
+	// The last segment is a line the read cut short, or an empty string after a final newline: it is not a complete line.
 	lines.pop();
+	let cwd: string | null = null;
+	let copyOf: string | null = null;
 	for (const line of lines) {
 		let value: unknown;
-		try { value = JSON.parse(line); } catch { return null; }
-		if (object(value) && typeof value.cwd === "string") return value.cwd;
+		try { value = JSON.parse(line); } catch { continue; }
+		if (!object(value)) continue;
+		if (cwd === null && typeof value.cwd === "string") cwd = value.cwd;
+		const forkedFrom = value.forkedFrom;
+		if (copyOf === null && object(forkedFrom) && typeof forkedFrom.sessionId === "string") copyOf = forkedFrom.sessionId;
+		if (cwd !== null && copyOf !== null) break;
 	}
-	return null;
+	return { cwd, copyOf };
 };
 const nullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
 const missing = (e: unknown): boolean => object(e) && (e.code === "ENOENT" || e.code === "ENOTDIR");
@@ -90,11 +102,16 @@ export const readSession = async (r: RuntimePorts, id: string): Promise<ApiResul
 	const transcriptPath = await resolveTranscriptPath(r, id, value.transcript_path, typeof value.config_dir === "string" ? value.config_dir : "");
 	if (!transcriptPath.ok) return transcriptPath;
 	let cwd = value.cwd;
+	let copyOf: string | null = null;
 	if (transcriptPath.value !== null) {
-		try { cwd = transcriptHeadCwd(await r.fs.readHead(transcriptPath.value, TRANSCRIPT_HEAD_BYTES)) ?? cwd; }
-		catch { /* A missing or unreadable transcript leaves the recorded cwd in place. */ }
+		try {
+			const head = transcriptHead(await r.fs.readHead(transcriptPath.value, TRANSCRIPT_HEAD_BYTES));
+			cwd = head.cwd ?? cwd;
+			copyOf = head.copyOf;
+		}
+		catch { /* A missing or unreadable transcript leaves the recorded cwd in place and names no copy source. */ }
 	}
-	return apiOk({ id, cwd, transcriptPath: transcriptPath.value, startedAt: value.started_at, processes: processes.value });
+	return apiOk({ id, cwd, transcriptPath: transcriptPath.value, copyOf, startedAt: value.started_at, processes: processes.value });
 };
 
 // The processes among `candidates` whose creation time matches the recorded one, earliest started first.
@@ -189,10 +206,10 @@ export const listSessions = async (r: RuntimePorts): Promise<ApiResult<{ session
 		if (!retained.ok) { if (retained.error.code !== SESSION_UNKNOWN) sessions.push({ id, error: retained.error }); continue; }
 		const retainedLive = retained.value === record ? live : await liveProcesses(r, retained.value);
 		if (!retainedLive.ok) { sessions.push({ id, error: retainedLive.error }); continue; }
-		const { cwd, transcriptPath, startedAt } = retained.value;
+		const { cwd, transcriptPath, startedAt, copyOf } = retained.value;
 		const module = await sessionModule(r, retained.value);
 		if (!module.ok) { sessions.push({ id, error: module.error }); continue; }
-		sessions.push({ id, cwd, transcriptPath, pid: retainedLive.value[0]?.pid ?? null, processes: retainedLive.value.map((process) => ({ pid: process.pid, startedAt: process.startedAt })), startedAt, live: retainedLive.value.length > 0, module: module.value });
+		sessions.push({ id, cwd, transcriptPath, pid: retainedLive.value[0]?.pid ?? null, processes: retainedLive.value.map((process) => ({ pid: process.pid, startedAt: process.startedAt })), startedAt, live: retainedLive.value.length > 0, module: module.value, copyOf });
 	}
 	sessions.sort((a, b) => ("startedAt" in b ? b.startedAt : "").localeCompare("startedAt" in a ? a.startedAt : ""));
 	return apiOk({ sessions });

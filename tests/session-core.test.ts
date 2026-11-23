@@ -10,7 +10,7 @@ import { createMemoryRuntime } from "./fakes/memory-runtime.js";
 
 const ROOT = "/home/test/.agent-rig/sessions";
 const CREATED = "2026-01-01T00:00:00.000000Z";
-const record: SessionRecord = { id: "abc", cwd: "/work", transcriptPath: "/transcript", startedAt: "2026-01-01T00:00:00Z", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "2026-01-01T00:00:00Z" }] };
+const record: SessionRecord = { id: "abc", cwd: "/work", transcriptPath: "/transcript", copyOf: null, startedAt: "2026-01-01T00:00:00Z", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "2026-01-01T00:00:00Z" }] };
 const raw = { session_id: record.id, cwd: record.cwd, transcript_path: record.transcriptPath, started_at: record.startedAt };
 const processFile = { pid: 42, pid_created: CREATED, started_at: record.startedAt, source: "startup", config_dir: "" };
 
@@ -302,7 +302,7 @@ describe("session core", () => {
 		const h = setup();
 		h.fs.seed(`${ROOT}/older.json`, JSON.stringify({ ...raw, session_id: "older", started_at: "2025-01-01T00:00:00Z" }));
 		const result = await listSessions(h.runtime);
-		expect(result).toEqual(apiOk({ sessions: [{ id: "abc", cwd: "/work", transcriptPath: "/transcript", pid: 42, processes: [{ pid: 42, startedAt: record.startedAt }], startedAt: record.startedAt, live: true, module: true }, { id: "older", cwd: "/work", transcriptPath: "/transcript", pid: null, processes: [], startedAt: "2025-01-01T00:00:00Z", live: false, module: false }] }));
+		expect(result).toEqual(apiOk({ sessions: [{ id: "abc", cwd: "/work", transcriptPath: "/transcript", pid: 42, processes: [{ pid: 42, startedAt: record.startedAt }], startedAt: record.startedAt, live: true, module: true, copyOf: null }, { id: "older", cwd: "/work", transcriptPath: "/transcript", pid: null, processes: [], startedAt: "2025-01-01T00:00:00Z", live: false, module: false, copyOf: null }] }));
 		const output: string[] = [];
 		expect(await runCli(["session", "list"], (line) => output.push(line), h.runtime)).toBe(0);
 		expect(output).toHaveLength(1);

@@ -34,7 +34,7 @@ const LAUNCHED_CREATED = "resumed-claude-creation";
 const TOKENS_BEFORE = 164_000;
 const TOKENS_AFTER = 80_000;
 const SKILLS = '{"type":"attachment","attachment":{"type":"invoked_skills","skills":[{"name":"sample","content":"invented"}]}}\n';
-const SESSION: SessionRecord = { id: ID, cwd: "/work", transcriptPath: TRANSCRIPT, startedAt: "start", processes: [CLAUDE_PID, WINDOW_PID].map((pid) => ({ pid, pidCreated: CLAUDE_CREATED, startedAt: "start" })) };
+const SESSION: SessionRecord = { id: ID, cwd: "/work", transcriptPath: TRANSCRIPT, copyOf: null, startedAt: "start", processes: [CLAUDE_PID, WINDOW_PID].map((pid) => ({ pid, pidCreated: CLAUDE_CREATED, startedAt: "start" })) };
 const code = (result: { ok: true } | { ok: false; error: { code: string } }): string => result.ok ? "ok" : result.error.code;
 const gate = () => {
 	let open = () => {};

@@ -25,7 +25,7 @@ const TASKKILL_GONE_EXIT_CODE = 128;
 const KILL_GONE_EXIT_CODE = 1;
 const PS_FAILED_EXIT_CODE = 1;
 const LIVE_STATE = "S";
-const SESSION: SessionRecord = { id: "abc", cwd: null, transcriptPath: null, startedAt: "start", processes: [{ pid: ROOT_PID, pidCreated: CREATED, startedAt: "start" }] };
+const SESSION: SessionRecord = { id: "abc", cwd: null, transcriptPath: null, copyOf: null, startedAt: "start", processes: [{ pid: ROOT_PID, pidCreated: CREATED, startedAt: "start" }] };
 
 type Answer = (command: string, args: readonly string[]) => Result<ProcessOutput>;
 type Call = { command: string; args: readonly string[] };

@@ -17,7 +17,7 @@ const ROOT = "/home/test/.agent-rig";
 const CREATED = "2026-01-01";
 // The two-second failure-detection grace documented for session launches.
 const LAUNCH_GRACE_MS = 2000;
-const session: SessionRecord = { id: ID, cwd: "/work", transcriptPath: "/transcript", startedAt: CREATED, processes: [] };
+const session: SessionRecord = { id: ID, cwd: "/work", transcriptPath: "/transcript", copyOf: null, startedAt: CREATED, processes: [] };
 const raw = { session_id: ID, cwd: session.cwd, transcript_path: session.transcriptPath, pid: 42, pid_created: CREATED, started_at: CREATED, ended_at: CREATED, config_dir: "/cfg/1-test" };
 const code = (result: { ok: true } | { ok: false; error: { code: string } }): string => result.ok ? "ok" : result.error.code;
 // Control characters, then every character that some launch-line parser reads as syntax or that is not in the identifier alphabet.

@@ -13,7 +13,7 @@ import { createMemoryRuntime, FAKE_OWNER_CREATED } from "./fakes/memory-runtime.
 
 const ROOT = "/home/test/.agent-rig/sessions";
 const CREATED = "creation";
-const SESSION: SessionRecord = { id: "abc", cwd: null, transcriptPath: null, startedAt: "start", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "start" }] };
+const SESSION: SessionRecord = { id: "abc", cwd: null, transcriptPath: null, copyOf: null, startedAt: "start", processes: [{ pid: 42, pidCreated: CREATED, startedAt: "start" }] };
 const RAW = { session_id: "abc", cwd: null, transcript_path: null, started_at: "start" };
 const PROCESS_FILE = { pid: 42, pid_created: CREATED, started_at: "start", source: "startup", config_dir: "" };
 const setup = () => {

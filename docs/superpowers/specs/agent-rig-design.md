@@ -375,7 +375,7 @@ error, in event texts and in the generated agent rules.
 | --- | --- | --- | --- |
 | `rig help` | `{"usage":[...]}` | nothing | JSON |
 | `rig info --session <id>` | `InfoData` object (`src/info-data.ts`) | nothing yet | JSON |
-| `rig session list` | `{sessions: [{id, cwd, transcriptPath, pid, startedAt, live, module}]}` | nothing yet | JSON |
+| `rig session list` | `{sessions: [{id, cwd, transcriptPath, pid, startedAt, live, module, copyOf}]}` | nothing yet | JSON |
 | `rig exec start <shell> --cwd <dir>` | `{id, shell, cwd, pid, startedAt}`; command on stdin | nothing yet | JSON |
 | `rig exec start rig -- <arg…>` | `{id, shell: "rig", pid, startedAt}`; rig's own command as a detached run | nothing yet | JSON |
 | `rig exec status <id> [--from <offset> [--wait <ms>]]` | `{id, shell, cwd, state, startedAt, end?, result?, log}`; a rig run has `args` instead of `cwd` | nothing yet | JSON |
