@@ -66,9 +66,23 @@ describe("ensureOwner", () => {
 		expect(outcome(await ensureOwner(h.runtime, SESSION, SAME_TARGET))).toBe('{"ownerSwitch":"unchanged"}');
 		expect(await h.fs.readText(TRANSCRIPT)).toBe(before);
 	});
-	test("reads the last owner line, skipping unparsable lines and lines of another shape", async () => {
-		const other = JSON.stringify({ type: "session-owner", accountUuid: ACCOUNT_ONE.accountUuid, organizationUuid: ACCOUNT_ONE.organizationUuid, sessionId: ID, extra: "key" });
-		const h = setup(`${ownerLine(ACCOUNT_ONE, ID)}\n${ownerLine(DEFAULT_LOGIN, ID)}\n${other}\n{"type":"session-owner","accountUuid":1}\nnot json\n${CHAT}`);
+	test("is unavailable with owner-line-unknown when the newest session-owner line has an extra key, not a verdict from an older line", async () => {
+		const extra = JSON.stringify({ type: "session-owner", accountUuid: DEFAULT_LOGIN.accountUuid, organizationUuid: DEFAULT_LOGIN.organizationUuid, sessionId: ID, extra: "key" });
+		const h = setup(`${ownerLine(ACCOUNT_ONE, ID)}\n${extra}\n${CHAT}`);
+		const before = await h.fs.readText(TRANSCRIPT);
+		expect(outcome(await ensureOwner(h.runtime, SESSION, TARGET))).toBe('{"ownerSwitch":"unavailable","ownerSwitchReason":"owner-line-unknown"}');
+		expect(await h.fs.readText(TRANSCRIPT)).toBe(before);
+	});
+	test("is unavailable with owner-line-unknown when the newest session-owner line has a non-string accountUuid, and writes nothing", async () => {
+		const numeric = JSON.stringify({ type: "session-owner", accountUuid: 1, organizationUuid: DEFAULT_LOGIN.organizationUuid, sessionId: ID });
+		const h = setup(`${ownerLine(DEFAULT_LOGIN, ID)}\n${numeric}\n${CHAT}`);
+		const before = await h.fs.readText(TRANSCRIPT);
+		expect(outcome(await ensureOwner(h.runtime, SESSION, TARGET))).toBe('{"ownerSwitch":"unavailable","ownerSwitchReason":"owner-line-unknown"}');
+		expect(await h.fs.readText(TRANSCRIPT)).toBe(before);
+	});
+	test("skips unparsable lines and lines of another type after the last owner line, and takes the verdict from that owner line", async () => {
+		const ownerLike = JSON.stringify({ type: "session-ownerish", accountUuid: 1, organizationUuid: ACCOUNT_ONE.organizationUuid, sessionId: ID });
+		const h = setup(`${ownerLine(ACCOUNT_ONE, ID)}\n${ownerLine(DEFAULT_LOGIN, ID)}\n${CHAT}not json\n${ownerLike}\n${CHAT}`);
 		expect(outcome(await ensureOwner(h.runtime, SESSION, SAME_TARGET))).toBe('{"ownerSwitch":"unchanged"}');
 	});
 	test("starts the new line on its own line when the last line has no line feed", async () => {
@@ -76,10 +90,14 @@ describe("ensureOwner", () => {
 		expect(outcome(await ensureOwner(h.runtime, SESSION, TARGET))).toBe('{"ownerSwitch":"written"}');
 		expect(await h.fs.readText(TRANSCRIPT)).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n{"type":"user","mess\n${ownerLine(ACCOUNT_ONE, ID)}\n`);
 	});
-	test("fails as session-unknown for a missing transcript and for an empty one", async () => {
+	test("fails as session-unknown for a missing transcript and for a null transcript path", async () => {
 		expect(outcome(await ensureOwner(setup(null).runtime, SESSION, TARGET))).toBe("session-unknown");
-		expect(outcome(await ensureOwner(setup("").runtime, SESSION, TARGET))).toBe("session-unknown");
 		expect(outcome(await ensureOwner(setup().runtime, { ...SESSION, transcriptPath: null }, TARGET))).toBe("session-unknown");
+	});
+	test("is unavailable with no-owner-line for an empty transcript, and writes nothing", async () => {
+		const h = setup("");
+		expect(outcome(await ensureOwner(h.runtime, SESSION, TARGET))).toBe('{"ownerSwitch":"unavailable","ownerSwitchReason":"no-owner-line"}');
+		expect(await h.fs.readText(TRANSCRIPT)).toBe("");
 	});
 	test("is unavailable with no-owner-line when the transcript has none, and writes nothing", async () => {
 		const h = setup(CHAT);

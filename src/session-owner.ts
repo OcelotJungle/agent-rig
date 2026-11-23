@@ -21,7 +21,7 @@ const LAST_BYTE_LENGTH = 1;
 
 export type OwnerIds = { accountUuid: string; organizationUuid: string };
 // Why a launch could not make its account the owner; the closed set of `ownerSwitchReason`.
-export type OwnerSwitchReason = "no-owner-line" | "ids-unreadable" | "account-unknown" | "several-transcripts" | "process-unknown" | "locked";
+export type OwnerSwitchReason = "no-owner-line" | "owner-line-unknown" | "ids-unreadable" | "account-unknown" | "several-transcripts" | "process-unknown" | "locked";
 // The launch account's ids, or the reason they are not known.
 export type OwnerTarget = { kind: "ids"; ids: OwnerIds } | { kind: "unavailable"; reason: "ids-unreadable" | "account-unknown" };
 export type OwnerSwitch = { ownerSwitch: "written" | "unchanged" } | { ownerSwitch: "unavailable"; ownerSwitchReason: OwnerSwitchReason };
@@ -37,19 +37,28 @@ const ownerIdsOfLine = (value: unknown): OwnerIds | null => {
 	return { accountUuid, organizationUuid };
 };
 
+// What a session-owner line says: its ids when it has the known shape, `unknown` when it does not; null for other lines.
+type OwnerLineRead = { kind: "known"; ids: OwnerIds } | { kind: "unknown" };
+const readOwnerLine = (value: unknown): OwnerLineRead | null => {
+	if (!object(value) || value.type !== OWNER_LINE_TYPE) return null;
+	const ids = ownerIdsOfLine(value);
+	return ids === null ? { kind: "unknown" } : { kind: "known", ids };
+};
+
 // Paths from different tools name one file: separators always, case outside Linux.
 const comparable = (runtime: RuntimePorts, path: string): string => runtime.platform === "linux" ? toSlashPath(path) : toSlashPath(path).toLowerCase();
 
 const unavailable = (reason: OwnerSwitchReason): ApiResult<OwnerSwitch> => apiOk({ ownerSwitch: "unavailable", ownerSwitchReason: reason });
 
 // Makes the target the owner of the session's transcript when everything the spec requires holds; otherwise reports why
-// not and writes nothing. A missing or empty transcript fails the launch as `session-unknown`.
+// not and writes nothing. A missing transcript fails the launch as `session-unknown`; an empty one has no owner line.
 export const ensureOwner = async (runtime: RuntimePorts, session: SessionRecord, target: OwnerTarget): Promise<ApiResult<OwnerSwitch>> => {
 	const m = messagesFor(runtime.language).session;
 	try {
 		const path = session.transcriptPath;
 		const stat = path === null ? null : await runtime.fs.stat(path);
-		if (path === null || stat === null || stat.size === 0) return apiFail(SESSION_UNKNOWN, m.unknown(session.id));
+		if (path === null || stat === null) return apiFail(SESSION_UNKNOWN, m.unknown(session.id));
+		if (stat.size === 0) return unavailable("no-owner-line");
 		if (target.kind === "unavailable") return unavailable(target.reason);
 		const found = await projectTranscripts(runtime, session.id, await recordedConfigDir(runtime, session.id));
 		if (new Set([path, ...found.map((entry) => entry.path)].map((entry) => comparable(runtime, entry))).size !== 1) return unavailable("several-transcripts");
@@ -60,9 +69,10 @@ export const ensureOwner = async (runtime: RuntimePorts, session: SessionRecord,
 			// null is a pid with no process; anything else (a creation time, or an incomplete table) may be a live one.
 			if (unknownCreation.some((pid) => created.value[String(pid)] !== null)) return unavailable("process-unknown");
 		}
-		const current = await scanTranscriptBackwards(runtime, path, ownerIdsOfLine);
+		const current = await scanTranscriptBackwards(runtime, path, readOwnerLine);
 		if (current === null) return unavailable("no-owner-line");
-		if (current.accountUuid === target.ids.accountUuid && current.organizationUuid === target.ids.organizationUuid) return apiOk({ ownerSwitch: "unchanged" });
+		if (current.kind === "unknown") return unavailable("owner-line-unknown");
+		if (current.ids.accountUuid === target.ids.accountUuid && current.ids.organizationUuid === target.ids.organizationUuid) return apiOk({ ownerSwitch: "unchanged" });
 		const [last] = await runtime.fs.readRange(path, stat.size - LAST_BYTE_LENGTH, LAST_BYTE_LENGTH);
 		const line = JSON.stringify({ type: OWNER_LINE_TYPE, accountUuid: target.ids.accountUuid, organizationUuid: target.ids.organizationUuid, sessionId: session.id });
 		const bytes = Buffer.from(`${last === LINE_FEED ? "" : "\n"}${line}\n`);
