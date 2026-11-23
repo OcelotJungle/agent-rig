@@ -11,7 +11,12 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[1] / "analysis_gate.py"
 FULL = "## Unknowns  \n- the cache policy\n\n## Class \nno defect: analysis gate\n"
 MINUTE = 60
+INVALID = b"## Unknowns\n- x\n"
 ANALYSIS_PATH_PARTS = (".tmp", "analysis.md")
+
+
+def codex_input(prompt):
+    return {"subagent_type": "codex", "prompt": prompt}
 
 
 class AnalysisGateTests(unittest.TestCase):
@@ -74,7 +79,7 @@ class AnalysisGateTests(unittest.TestCase):
         self.assertEqual(self.launch(), "")
 
     def test_every_subagent_type_is_gated(self):
-        for subagent_type in ("Explore", "general-purpose", "security-reviewer"):
+        for subagent_type in ("general-purpose", "security-reviewer"):
             with self.subTest(subagent_type=subagent_type):
                 stdout = self.launch(tool_input={"subagent_type": subagent_type, "prompt": "x"})
                 self.assert_denied(stdout, "missing")
@@ -92,6 +97,41 @@ class AnalysisGateTests(unittest.TestCase):
 
     def test_non_string_cwd_allowed_silently(self):
         self.assertEqual(self.launch(cwd=5), "")
+
+    def test_read_only_agent_types_allowed_with_invalid_file(self):
+        self.write(INVALID)
+        for subagent_type in ("Explore", "Plan", "claude-code-guide", "web-fetch"):
+            with self.subTest(subagent_type=subagent_type):
+                self.assertEqual(self.launch(tool_input={"subagent_type": subagent_type, "prompt": "x"}), "")
+
+    def test_codex_read_only_allowed_with_invalid_file(self):
+        self.write(INVALID)
+        self.assertEqual(self.launch(tool_input=codex_input("model: luna\nmode: read-only\ntask:\ndo x")), "")
+
+    def test_codex_read_only_header_whitespace_allowed(self):
+        self.assertEqual(self.launch(tool_input=codex_input("  mode: read-only  \ntask:\ndo x")), "")
+
+    def test_codex_header_mode_case_is_exact(self):
+        self.assert_denied(self.launch(tool_input=codex_input("Mode: Read-Only\ntask:\ndo x")), "missing")
+
+    def test_codex_write_denied(self):
+        self.assert_denied(self.launch(tool_input=codex_input("model: luna\nmode: write\ntask:\ndo x")), "missing")
+
+    def test_codex_without_mode_line_denied(self):
+        self.assert_denied(self.launch(tool_input=codex_input("model: luna\ntask:\ndo x")), "missing")
+
+    def test_codex_read_only_line_after_task_denied(self):
+        self.assert_denied(self.launch(tool_input=codex_input("model: luna\ntask:\nmode: read-only")), "missing")
+
+    def test_codex_header_with_read_only_and_write_denied(self):
+        self.assert_denied(self.launch(tool_input=codex_input("mode: read-only\nmode: write\ntask:\ndo x")), "missing")
+
+    def test_general_purpose_with_read_only_header_denied(self):
+        self.assert_denied(self.launch(tool_input={"subagent_type": "general-purpose",
+                                                   "prompt": "mode: read-only\ntask:\ndo x"}), "missing")
+
+    def test_agent_without_subagent_type_denied(self):
+        self.assert_denied(self.launch(tool_input={"prompt": "mode: read-only\ntask:\ndo x"}), "missing")
 
 
 if __name__ == "__main__":
