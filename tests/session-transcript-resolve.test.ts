@@ -63,11 +63,18 @@ describe("a session's transcript is the existing <id>.jsonl", () => {
 	});
 	test("a leading BOM is stripped before the first line parses", () => {
 		expect(transcriptHead('\uFEFF{"cwd":"/bom"}\n')).toEqual({ cwd: "/bom", copyOf: null });
-		expect(transcriptHead('\uFEFF{"forkedFrom":{"sessionId":"src"}}\n').copyOf).toBe("src");
+		expect(transcriptHead('\uFEFF{"cwd":"/bom","forkedFrom":{"sessionId":"src"}}\n').copyOf).toBe("src");
 	});
-	test("copyOf is the sessionId of the first forkedFrom that holds a string", () => {
+	test("copyOf is the forkedFrom.sessionId of the cwd line when it is a string, else null", () => {
 		expect(transcriptHead('{"type":"mode"}\n{"cwd":"/work","forkedFrom":{"sessionId":"src-1","messageUuid":"m"}}\n{"forkedFrom":{"sessionId":"src-2"}}\n')).toEqual({ cwd: "/work", copyOf: "src-1" });
-		expect(transcriptHead('{"forkedFrom":{"sessionId":7}}\n{"forkedFrom":"src-x"}\n{"forkedFrom":{"sessionId":"src-3"}}\n').copyOf).toBe("src-3");
+		expect(transcriptHead('{"cwd":"/work","forkedFrom":{"sessionId":7}}\n{"forkedFrom":{"sessionId":"src-3"}}\n')).toEqual({ cwd: "/work", copyOf: null });
+		expect(transcriptHead('{"cwd":"/work","forkedFrom":"src-x"}\n{"forkedFrom":{"sessionId":"src-3"}}\n').copyOf).toBeNull();
+	});
+	test("an owner line before the cwd line is skipped; copyOf comes from the cwd line", () => {
+		expect(transcriptHead('{"type":"session-owner","accountUuid":"acc","organizationUuid":"org","sessionId":"me"}\n{"cwd":"/work","forkedFrom":{"sessionId":"src-owner"}}\n')).toEqual({ cwd: "/work", copyOf: "src-owner" });
+	});
+	test("copyOf is null when the first cwd line has no forkedFrom, even if a later line has one", () => {
+		expect(transcriptHead('{"cwd":"/work"}\n{"type":"mode"}\n{"cwd":"/work/sub","forkedFrom":{"sessionId":"later"}}\n')).toEqual({ cwd: "/work", copyOf: null });
 	});
 	test("copyOf is null without a forkedFrom line, and an incomplete last line does not count", () => {
 		expect(transcriptHead('{"cwd":"/work"}\n')).toEqual({ cwd: "/work", copyOf: null });

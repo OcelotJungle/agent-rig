@@ -32,27 +32,26 @@ export type LiveProcess = { pid: number; startedAt: string };
 export type SessionSummary = { id: string; cwd: string | null; transcriptPath: string | null; pid: number | null; processes: LiveProcess[]; startedAt: string; live: boolean; module: boolean; copyOf: string | null };
 export type SessionListEntry = SessionSummary | { id: string; error: { code: string; message: string } };
 const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-// The facts a transcript head gives: the cwd of its first line with a string cwd, and the session id of the first line whose forkedFrom holds a string sessionId.
+// The facts a transcript head gives, both from its first line with a string cwd: the cwd, and the forkedFrom.sessionId of that line (null when it has none).
 export type TranscriptHead = { cwd: string | null; copyOf: string | null };
 const BYTE_ORDER_MARK = "\uFEFF";
-// One pass over the complete lines of the head; a line that does not parse is skipped, and the scan stops once both facts are known.
+// One pass over the complete lines of the head; a line that does not parse or has no string cwd is skipped (Claude Code writes an owner line first), and the scan stops at the first line with a cwd.
 export const transcriptHead = (head: string): TranscriptHead => {
 	const text = head.startsWith(BYTE_ORDER_MARK) ? head.slice(BYTE_ORDER_MARK.length) : head;
 	const lines = text.split("\n");
 	// The last segment is a line the read cut short, or an empty string after a final newline: it is not a complete line.
 	lines.pop();
-	let cwd: string | null = null;
-	let copyOf: string | null = null;
 	for (const line of lines) {
 		let value: unknown;
 		try { value = JSON.parse(line); } catch { continue; }
 		if (!object(value)) continue;
-		if (cwd === null && typeof value.cwd === "string") cwd = value.cwd;
+		const cwd = value.cwd;
+		if (typeof cwd !== "string") continue;
 		const forkedFrom = value.forkedFrom;
-		if (copyOf === null && object(forkedFrom) && typeof forkedFrom.sessionId === "string") copyOf = forkedFrom.sessionId;
-		if (cwd !== null && copyOf !== null) break;
+		const copyOf = object(forkedFrom) && typeof forkedFrom.sessionId === "string" ? forkedFrom.sessionId : null;
+		return { cwd, copyOf };
 	}
-	return { cwd, copyOf };
+	return { cwd: null, copyOf: null };
 };
 const nullableString = (v: unknown): v is string | null => v === null || typeof v === "string";
 const missing = (e: unknown): boolean => object(e) && (e.code === "ENOENT" || e.code === "ENOTDIR");
