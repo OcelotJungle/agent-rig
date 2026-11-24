@@ -75,6 +75,8 @@ export const ru: Messages = {
 		accountNumber: (): string => "Аккаунт должен быть числом",
 		alreadyRunning: (): string => "Сессия уже запущена",
 		launchTimeout: (): string => "Сессия не запустилась вовремя",
+		ownerSwitchRefused: (reason: string, attempts: number, detail: string): string => `Запуск отклонён, окно не открыто: сессию нельзя сделать принадлежащей аккаунту запуска (причина ${reason}, попыток ${attempts}${detail === "" ? "" : `, ${detail}`})`,
+		ownerSwitchRefusedEvent: (session: string, account: number | null, reason: string, attempts: number, detail: string): string => `Сессия ${session} не запущена${account === null ? "" : ` под аккаунтом ${account}`}: владельца сессии нельзя переключить (причина ${reason}, попыток ${attempts}${detail === "" ? "" : `, ${detail}`})`,
 		launchExited: (code: number | null, stderr: string): string => `Команда запуска завершилась с кодом ${code}: ${stderr}`,
 		launchNoCswap: (): string => "Для выбора аккаунта нужен cswap",
 		launchCswapPath: (): string => "Путь к cswap нельзя записать в командную строку запуска",

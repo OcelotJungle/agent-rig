@@ -90,6 +90,8 @@ export const en = {
 		accountNumber: (): string => "Account must be a number",
 		alreadyRunning: (): string => "Session is already running",
 		launchTimeout: (): string => "Session did not start in time",
+		ownerSwitchRefused: (reason: string, attempts: number, detail: string): string => `The launch was refused, no window was opened: the session cannot be made owned by the launch account (reason ${reason}, ${attempts} tries${detail === "" ? "" : `, ${detail}`})`,
+		ownerSwitchRefusedEvent: (session: string, account: number | null, reason: string, attempts: number, detail: string): string => `Session ${session} was not launched${account === null ? "" : ` under account ${account}`}: its owner cannot be switched (reason ${reason}, ${attempts} tries${detail === "" ? "" : `, ${detail}`})`,
 		launchExited: (code: number | null, stderr: string): string => `Launch exited ${code}: ${stderr}`,
 		launchNoCswap: (): string => "An account requires cswap",
 		launchCswapPath: (): string => "The cswap path cannot be put on the launch command line",

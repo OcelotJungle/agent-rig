@@ -1,8 +1,8 @@
 import type { ApiResult, ProgressEvent } from "../output.js";
 import type { RuntimePorts } from "../ports.js";
 import type { SessionRecord } from "../session-core.js";
-import type { SessionEnding } from "../session-ending.js";
-import type { OwnerSwitch, OwnerTarget } from "../session-owner.js";
+import type { LaunchGate, LaunchStart, SessionEnding } from "../session-ending.js";
+import type { OwnerGate, OwnerReading, OwnerRefusal, OwnerSwitch, OwnerTarget } from "../session-owner.js";
 
 import { localPluginOrigin, readMarketplaceManifest } from "../apply.js";
 import { findOnPath } from "../executable-path.js";
@@ -11,15 +11,15 @@ import { joinPath } from "../file-system.js";
 import { buildLaunchCommand } from "../launch-command.js";
 import { launchPath, LAUNCH_TOKEN } from "../launch-safety.js";
 import { messagesFor } from "../messages.js";
-import { apiFail, apiOk, ERROR_CODE_USAGE, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
+import { apiFail, apiOk, ERROR_CODE_USAGE, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
 import { errorText } from "../result.js";
 import { liveProcesses, lookupSession, lookupSessionForCommand, processKey, recordedConfigDir, sessionLive, SESSION_POLL_MS } from "../session-core.js";
 import { withSessionEnding } from "../session-ending.js";
-import { readOwner, writeOwner } from "../session-owner.js";
+import { describeDetail, readOwner, writeOwner } from "../session-owner.js";
 import { scanTranscriptBackwards } from "../transcript-scan.js";
 import { accountOf, INFO_ERROR_STATE_UNREADABLE } from "./info.js";
 import { resolveOwnerTarget } from "./session-owner-target.js";
-import { readRigState } from "./shared.js";
+import { emitRigEvent, readRigState } from "./shared.js";
 import { endSession, stopEndingSession } from "./session-stop.js";
 
 // How long a launch waits to see whether its process exits at once (ms); the launch file is removed only once older than this.
@@ -36,16 +36,20 @@ const POSIX_PATH_SEPARATOR = ":";
 const WINDOWS_PATH_SEPARATOR = ";";
 // File types cmd.exe /c tries for a bare name, in its lookup order; PATH order comes first.
 const WINDOWS_EXECUTABLE_SUFFIXES = [".exe", ".com", ".cmd", ".bat"] as const;
+// The rig event a refused launch leaves for the user, next to the failed result.
+const OWNER_SWITCH_REFUSED_EVENT = "owner-switch-refused";
 const MODES = ["manual", "auto", "acceptEdits", "plan", "dontAsk"] as const;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// `pid` is null when the owner switch was unavailable: the launch is not waited for, only its exit grace is checked.
+// `pid` is null when the launch had no owner switch to make (`ownerSwitch: "none"`): it is not waited for, only its exit grace is checked.
 type LaunchResult = { session: string; pid: number | null; mode: string | null; account: number | null } & OwnerSwitch;
-// The step a launch runs right before its spawn, inside the ending marker's guarded transition when there is one; what it
-// yields (the decision) comes back with the registration deadline.
-type LaunchStep<D> = () => Promise<ApiResult<D>>;
-type Spawned<D> = { decision: D; deadline: number };
-export type SpawnLaunch = <D>(command: string[], before: LaunchStep<D>) => Promise<ApiResult<Spawned<D>>>;
+// The step a launch runs right before its spawn, inside the ending marker's guarded transition when there is one: it lets
+// the launch go on with a decision, or stays (no spawn) with an outcome.
+type LaunchStep<D, S> = () => Promise<ApiResult<LaunchGate<D, S>>>;
+// What a launch attempt came to: the decision the step made and the registration deadline, or the outcome it stayed with.
+type Spawned<D> = { kind: "spawned"; decision: D; deadline: number };
+type Declined<S> = { kind: "declined"; outcome: S };
+export type SpawnLaunch = <D, S>(command: string[], before: LaunchStep<D, S>) => Promise<ApiResult<Spawned<D> | Declined<S>>>;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const validMode = (value: string): boolean => MODES.some((mode) => mode === value);
 const invalid = (message: string): ApiResult<never> => apiFail(LAUNCH_INVALID, message);
@@ -112,15 +116,14 @@ export const transcriptMode = async (runtime: RuntimePorts, path: string | null)
 };
 
 // A launch without an ending marker has no guard: the step and the start simply run in order.
-const startUnguarded = async <D, T>(before: LaunchStep<D>, start: (deadline: number, decision: D) => T, deadline: () => number): Promise<ApiResult<T>> => {
+const startUnguarded = async <D, S, T>(before: LaunchStep<D, S>, start: (deadline: number, decision: D) => T, deadline: () => number): Promise<ApiResult<LaunchStart<T, S>>> => {
 	const prepared = await before();
-	return prepared.ok ? apiOk(start(deadline(), prepared.value)) : prepared;
+	if (!prepared.ok) return prepared;
+	return apiOk(prepared.value.kind === "stay" ? { kind: "declined", outcome: prepared.value.outcome } : { kind: "started", started: start(deadline(), prepared.value.decision) });
 };
 
-const spawnLaunch = async <D>(runtime: RuntimePorts, command: string[], before: LaunchStep<D>, ending?: SessionEnding): Promise<ApiResult<Spawned<D>>> => {
-	const directory = joinPath(runtime.home, ".agent-rig", "launch-stderr");
-	const now = runtime.clock.now().getTime();
-	const path = joinPath(directory, `${now}-${runtime.ids.next()}.log`);
+// The stderr directory is made and pruned once per launch, not on every try of the owner loop: a retry spawns nothing.
+const prepareStderrDirectory = async (runtime: RuntimePorts, directory: string, now: number): Promise<ApiResult<null>> => {
 	try {
 		await runtime.fs.ensureDirectory(directory);
 		for (const entry of await runtime.fs.listDirectory(directory)) {
@@ -128,19 +131,45 @@ const spawnLaunch = async <D>(runtime: RuntimePorts, command: string[], before: 
 			// A concurrent launch needs its stderr until its grace period has elapsed.
 			if (!entry.directory && match && now - Number(match[1]) >= LAUNCH_EXIT_GRACE_MS) await runtime.fs.remove(joinPath(directory, entry.name)).catch(() => undefined);
 		}
+		return apiOk(null);
 	} catch (error) { return apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.io(errorText(error))); }
+};
+
+// The spawn of one launch: the returned function is used for every try of that launch and prepares the stderr directory on the first.
+const launcher = (runtime: RuntimePorts, ending?: SessionEnding): SpawnLaunch => {
+	let prepared = false;
+	return async (command, before) => {
+		const directory = joinPath(runtime.home, ".agent-rig", "launch-stderr");
+		const now = runtime.clock.now().getTime();
+		if (!prepared) {
+			const ready = await prepareStderrDirectory(runtime, directory, now);
+			if (!ready.ok) return ready;
+			prepared = true;
+		}
+		return spawnLaunch(runtime, directory, now, command, before, ending);
+	};
+};
+
+const spawnLaunch = async <D, S>(runtime: RuntimePorts, directory: string, now: number, command: string[], before: LaunchStep<D, S>, ending?: SessionEnding): Promise<ApiResult<Spawned<D> | Declined<S>>> => {
+	const path = joinPath(directory, `${now}-${runtime.ids.next()}.log`);
 	const deadline = () => launchRegistrationDeadline(runtime.clock.now().getTime());
 	const start = (registrationDeadline: number, decision: D) => ({ registrationDeadline, decision, process: runtime.process.spawnDetached(command, LAUNCH_EXIT_GRACE_MS, STDERR_LIMIT, path) });
-	const started = ending === undefined ? await startUnguarded(before, start, deadline) : await ending.startLaunch(before, start, deadline);
-	if (!started.ok) {
+	const attempt = ending === undefined ? await startUnguarded(before, start, deadline) : await ending.startLaunch(before, start, deadline);
+	if (!attempt.ok) {
 		await runtime.fs.remove(path).catch(() => undefined);
-		return started;
+		return attempt;
 	}
-	const result = await started.value.process;
+	// A launch the step stayed: nothing was spawned, so there is no process to wait for.
+	if (attempt.value.kind === "declined") {
+		await runtime.fs.remove(path).catch(() => undefined);
+		return apiOk({ kind: "declined", outcome: attempt.value.outcome });
+	}
+	const started = attempt.value.started;
+	const result = await started.process;
 	// On Windows the child may still hold the file; the next launch retries it.
 	await runtime.fs.remove(path).catch(() => undefined);
 	if (!result.ok) return apiFail(LAUNCH_FAILED, result.error);
-	return !result.value.exited || result.value.exitCode === 0 ? apiOk({ decision: started.value.decision, deadline: started.value.registrationDeadline }) : apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.launchExited(result.value.exitCode, result.value.stderr));
+	return !result.value.exited || result.value.exitCode === 0 ? apiOk({ kind: "spawned", decision: started.decision, deadline: started.registrationDeadline }) : apiFail(LAUNCH_FAILED, messagesFor(runtime.language).session.launchExited(result.value.exitCode, result.value.stderr));
 };
 
 type ResolvedLaunch = { command: string[]; account: string; target: OwnerTarget };
@@ -166,32 +195,35 @@ export const resolveLaunch = async (runtime: RuntimePorts, session: SessionRecor
 	return target.ok ? apiOk({ command: command.value, account: accountText, target: target.value }) : target;
 };
 
-// The last steps of a launch whose command is resolved and whose session is not running: make the launch account the
-// transcript's owner, spawn, and (unless the owner switch was unavailable) wait for the new process to register.
-const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, launch: ResolvedLaunch, mode: string | null, spawnCommand: SpawnLaunch): Promise<ApiResult<LaunchResult>> => {
-	const reading = await readOwner(runtime, session, launch.target);
-	if (!reading.ok) return reading;
-	const plan = reading.value;
-	// The owner line is appended by `before`, inside the launch transition; a reading that needs no write is settled already.
-	const before = async (): Promise<ApiResult<OwnerSwitch>> => plan.kind === "settled" ? apiOk(plan.owner) : writeOwner(runtime, plan);
-	const account = launch.account === "" ? null : Number(launch.account);
-	const spawned = await spawnCommand(launch.command, before);
-	if (!spawned.ok) return spawned;
-	const owner = spawned.value.decision;
-	// Without the owner switch Claude Code may refuse the session at once: the grace check is all the launch can tell.
-	if (owner.ownerSwitch === "unavailable") return apiOk({ session: session.id, pid: null, mode, account, ...owner });
-	const deadline = spawned.value.deadline;
+// What the launch's guarded step does with a reading: it goes on (the owner line is appended inside the launch
+// transition when the reading planned one) or stays with the reason it is held back.
+const ownerStep = (runtime: RuntimePorts, reading: OwnerReading): LaunchStep<OwnerSwitch, OwnerRefusal> => async (): Promise<ApiResult<OwnerGate>> => {
+	if (reading.kind === "settled") return apiOk({ kind: "go", decision: reading.owner });
+	if (reading.kind === "stay") return apiOk({ kind: "stay", outcome: reading.refusal });
+	return writeOwner(runtime, reading);
+};
+
+// A launch that cannot make its owner switch is refused before any window: the reason is in the failed result and in a rig event.
+const refuseLaunch = async (runtime: RuntimePorts, session: string, account: number | null, held: OwnerRefusal, attempts: number): Promise<ApiResult<never>> => {
+	const m = messagesFor(runtime.language).session;
+	const detail = describeDetail(held.detail);
+	// A failed event write must not hide the refusal itself.
+	await emitRigEvent(runtime, OWNER_SWITCH_REFUSED_EVENT, "warn", m.ownerSwitchRefusedEvent(session, account, held.reason, attempts, detail));
+	return apiFail(OWNER_SWITCH_UNAVAILABLE, m.ownerSwitchRefused(held.reason, attempts, detail));
+};
+
+// Waits for the launched process to register: a process the record did not name before the launch, alive, within the deadline.
+const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, deadline: number): Promise<ApiResult<number>> => {
 	for (;;) {
 		const current = await lookupSession(runtime, session.id);
 		if (!current.ok) return current;
-		// The launched process is one the record did not name before the launch.
 		const earlier = new Set(session.processes.map(processKey));
 		const started = current.value.processes.filter((process) => !earlier.has(processKey(process)));
 		if (started.length > 0) {
 			const currentLive = await liveProcesses(runtime, { ...current.value, processes: started });
 			if (!currentLive.ok) return currentLive;
 			const [first] = currentLive.value;
-			if (first !== undefined) return apiOk({ session: session.id, pid: first.pid, mode, account, ...owner });
+			if (first !== undefined) return apiOk(first.pid);
 		}
 		const remaining = deadline - runtime.clock.now().getTime();
 		if (remaining <= 0) return apiFail(LAUNCH_TIMEOUT, messagesFor(runtime.language).session.launchTimeout());
@@ -199,7 +231,38 @@ const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, lau
 	}
 };
 
-export const runSession = async (runtime: RuntimePorts, session: SessionRecord, mode: string | null, accountOverride: string | null, spawnCommand: SpawnLaunch = (command, before) => spawnLaunch(runtime, command, before)): Promise<ApiResult<LaunchResult>> => {
+// The last steps of a launch whose command is resolved and whose session is not running: make the launch account the
+// transcript's owner, spawn, and wait for the new process to register. A launch that cannot make the owner switch is
+// refused with no window opened; a transient reason (a process of unknown creation time, a busy or still growing
+// transcript) is waited out, one `SESSION_POLL_MS` at a time, until the registration deadline counted from the first
+// try, and only then refused. A launch with no account to switch to has no owner switch to make: it spawns as before.
+const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, launch: ResolvedLaunch, mode: string | null, spawnCommand: SpawnLaunch): Promise<ApiResult<LaunchResult>> => {
+	const account = launch.account === "" ? null : Number(launch.account);
+	const limit = launchRegistrationDeadline(runtime.clock.now().getTime());
+	for (let attempts = 1; ; attempts += 1) {
+		// A retry plans on the record as it is now, not as it was when the launch began.
+		const current = attempts === 1 ? apiOk(session) : await lookupSession(runtime, session.id);
+		if (!current.ok) return current;
+		const reading = await readOwner(runtime, current.value, launch.target);
+		if (!reading.ok) return reading;
+		const spawned = await spawnCommand(launch.command, ownerStep(runtime, reading.value));
+		if (!spawned.ok) return spawned;
+		if (spawned.value.kind === "declined") {
+			const held = spawned.value.outcome;
+			const remaining = limit - runtime.clock.now().getTime();
+			if (!held.transient || remaining <= 0) return refuseLaunch(runtime, session.id, account, held, attempts);
+			await runtime.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
+			continue;
+		}
+		const owner = spawned.value.decision;
+		// With no owner switch to make Claude Code may refuse the session at once: the grace check is all the launch can tell.
+		if (owner.ownerSwitch === "none") return apiOk({ session: session.id, pid: null, mode, account, ...owner });
+		const registered = await awaitRegistration(runtime, session, spawned.value.deadline);
+		return registered.ok ? apiOk({ session: session.id, pid: registered.value, mode, account, ...owner }) : registered;
+	}
+};
+
+export const runSession = async (runtime: RuntimePorts, session: SessionRecord, mode: string | null, accountOverride: string | null, spawnCommand: SpawnLaunch = launcher(runtime)): Promise<ApiResult<LaunchResult>> => {
 	const live = await sessionLive(runtime, session);
 	if (!live.ok) return live;
 	if (live.value) return apiFail(SESSION_RUNNING, messagesFor(runtime.language).session.alreadyRunning());
@@ -222,8 +285,6 @@ const unlessTakenOver = async <T>(runtime: RuntimePorts, id: string, ending: Ses
 // A stop that took the marker over wins whatever the launch result was.
 const endingReleased = <T>(runtime: RuntimePorts, result: ApiResult<T>, takenOver: boolean): ApiResult<T> => takenOver ? apiFail(SESSION_ENDING, messagesFor(runtime.language).session.ending()) : result;
 
-const ownerSwitchOf = (value: OwnerSwitch): OwnerSwitch => value.ownerSwitch === "unavailable" ? { ownerSwitch: "unavailable", ownerSwitchReason: value.ownerSwitchReason } : { ownerSwitch: value.ownerSwitch };
-
 export const runCommand = async (runtime: RuntimePorts, args: readonly string[]): Promise<ApiResult<LaunchResult>> => {
 	const [id, ...flags] = args;
 	if (!id) return apiFail(ERROR_CODE_USAGE, messagesFor(runtime.language).session.usageRun());
@@ -241,7 +302,7 @@ export const runCommand = async (runtime: RuntimePorts, args: readonly string[])
 	return withSessionEnding<LaunchResult>(runtime, id, async (ending) => {
 		const session = await lookupSessionForCommand(runtime, id, false);
 		if (!session.ok) return session;
-		const result = await runSession(runtime, session.value, mode ?? await transcriptMode(runtime, session.value.transcriptPath), account, (command, before) => spawnLaunch(runtime, command, before, ending));
+		const result = await runSession(runtime, session.value, mode ?? await transcriptMode(runtime, session.value.transcriptPath), account, launcher(runtime, ending));
 		return unlessTakenOver(runtime, id, ending, result);
 	}, undefined, (result, takenOver) => endingReleased(runtime, result, takenOver));
 };
@@ -264,8 +325,8 @@ export const modeCommand = async (runtime: RuntimePorts, args: readonly string[]
 		const fresh = await lookupSession(runtime, id);
 		if (!fresh.ok) return fresh;
 		const live = await sessionLive(runtime, fresh.value);
-		const started = !live.ok ? live : live.value ? apiFail(SESSION_RUNNING, messagesFor(runtime.language).session.alreadyRunning()) : await launchResolved(runtime, fresh.value, launch.value, mode, (command, before) => spawnLaunch(runtime, command, before, ending));
+		const started = !live.ok ? live : live.value ? apiFail(SESSION_RUNNING, messagesFor(runtime.language).session.alreadyRunning()) : await launchResolved(runtime, fresh.value, launch.value, mode, launcher(runtime, ending));
 		const result = await unlessTakenOver(runtime, id, ending, started);
-		return result.ok ? apiOk({ session: id, mode, pid: result.value.pid, ...ownerSwitchOf(result.value) }) : result;
+		return result.ok ? apiOk({ session: id, mode, pid: result.value.pid, ownerSwitch: result.value.ownerSwitch }) : result;
 	}, undefined, (result, takenOver) => endingReleased(runtime, result, takenOver));
 };

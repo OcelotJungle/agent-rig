@@ -34,6 +34,7 @@ export const LAUNCH_INVALID = "launch-invalid";
 export const LAUNCH_ACCOUNT_LOOKUP = "launch-account-lookup";
 export const LAUNCH_FAILED = "launch-failed";
 export const LAUNCH_TIMEOUT = "launch-timeout";
+export const OWNER_SWITCH_UNAVAILABLE = "owner-switch-unavailable";
 export const SESSION_RUNNING = "session-running";
 export const EXEC_BAD_ID = "exec-bad-id";
 export const EXEC_UNKNOWN = "exec-unknown";

@@ -510,6 +510,32 @@ describe("session ending ownership", () => {
 		expect(await h.fs.stat(MARKER)).toBeNull();
 	});
 
+	test("a launch step that stays comes back declined with its outcome: no launch is recorded in the marker and the action does not run", async () => {
+		const h = setup();
+		let started = 0;
+		let markerAtStay = "";
+		const result = await withSessionEnding(h.runtime, ID, async (ending) => {
+			const stayed = await ending.startLaunch(async () => apiOk({ kind: "stay" as const, outcome: "held" }), () => { started += 1; return "spawned"; }, () => 5);
+			markerAtStay = await h.fs.readText(MARKER);
+			// The marker is still ours: a later launch whose step goes on is recorded and started.
+			const went = await ending.startLaunch(async () => apiOk({ kind: "go" as const, decision: "written" }), (deadline, decision) => { started += 1; return `${decision}@${deadline}`; }, () => 7);
+			return apiOk({ stayed, went });
+		});
+		expect(result).toEqual(apiOk({ stayed: apiOk({ kind: "declined", outcome: "held" }), went: apiOk({ kind: "started", started: "written@7" }) }));
+		expect(markerAtStay).not.toContain("registrationDeadline");
+		expect(started).toBe(1);
+	});
+	test("a stop that took the marker over wins over a launch step that stays", async () => {
+		const h = setup();
+		let stepped = 0;
+		const result = await withSessionEnding(h.runtime, ID, async (ending) => {
+			h.fs.seed(MARKER, JSON.stringify({ ...JSON.parse(await h.fs.readText(MARKER)), takenOver: true }));
+			return ending.startLaunch(async () => { stepped += 1; return apiOk({ kind: "stay" as const, outcome: "held" }); }, () => "spawned", () => 5);
+		});
+		expect(code(result)).toBe("session-ending");
+		expect(stepped).toBe(0);
+	});
+
 	test("a failed launch-marker publication prevents spawn", async () => {
 		const h = setup();
 		h.response("event-1", { context: { tokens: TOKENS_AFTER } });

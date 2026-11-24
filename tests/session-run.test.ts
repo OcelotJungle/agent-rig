@@ -8,7 +8,7 @@ import { runCli } from "../src/cli.js";
 import { findCswap, launchRegistrationDeadline, modeCommand, prepareLaunch, resolveLaunch, runSession, transcriptMode } from "../src/commands/session-run.js";
 import { buildLaunchCommand } from "../src/launch-command.js";
 import { messagesFor } from "../src/messages.js";
-import { lookupSession } from "../src/session-core.js";
+import { lookupSession, SESSION_POLL_MS } from "../src/session-core.js";
 import { apiFail, apiOk } from "../src/output.js";
 import { ok } from "../src/result.js";
 import { withSessionEnding } from "../src/session-ending.js";
@@ -29,12 +29,31 @@ const CMD_LINE = ["&", "|", "<", ">", "^", "%", "\"", "!"];
 const NOT_IDENTIFIER = [...CONTROL, ...CMD_LINE, ";", "#", "(", ")", "'", "$", "~", "+", "=", ",", "[", "]", "\\", "/", "*", "?", ":", " "];
 // The launch as resolveLaunch does it: one cswap lookup, handed to prepareLaunch.
 // A spawn that runs the launch step like the real one, then `after`, and answers with the step's decision and a deadline.
+// A step that stays declines the launch: nothing is spawned and `after` does not run.
 const fakeSpawn = (h: ReturnType<typeof setup>, after: () => void = () => undefined, deadline: number | null = null): SpawnLaunch => async (_command, before) => {
-	const decision = await before();
-	if (!decision.ok) return decision;
+	const gate = await before();
+	if (!gate.ok) return gate;
+	if (gate.value.kind === "stay") return apiOk({ kind: "declined", outcome: gate.value.outcome });
 	after();
-	return apiOk({ decision: decision.value, deadline: deadline ?? launchRegistrationDeadline(h.runtime.clock.now().getTime()) });
+	return apiOk({ kind: "spawned", decision: gate.value.decision, deadline: deadline ?? launchRegistrationDeadline(h.runtime.clock.now().getTime()) });
 };
+// A fakeSpawn that first runs `ahead` with the number of the try, on every try, before the step: another writer acting between the reading and the writing.
+const spawnWith = (h: ReturnType<typeof setup>, ahead: (call: number) => void, after: () => void = () => undefined): SpawnLaunch => {
+	const inner = fakeSpawn(h, after);
+	let calls = 0;
+	return (command, before) => { ahead(++calls); return inner(command, before); };
+};
+const EVENTS_PATH = `${ROOT}/events.jsonl`;
+// The rig events written so far: their level, type and text.
+const eventsOf = (h: ReturnType<typeof setup>): { level: string; type: string; text: string }[] =>
+	(h.fs.files.get(EVENTS_PATH) ?? "").split("\n").filter((line) => line.length > 0).map((line) => {
+		const value: unknown = JSON.parse(line);
+		if (typeof value !== "object" || value === null || !("level" in value) || !("type" in value) || !("text" in value) || typeof value.level !== "string" || typeof value.type !== "string" || typeof value.text !== "string") throw new Error("bad event line");
+		return { level: value.level, type: value.type, text: value.text };
+	});
+const REFUSED = "owner-switch-unavailable";
+const POLL_MS = SESSION_POLL_MS;
+const recordWith = (pid: number, pidCreated: string | null): string => JSON.stringify({ ...raw, pid, pid_created: pidCreated, ended_at: null });
 const prepare = async (h: ReturnType<typeof createMemoryRuntime>, record: SessionRecord, account: string, mode: string | null) => prepareLaunch(h.runtime, record, account, mode, await findCswap(h.runtime));
 const setup = () => {
 	const h = createMemoryRuntime();
@@ -254,6 +273,23 @@ describe("session run and mode", () => {
 		const result = await runSession(h.runtime, session, "plan", "1");
 		expect(result.ok ? "ok" : result.error.message).toContain("launch error");
 	});
+	test("a launch that retries twice prepares the stderr directory once", async () => {
+		const h = setup();
+		seedLaunchers(h);
+		const UNKNOWN_PID = 44;
+		const SPAWNED_PID = 43;
+		h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: UNKNOWN_PID, pid_created: null, ended_at: null }));
+		h.runtime.process.createdAt = async () => ok({ [String(UNKNOWN_PID)]: h.runtime.clock.now().getTime() < 2 * POLL_MS ? CREATED : null, [String(SPAWNED_PID)]: CREATED });
+		h.runtime.process.spawnDetached = async () => {
+			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: SPAWNED_PID, ended_at: null }));
+			return ok({ exited: false, exitCode: null, stderr: "" });
+		};
+		const listed: string[] = [];
+		const list = h.fs.listDirectory.bind(h.fs);
+		h.fs.listDirectory = async (path) => { listed.push(path); return list(path); };
+		expect(code(await runSession(h.runtime, session, "plan", "1"))).toBe("ok");
+		expect(listed.filter((path) => path === `${ROOT}/launch-stderr`)).toHaveLength(1);
+	});
 	test("retries stderr cleanup on a later launch after a child releases its file", async () => {
 		const h = setup();
 		seedLaunchers(h);
@@ -302,23 +338,133 @@ describe("session run and mode", () => {
 		const answer = await runSession(h.runtime, session, "plan", "1", fakeSpawn(h, () => { h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 43, ended_at: null })); }));
 		expect(answer).toEqual(apiOk({ session: ID, pid: 43, mode: "plan", account: 1, ownerSwitch: "written" }));
 	});
-	test("a process of unknown creation time recorded between the reading and the writing: no owner line, the spawn goes on with pid null", async () => {
-		const h = setup();
-		seedLaunchers(h);
-		const before = await h.fs.readText("/transcript");
-		h.runtime.process.createdAt = async () => ok({ "44": CREATED });
-		let spawned = 0;
-		const spawn: SpawnLaunch = async (_command, step) => {
-			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: 44, pid_created: null, ended_at: null }));
-			const decision = await step();
-			if (!decision.ok) return decision;
-			spawned++;
-			return apiOk({ decision: decision.value, deadline: launchRegistrationDeadline(h.runtime.clock.now().getTime()) });
+	describe("an owner switch that cannot be made yet is retried on the clock, then refused", () => {
+		const SPAWNED_PID = 43;
+		const UNKNOWN_PID = 44;
+		const registerSpawned = (h: ReturnType<typeof setup>): void => h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(SPAWNED_PID, CREATED));
+		// The clock's sleeps: each one is a try waited out.
+		const trackSleeps = (h: ReturnType<typeof setup>): number[] => {
+			const sleeps: number[] = [];
+			const advance = h.runtime.clock.sleep;
+			h.runtime.clock.sleep = async (ms) => { sleeps.push(ms); await advance(ms); };
+			return sleeps;
 		};
-		const result = await runSession(h.runtime, session, "plan", "1", spawn);
-		expect(spawned).toBe(1);
-		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: 1, ownerSwitch: "unavailable", ownerSwitchReason: "process-unknown" }));
-		expect(await h.fs.readText("/transcript")).toBe(before);
+		test("a process of unknown creation time that goes away after two polls: the owner line is written and the launch registers", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const sleeps = trackSleeps(h);
+			// The process of unknown creation time is alive for the first two polls, then gone; the spawned one is alive.
+			h.runtime.process.createdAt = async () => ok({ [String(UNKNOWN_PID)]: h.runtime.clock.now().getTime() < 2 * POLL_MS ? CREATED : null, [String(SPAWNED_PID)]: CREATED });
+			let spawned = 0;
+			const result = await runSession(h.runtime, session, "plan", "1", spawnWith(h, (call) => { if (call === 1) h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(UNKNOWN_PID, null)); }, () => { spawned++; registerSpawned(h); }));
+			expect(result).toEqual(apiOk({ session: ID, pid: SPAWNED_PID, mode: "plan", account: 1, ownerSwitch: "written" }));
+			expect(spawned).toBe(1);
+			expect(sleeps).toEqual([POLL_MS, POLL_MS]);
+			expect(await h.fs.readText("/transcript")).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n${ownerLine(ACCOUNT_ONE, ID)}\n`);
+			expect(eventsOf(h)).toEqual([]);
+		});
+		test("a process of unknown creation time that never goes away: refused at the registration deadline with its pid, no spawn, one warn event", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const sleeps = trackSleeps(h);
+			const before = await h.fs.readText("/transcript");
+			h.runtime.process.createdAt = async () => ok({ [String(UNKNOWN_PID)]: CREATED });
+			let spawned = 0;
+			const result = await runSession(h.runtime, session, "plan", "1", spawnWith(h, (call) => { if (call === 1) h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(UNKNOWN_PID, null)); }, () => { spawned++; }));
+			expect(code(result)).toBe(REFUSED);
+			expect(result.ok ? "" : result.error.message).toContain("process-unknown");
+			expect(result.ok ? "" : result.error.message).toContain(String(UNKNOWN_PID));
+			expect(spawned).toBe(0);
+			// Every wait is one poll or less, and together they are the registration budget counted from the first try.
+			expect(sleeps.every((ms) => ms > 0 && ms <= POLL_MS)).toBe(true);
+			expect(sleeps.reduce((sum, ms) => sum + ms, 0)).toBe(launchRegistrationDeadline(0));
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			const events = eventsOf(h);
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ level: "warn", type: "owner-switch-refused" });
+			expect(events[0].text).toContain(ID);
+			expect(events[0].text).toContain("process-unknown");
+			expect(events[0].text).toContain(String(UNKNOWN_PID));
+		});
+		test("a busy transcript that is free again after two polls: written on the third try", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const sleeps = trackSleeps(h);
+			h.runtime.process.createdAt = async () => ok({ [String(SPAWNED_PID)]: CREATED });
+			let busy = 2;
+			const append = h.fs.appendBytes.bind(h.fs);
+			h.fs.appendBytes = async (path, value) => {
+				if (busy > 0) { busy--; throw Object.assign(new Error("file is open"), { code: "EBUSY" }); }
+				await append(path, value);
+			};
+			const result = await runSession(h.runtime, session, "plan", "1", fakeSpawn(h, () => registerSpawned(h)));
+			expect(result).toEqual(apiOk({ session: ID, pid: SPAWNED_PID, mode: "plan", account: 1, ownerSwitch: "written" }));
+			expect(sleeps).toEqual([POLL_MS, POLL_MS]);
+			expect(await h.fs.readText("/transcript")).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n${ownerLine(ACCOUNT_ONE, ID)}\n`);
+		});
+		test("a transcript that stays busy is refused as locked at the deadline", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const before = await h.fs.readText("/transcript");
+			h.fs.appendBytes = async () => { throw Object.assign(new Error("file is open"), { code: "EBUSY" }); };
+			let spawned = 0;
+			const result = await runSession(h.runtime, session, "plan", "1", fakeSpawn(h, () => { spawned++; }));
+			expect(code(result)).toBe(REFUSED);
+			expect(result.ok ? "" : result.error.message).toContain("locked");
+			expect(spawned).toBe(0);
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			expect(eventsOf(h).map((event) => event.type)).toEqual(["owner-switch-refused"]);
+		});
+		test("a transcript that grew with no owner line is written at the new size and the launch goes on", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			h.runtime.process.createdAt = async () => ok({ [String(SPAWNED_PID)]: CREATED });
+			const before = await h.fs.readText("/transcript");
+			const result = await runSession(h.runtime, session, "plan", "1", spawnWith(h, () => { h.fs.seed("/transcript", `${before}{"type":"user","message":"late"}\n`); }, () => registerSpawned(h)));
+			expect(result).toEqual(apiOk({ session: ID, pid: SPAWNED_PID, mode: "plan", account: 1, ownerSwitch: "written" }));
+			expect(await h.fs.readText("/transcript")).toBe(`${before}{"type":"user","message":"late"}\n${ownerLine(ACCOUNT_ONE, ID)}\n`);
+		});
+		// Each reason that retrying cannot change: the launch is refused on the first try, with nothing spawned.
+		const permanent: [string, string, (h: ReturnType<typeof setup>) => void | Promise<void>][] = [
+			["no-owner-line", "no-owner-line", (h) => { h.fs.seed("/transcript", '{"type":"user","message":"hello"}\n'); }],
+			["owner-line-unknown", "owner-line-unknown", (h) => { h.fs.seed("/transcript", `${JSON.stringify({ type: "session-owner", accountUuid: DEFAULT_LOGIN.accountUuid, organizationUuid: DEFAULT_LOGIN.organizationUuid, sessionId: ID, extra: "key" })}\n`); }],
+			// A second transcript of the session in the record's own config directory.
+			["several-transcripts", "several-transcripts", (h) => {
+				h.fs.seed(`/cfg/1-test/projects/other/${ID}.jsonl`, `${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+				h.fs.directories.add("/cfg/1-test/projects");
+				h.fs.directories.add("/cfg/1-test/projects/other");
+			}],
+		];
+		for (const [name, reason, prepare] of permanent) {
+			test(`${name}: refused on the first try with no spawn and one warn event`, async () => {
+				const h = setup();
+				seedLaunchers(h);
+				const sleeps = trackSleeps(h);
+				await prepare(h);
+				const record = await lookupSession(h.runtime, ID);
+				if (!record.ok) throw new Error(record.error.message);
+				let spawned = 0;
+				const result = await runSession(h.runtime, record.value, "plan", "1", fakeSpawn(h, () => { spawned++; }));
+				expect(code(result)).toBe(REFUSED);
+				expect(result.ok ? "" : result.error.message).toContain(reason);
+				expect(spawned).toBe(0);
+				expect(sleeps).toEqual([]);
+				expect(eventsOf(h)).toMatchObject([{ level: "warn", type: "owner-switch-refused" }]);
+			});
+		}
+		test("a transcript that shrank after the scan: refused as transcript-changed on the first try with no spawn", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const sleeps = trackSleeps(h);
+			let spawned = 0;
+			const result = await runSession(h.runtime, session, "plan", "1", spawnWith(h, () => { h.fs.seed("/transcript", "x\n"); }, () => { spawned++; }));
+			expect(code(result)).toBe(REFUSED);
+			expect(result.ok ? "" : result.error.message).toContain("transcript-changed");
+			expect(spawned).toBe(0);
+			expect(sleeps).toEqual([]);
+			expect(await h.fs.readText("/transcript")).toBe("x\n");
+			expect(eventsOf(h)).toMatchObject([{ level: "warn", type: "owner-switch-refused" }]);
+		});
 	});
 	test("an account the helper does not know fails before the spawn and before the transcript is touched", async () => {
 		const h = setup();
@@ -340,7 +486,7 @@ describe("session run and mode", () => {
 		expect(ownerAtSpawn).toEqual([]);
 		expect(await h.fs.readText("/transcript")).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n`);
 	});
-	test("an unavailable switch launches without writing and returns right after the grace with no pid", async () => {
+	test("a launch with no account to switch to launches without writing and returns right after the grace with no pid", async () => {
 		const h = setup();
 		seedLaunchers(h);
 		h.fs.files.delete("/home/test/.claude.json");
@@ -352,16 +498,17 @@ describe("session run and mode", () => {
 		let spawned = 0;
 		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h, () => { spawned++; }));
 		expect(spawned).toBe(1);
-		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "ids-unreadable" }));
+		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "none" }));
 		expect(sleeps).toEqual([]);
 		expect(await h.fs.readText("/transcript")).toBe(before);
+		expect(eventsOf(h)).toEqual([]);
 	});
-	test("with cswap and no account number the switch is unavailable as account-unknown", async () => {
+	test("with cswap and no account number there is no owner switch to make (account-unknown): the launch goes on as before", async () => {
 		const h = setup();
 		seedLaunchers(h);
 		h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":null}},"categories":{}}', stderr: "", exitCode: 0 });
 		const result = await runSession(h.runtime, session, "plan", null, fakeSpawn(h));
-		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "unavailable", ownerSwitchReason: "account-unknown" }));
+		expect(result).toEqual(apiOk({ session: ID, pid: null, mode: "plan", account: null, ownerSwitch: "none" }));
 	});
 	describe("the owner line is written under a fresh check", () => {
 		const REGISTERED_PID = 43;
@@ -392,9 +539,14 @@ describe("session run and mode", () => {
 				return read(path);
 			};
 		};
-		const countSpawns = (h: ReturnType<typeof setup>): { count: () => number } => {
+		// Counts the spawns; with `registers` the spawned process records itself, as a live Claude Code does.
+		const countSpawns = (h: ReturnType<typeof setup>, registers = false): { count: () => number } => {
 			let spawned = 0;
-			h.runtime.process.spawnDetached = async () => { spawned++; return ok({ exited: false, exitCode: null, stderr: "" }); };
+			h.runtime.process.spawnDetached = async () => {
+				spawned++;
+				if (registers) h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(REGISTERED_PID, CREATED));
+				return ok({ exited: false, exitCode: null, stderr: "" });
+			};
 			return { count: () => spawned };
 		};
 		const runJson = async (h: ReturnType<typeof setup>, args: string[]): Promise<unknown> => {
@@ -413,15 +565,59 @@ describe("session run and mode", () => {
 			expect(await h.fs.readText("/transcript")).toBe(before);
 			expect(spawns.count()).toBe(0);
 		});
-		test("run writes nothing and launches without the owner switch when the transcript grew after the scan", async () => {
+		test("run writes the owner line at the new size and launches when the transcript grew after the scan", async () => {
 			const h = setup();
 			seedLaunchers(h);
+			answerProcessTable(h);
 			const before = await h.fs.readText("/transcript");
 			atLaunchTransition(h, async () => { await h.fs.appendBytes("/transcript", new TextEncoder().encode(LATE_LINE)); });
-			const spawns = countSpawns(h);
-			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ pid: null, ownerSwitch: "unavailable", ownerSwitchReason: "transcript-changed" });
-			expect(await h.fs.readText("/transcript")).toBe(`${before}${LATE_LINE}`);
+			const spawns = countSpawns(h, true);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ pid: REGISTERED_PID, ownerSwitch: "written" });
+			expect(await h.fs.readText("/transcript")).toBe(`${before}${LATE_LINE}${ownerLine(ACCOUNT_ONE, ID)}\n`);
 			expect(spawns.count()).toBe(1);
+		});
+		test("run is refused, with no window, when the transcript shrank after the scan", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			atLaunchTransition(h, async () => { h.fs.seed("/transcript", "x\n"); });
+			const spawns = countSpawns(h);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ error: { code: REFUSED } });
+			expect(spawns.count()).toBe(0);
+			expect(await h.fs.readText("/transcript")).toBe("x\n");
+			expect(eventsOf(h)).toMatchObject([{ level: "warn", type: "owner-switch-refused" }]);
+			expect(await h.fs.stat(MARKER_PATH)).toBeNull();
+		});
+		test("mode is refused, with no window, by the same owner switch", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n${JSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
+			const owners = h.runtime.process.run.bind(h.runtime.process);
+			h.runtime.process.run = async (command, args, options) => args.includes("owner") ? owners(command, args, options) : ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}', stderr: "", exitCode: 0 });
+			atLaunchTransition(h, async () => { h.fs.seed("/transcript", "x\n"); });
+			const spawns = countSpawns(h);
+			expect(code(await modeCommand(h.runtime, [ID, "auto"], () => {}))).toBe(REFUSED);
+			expect(spawns.count()).toBe(0);
+			expect(eventsOf(h)).toMatchObject([{ level: "warn", type: "owner-switch-refused" }]);
+		});
+		test("a stop that takes the marker over while a launch waits for a process of unknown creation time still wins", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const UNKNOWN_PID = 44;
+			const own = String(h.runtime.lock.process.pid);
+			h.runtime.process.createdAt = async (pids) => ok(Object.fromEntries(pids.map((pid) => [String(pid), String(pid) === own ? FAKE_OWNER_CREATED : CREATED])));
+			// The process of unknown creation time appears before the first try's step, so that try stays.
+			atLaunchTransition(h, async () => { h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(UNKNOWN_PID, null)); });
+			const advance = h.runtime.clock.sleep;
+			h.runtime.clock.sleep = async (ms) => {
+				h.fs.seed(MARKER_PATH, JSON.stringify({ ...JSON.parse(await h.fs.readText(MARKER_PATH)), takenOver: true }));
+				await advance(ms);
+			};
+			const before = await h.fs.readText("/transcript");
+			const spawns = countSpawns(h);
+			expect(await runJson(h, ["session", "run", ID, "--account", "1"])).toMatchObject({ error: { code: "session-ending" } });
+			expect(spawns.count()).toBe(0);
+			expect(await h.fs.readText("/transcript")).toBe(before);
+			expect(eventsOf(h)).toEqual([]);
 		});
 		test("a stop that took the marker over before the launch transition is seen before the owner line is written", async () => {
 			const h = setup();
