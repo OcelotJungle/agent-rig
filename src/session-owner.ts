@@ -4,12 +4,11 @@ import type { SessionRecord } from "./session-core.js";
 import type { LaunchGate } from "./session-ending.js";
 
 import { isBusy } from "./busy-retry.js";
-import { toSlashPath } from "./file-system.js";
 import { messagesFor } from "./messages.js";
 import { apiFail, apiOk, SESSION_IO, SESSION_RUNNING, SESSION_UNKNOWN } from "./output.js";
 import { errorText } from "./result.js";
 import { lookupSession, recordedConfigDir, sessionLive } from "./session-core.js";
-import { projectTranscripts } from "./transcript-path.js";
+import { distinctFiles, projectTranscripts } from "./transcript-path.js";
 import { lineStartAtOrBefore, scanTranscriptBackwards } from "./transcript-scan.js";
 
 // Claude Code (2.1.325 and later) refuses to open a session under a login other than its owner's. The owner is the last
@@ -19,6 +18,8 @@ const OWNER_LINE_TYPE = "session-owner";
 const OWNER_LINE_KEYS = ["accountUuid", "organizationUuid", "sessionId", "type"] as const;
 const LINE_FEED = 0x0a;
 const LAST_BYTE_LENGTH = 1;
+// Between the paths of a refusal detail that names several files.
+const TRANSCRIPT_LIST_SEPARATOR = " | ";
 
 export type OwnerIds = { accountUuid: string; organizationUuid: string };
 // The launch account's ids, or the reason they are not known: a launch with no account to switch to has no owner to make.
@@ -61,9 +62,6 @@ const readOwnerLine = (value: unknown): OwnerLineRead | null => {
 
 const sameOwner = (left: OwnerIds, right: OwnerIds): boolean => left.accountUuid === right.accountUuid && left.organizationUuid === right.organizationUuid;
 
-// Paths from different tools name one file: separators always, case outside Linux.
-const comparable = (runtime: RuntimePorts, path: string): string => runtime.platform === "linux" ? toSlashPath(path) : toSlashPath(path).toLowerCase();
-
 // The recorded processes of unknown creation time that may be alive: `sessionLive` ignores those, so the reading and the
 // writing part both ask this on the record each one has. A pid with no process is gone (null in the table); anything else
 // (a creation time, or an incomplete table) may be a live one.
@@ -95,8 +93,8 @@ export const readOwner = async (runtime: RuntimePorts, session: SessionRecord, t
 		if (target.kind === "unavailable") return apiOk({ kind: "settled", owner: { ownerSwitch: "none" } });
 		if (stat.size === 0) return held("no-owner-line", { path });
 		const found = await projectTranscripts(runtime, session.id, await recordedConfigDir(runtime, session.id));
-		const transcripts = new Set([path, ...found.map((entry) => entry.path)].map((entry) => comparable(runtime, entry)));
-		if (transcripts.size !== 1) return held("several-transcripts", { transcripts: transcripts.size });
+		const transcripts = await distinctFiles(runtime, [{ path }, ...found]);
+		if (transcripts.length !== 1) return held("several-transcripts", { transcripts: transcripts.map((entry) => entry.path).join(TRANSCRIPT_LIST_SEPARATOR) });
 		const unknownAlive = await unknownCreationMayBeAlive(runtime, session);
 		if (!unknownAlive.ok) return unknownAlive;
 		if (unknownAlive.value.length > 0) return held("process-unknown", { pids: unknownAlive.value.join(" ") });

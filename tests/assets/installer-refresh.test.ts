@@ -10,6 +10,7 @@ const FAILURE_EXIT_CODE = 1;
 const MARKETPLACE_LIST_JSON = "plugin marketplace list --json";
 const UPDATE_COMMAND = "plugin update window@rig --scope user";
 const CACHE_PATH = "C:/cfg/plugins/cache/rig/window/1.0.0";
+const keepPath = async (path: string): Promise<string> => path;
 
 const plan: readonly PluginPlan[] = [
   { enabled: true, id: "window@rig", marketplace: "rig", source: "C:/clone/plugins/window" },
@@ -46,7 +47,7 @@ function changeCalls(runner: { calls: string[][] }): string[] {
 describe("applyPlugins refreshes an installed plugin that differs from its source", () => {
   test("same version and an existing copy: no call, nothing updated", async () => {
     const runner = makeRunner(listing({ version: "1.0.0", folderVersion: "1.0.0", installPath: CACHE_PATH }));
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true, realPath: keepPath }, plan);
     expect(result.ok).toBe(true);
     expect(changeCalls(runner)).toEqual([]);
     if (result.ok) expect(result.value.updated).toEqual([]);
@@ -54,7 +55,7 @@ describe("applyPlugins refreshes an installed plugin that differs from its sourc
 
   test("the source has another version: claude plugin update runs and the plugin is reported as updated", async () => {
     const runner = makeRunner(listing({ version: "1.0.0", folderVersion: "1.1.0", installPath: CACHE_PATH }));
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true, realPath: keepPath }, plan);
     expect(result.ok).toBe(true);
     expect(changeCalls(runner)).toEqual([UPDATE_COMMAND]);
     if (result.ok) {
@@ -70,7 +71,7 @@ describe("applyPlugins refreshes an installed plugin that differs from its sourc
       checked.push(path);
       return false;
     };
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists, realPath: keepPath }, plan);
     expect(result.ok).toBe(true);
     expect(checked).toEqual([CACHE_PATH]);
     expect(changeCalls(runner)).toEqual(["plugin install window@rig --scope user --yes"]);
@@ -79,7 +80,7 @@ describe("applyPlugins refreshes an installed plugin that differs from its sourc
 
   test("a plugin without version facts (a remote source) is left alone while its copy exists", async () => {
     const runner = makeRunner(listing({ version: "abc123", installPath: CACHE_PATH }));
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => true, realPath: keepPath }, plan);
     expect(result.ok).toBe(true);
     expect(changeCalls(runner)).toEqual([]);
   });
@@ -89,7 +90,7 @@ describe("applyPlugins refreshes an installed plugin that differs from its sourc
     ["install", "plugin install window@rig --scope user --yes", { version: "1.0.0", folderVersion: "1.0.0", installPath: CACHE_PATH }, false],
   ])("a failing refresh step (%s) is an error, not swallowed", async (_name, failing, facts, copyExists) => {
     const runner = makeRunner(listing(facts), [failing]);
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => copyExists }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: async () => copyExists, realPath: keepPath }, plan);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("boom");
   });

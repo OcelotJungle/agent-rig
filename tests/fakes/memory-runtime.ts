@@ -54,17 +54,20 @@ export class MemoryFileSystem implements FileSystem {
 		this.directories.add(parentPath(path));
 	}
 
-	async stat(path: string): Promise<FileStat | null> {
+	async stat(linkedPath: string): Promise<FileStat | null> {
+		const path = this.resolveSymlinks(linkedPath);
 		const value = this.files.get(path);
 		return value === undefined ? null : { size: this.binaries.get(path)?.length ?? new TextEncoder().encode(value).length, mtimeMs: this.mtimes.get(path) ?? 0 };
 	}
 
-	async modifiedAt(path: string): Promise<number | null> {
+	async modifiedAt(linkedPath: string): Promise<number | null> {
+		const path = this.resolveSymlinks(linkedPath);
 		if (!this.files.has(path) && !this.directories.has(path)) return null;
 		return this.mtimes.get(path) ?? 0;
 	}
 
-	async readRange(path: string, start: number, length: number): Promise<Uint8Array> {
+	async readRange(linkedPath: string, start: number, length: number): Promise<Uint8Array> {
+		const path = this.resolveSymlinks(linkedPath);
 		this.rangeReads.push({ path, start, length });
 		const value = this.files.get(path);
 		if (value === undefined) throw new MissingPathError(`Missing file ${path}`);
@@ -88,7 +91,8 @@ export class MemoryFileSystem implements FileSystem {
 		this.files.set(path, new TextDecoder().decode(value));
 	}
 
-	async readText(path: string): Promise<string> {
+	async readText(linkedPath: string): Promise<string> {
+		const path = this.resolveSymlinks(linkedPath);
 		this.textReads.push(path);
 		const value = this.files.get(path);
 		if (value === undefined) throw new MissingPathError(`Missing file ${path}`);
@@ -112,7 +116,9 @@ export class MemoryFileSystem implements FileSystem {
 		this.files.set(path, `${this.files.get(path) ?? ""}${value}`);
 	}
 
-	async rename(from: string, to: string): Promise<void> {
+	async rename(linkedFrom: string, linkedTo: string): Promise<void> {
+		const from = this.resolveSymlinks(linkedFrom);
+		const to = this.resolveSymlinks(linkedTo);
 		this.record(`rename:${from}:${to}`);
 		const value = this.files.get(from);
 		if (value === undefined) throw new MissingPathError(`Missing file ${from}`);
@@ -128,7 +134,8 @@ export class MemoryFileSystem implements FileSystem {
 		this.modes.delete(from);
 	}
 
-	async remove(path: string): Promise<void> {
+	async remove(linkedPath: string): Promise<void> {
+		const path = this.resolveSymlinks(linkedPath);
 		this.record(`remove:${path}`);
 		if (!this.files.delete(path)) throw new MissingPathError(`Missing file ${path}`);
 		this.binaries.delete(path);
@@ -154,8 +161,10 @@ export class MemoryFileSystem implements FileSystem {
 		return ok(true);
 	}
 
+	// The real file of a path: a symlinked directory on the way (`symlinks`) and a symlinked file (`links`) are followed.
 	async resolveTarget(path: string): Promise<string> {
-		return this.links.get(path) ?? path;
+		const real = this.resolveSymlinks(path);
+		return this.links.get(real) ?? real;
 	}
 
 	async modeOf(path: string): Promise<number | null> {
@@ -169,7 +178,8 @@ export class MemoryFileSystem implements FileSystem {
 		if (mode !== null) this.modes.set(path, mode);
 	}
 
-	async listDirectory(path: string): Promise<DirectoryEntry[]> {
+	async listDirectory(linkedPath: string): Promise<DirectoryEntry[]> {
+		const path = this.resolveSymlinks(linkedPath);
 		if (!this.directories.has(path)) throw new MissingPathError(`Missing directory ${path}`);
 		const prefix = path === "/" ? "/" : `${path}/`;
 		const names = new Map<string, boolean>();
@@ -182,6 +192,12 @@ export class MemoryFileSystem implements FileSystem {
 			if (!file.startsWith(prefix)) continue;
 			const relative = file.slice(prefix.length);
 			if (!relative.includes("/") && !names.has(relative)) names.set(relative, false);
+		}
+		// A symlink to a directory lists as a directory, as the real file system's listing does.
+		for (const link of this.symlinks.keys()) {
+			if (!link.startsWith(prefix)) continue;
+			const relative = link.slice(prefix.length);
+			if (!relative.includes("/")) names.set(relative, true);
 		}
 		return [...names].map(([name, directory]) => ({ name, directory }));
 	}

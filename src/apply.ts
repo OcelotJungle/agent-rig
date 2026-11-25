@@ -189,6 +189,7 @@ export const applyRig = async (
 		messages,
 		writeProgress,
 		pathExists: async (path) => (await runtime.fs.modifiedAt(path)) !== null,
+		realPath: (path) => runtime.fs.resolveTarget(path),
 	}, keepKnownDisabledPlugins(pluginPlansResult.value, pluginRecords), pluginRecords);
 	if (!plugins.ok) return plugins;
 	const settingsCurrent = await readOptional(runtime, settingsPath, messages);

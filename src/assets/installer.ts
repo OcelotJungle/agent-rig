@@ -110,6 +110,8 @@ export type PluginEnvironment = {
   writeProgress?: (event: ProgressEvent) => void;
   // True when the path exists (a file or a directory): an installed plugin whose copy is gone is not up to date.
   pathExists(path: string): Promise<boolean>;
+  // The real location of a path with every symlink resolved; the path itself when it does not exist.
+  realPath(path: string): Promise<string>;
 };
 
 export type PluginRecord = {
@@ -280,7 +282,10 @@ export async function applyPlugins(
 
     // The same folder registered under another name (the plugin was renamed) would make the install look in a
     // marketplace that does not exist: that registration and its plugins are removed first.
-    const stale = localMarketplaces.filter((entry) => entry.name !== plan.marketplace && samePath(entry.path, plan.source));
+    const stale: MarketplaceEntry[] = [];
+    for (const entry of localMarketplaces) {
+      if (entry.name !== plan.marketplace && await samePath(environment, entry.path, plan.source)) stale.push(entry);
+    }
     for (const entry of stale) {
       for (const id of [...installed].filter((installedId) => installedId.endsWith(`@${entry.name}`))) {
         const uninstall = await runClaude(environment, [...CLAUDE_PLUGIN_PREFIX, "uninstall", id, ...USER_SCOPE, ...YES_OPTION]);
@@ -643,11 +648,12 @@ const isPluginMutation = (args: readonly string[]): boolean =>
 
 type MarketplaceEntry = { name: string; path: string | null };
 
-// Paths are compared as written by two tools: separators, a trailing separator and case (Windows) are ignored.
-function samePath(left: string | null, right: string): boolean {
+// Two paths name one folder when they resolve to the same real folder (a symlink or junction on the way leads to it);
+// the text they were written in (separators, a trailing separator, case on Windows) does not matter.
+async function samePath(environment: PluginEnvironment, left: string | null, right: string): Promise<boolean> {
   if (left === null) return false;
-  const normalize = (path: string): string => trimTrailingSeparator(toSlashPath(path)).toLowerCase();
-  return normalize(left) === normalize(right);
+  const normalize = async (path: string): Promise<string> => trimTrailingSeparator(toSlashPath(await environment.realPath(path))).toLowerCase();
+  return (await normalize(left)) === (await normalize(right));
 }
 
 function parseMarketplaces(output: string, messages: Messages): Result<MarketplaceEntry[]> {

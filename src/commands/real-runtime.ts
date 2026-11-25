@@ -28,6 +28,11 @@ import { parseVersion, VERSION_PATHS } from "../version-manifest.js";
 // This keeps lock waits responsive without spinning while another command owns the lock.
 const LOCK_POLL_INTERVAL_MS = 250;
 const EXECUTABLE_FILE_MODE = 0o755;
+// Whether a link ends at a directory; a broken link ends at none.
+const linksToDirectory = async (path: string): Promise<boolean> => {
+	try { return (await fs.stat(path)).isDirectory(); }
+	catch { return false; }
+};
 // An aborted sleep clears its timer, so a caller that stopped waiting leaves no pending timer to hold the process open.
 const sleepFor = (milliseconds: number, cancel?: AbortSignal): Promise<void> => new Promise((resolveSleep) => {
 	const timer = setTimeout(resolveSleep, milliseconds);
@@ -267,7 +272,8 @@ export const createFileSystem = (messages: Messages, hostKind: HostPlatform = ho
 	writeDurable: (path, value, mode) => writeDurable(path, value, mode, hostKind),
 	listDirectory: async (path) => {
 		const entries = await fs.readdir(path, { withFileTypes: true });
-		return entries.map((entry) => ({ name: entry.name, directory: entry.isDirectory() }));
+		// A symlink or junction to a directory is a directory too: Dirent reports the link itself.
+		return Promise.all(entries.map(async (entry) => ({ name: entry.name, directory: entry.isDirectory() || (entry.isSymbolicLink() && await linksToDirectory(join(path, entry.name))) })));
 	},
 	uniqueSuffix: () => `${Date.now()}-${randomUUID()}`,
 });

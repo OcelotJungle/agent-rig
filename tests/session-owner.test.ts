@@ -141,7 +141,45 @@ describe("readOwner and writeOwner", () => {
 		const result = await tryOwner(h.runtime, SESSION, TARGET);
 		expect(outcome(result)).toBe("stay:several-transcripts");
 		expect(refusalOf(result)?.transient).toBe(false);
+		expect(refusalOf(result)?.detail.transcripts).toBe(`${TRANSCRIPT} | ${second}`);
 		expect(await h.fs.readText(second)).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+	});
+	describe("a config dir whose projects directory is a symbolic link to the shared history", () => {
+		const SWAP = "/swap/sessions/3";
+		const linked = () => {
+			const h = setup();
+			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ session_id: ID, cwd: "/work", transcript_path: TRANSCRIPT, started_at: CREATED, config_dir: SWAP }));
+			h.fs.directories.add(SWAP);
+			h.fs.symlinks.set(`${SWAP}/projects`, "/home/test/.claude/projects");
+			return h;
+		};
+		test("counts the file it reaches through the link and the recorded path as one transcript, and switches the owner", async () => {
+			const h = linked();
+			expect(outcome(await tryOwner(h.runtime, SESSION, TARGET))).toBe("go:written");
+			expect(await h.fs.readText(TRANSCRIPT)).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n${CHAT}${ownerLine(ACCOUNT_ONE, ID)}\n`);
+		});
+		test("settles as unchanged through the link when the target already owns the transcript", async () => {
+			expect(outcome(await tryOwner(linked().runtime, SESSION, SAME_TARGET))).toBe("go:unchanged");
+		});
+		test("counts a symlinked project directory and a symlinked file as the same file as the recorded path", async () => {
+			const h = setup();
+			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ session_id: ID, cwd: "/work", transcript_path: TRANSCRIPT, started_at: CREATED, config_dir: SWAP }));
+			h.fs.directories.add(`${SWAP}/projects`);
+			h.fs.symlinks.set(`${SWAP}/projects/work`, "/home/test/.claude/projects/work");
+			h.fs.directories.add(`${SWAP}/projects/alias`);
+			h.fs.links.set(`${SWAP}/projects/alias/${ID}.jsonl`, TRANSCRIPT);
+			h.fs.files.set(`${SWAP}/projects/alias/${ID}.jsonl`, "");
+			expect(outcome(await tryOwner(h.runtime, SESSION, TARGET))).toBe("go:written");
+		});
+		test("still stays with several-transcripts, naming both real files, when the link also reaches a different file", async () => {
+			const h = linked();
+			const second = `/home/test/.claude/projects/other/${ID}.jsonl`;
+			h.fs.seed(second, `${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+			const result = await tryOwner(h.runtime, SESSION, TARGET);
+			expect(outcome(result)).toBe("stay:several-transcripts");
+			expect(refusalOf(result)?.detail.transcripts).toBe(`${TRANSCRIPT} | ${second}`);
+			expect(await h.fs.readText(second)).toBe(`${ownerLine(DEFAULT_LOGIN, ID)}\n`);
+		});
 	});
 	test("stays with process-unknown, a transient reason naming the pid, while a recorded process has no known creation time and may be alive", async () => {
 		const unknown: SessionRecord = { ...SESSION, processes: [{ pid: 42, pidCreated: null, startedAt: CREATED }] };

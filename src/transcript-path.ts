@@ -1,7 +1,7 @@
 import type { ApiResult } from "./output.js";
 import type { RuntimePorts } from "./ports.js";
 
-import { joinPath } from "./file-system.js";
+import { joinPath, toSlashPath } from "./file-system.js";
 import { messagesFor } from "./messages.js";
 import { apiFail, apiOk, SESSION_IO } from "./output.js";
 import { errorText } from "./result.js";
@@ -24,8 +24,28 @@ export const resolveTranscriptPath = async (r: RuntimePorts, id: string, named: 
 	} catch (e) { return apiFail(SESSION_IO, m.io(errorText(e))); }
 };
 
-// Every existing `<config dir>/projects/*/<id>.jsonl` with its modification time; a missing projects directory is none.
-// A read error is thrown to the caller.
+// The text two paths of one file share: separators always, case outside Linux.
+const comparable = (r: RuntimePorts, path: string): string => r.platform === "linux" ? path : path.toLowerCase();
+
+// The real file behind a path: a symlink or junction on the way, in a directory or as the file itself, is followed (a
+// config dir may share its `projects` with another one this way). A path that does not exist keeps its own text.
+export const realFilePath = async (r: RuntimePorts, path: string): Promise<string> => toSlashPath(await r.fs.resolveTarget(path));
+
+// The distinct files among `entries`, each carrying its real path, in the order first met (the first entry of a file
+// supplies the rest of its fields). Two paths name one file when they resolve to the same real file, never because their
+// text matches.
+export const distinctFiles = async <T extends { path: string }>(r: RuntimePorts, entries: readonly T[]): Promise<T[]> => {
+	const files = new Map<string, T>();
+	for (const entry of entries) {
+		const real = await realFilePath(r, entry.path);
+		const key = comparable(r, real);
+		if (!files.has(key)) files.set(key, { ...entry, path: real });
+	}
+	return [...files.values()];
+};
+
+// Every existing `<config dir>/projects/*/<id>.jsonl` with its modification time, each file once, by its real path; a
+// missing projects directory is none. A read error is thrown to the caller.
 export const projectTranscripts = async (r: RuntimePorts, id: string, configDir: string): Promise<{ path: string; mtimeMs: number }[]> => {
 	const projects = joinPath(configDir === "" ? joinPath(r.home, DEFAULT_CONFIG_DIR) : configDir, PROJECTS_DIR);
 	let entries;
@@ -38,5 +58,5 @@ export const projectTranscripts = async (r: RuntimePorts, id: string, configDir:
 		const stat = await r.fs.stat(path);
 		if (stat !== null) found.push({ path, mtimeMs: stat.mtimeMs });
 	}
-	return found;
+	return distinctFiles(r, found);
 };

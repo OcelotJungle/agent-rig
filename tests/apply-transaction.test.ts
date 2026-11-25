@@ -421,7 +421,9 @@ describe("asset paths cannot leave the Claude folder (A9)", () => {
 		const result = await applyRig(harness.runtime, { state, mode: "install" });
 
 		expect(result.ok).toBe(true);
-		expect(harness.fs.files.get(`${HOME}/.claude/skills/x.md`)).toBe("skill text");
+		// A write through a linked folder lands on the real file, as on a real file system.
+		expect(harness.fs.files.get("/dotfiles/claude/skills/x.md")).toBe("skill text");
+		expect(await harness.fs.readText(`${HOME}/.claude/skills/x.md`)).toBe("skill text");
 	});
 });
 

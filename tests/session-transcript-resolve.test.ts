@@ -145,4 +145,19 @@ describe("a session's transcript is the existing <id>.jsonl", () => {
 		h.fs.seed(custom, MODE_PLAN);
 		expect((await loaded(h)).transcriptPath).toBe(custom);
 	});
+	test("a config_dir whose projects is a symbolic link to the shared history resolves to the real file", async () => {
+		const h = setup(NAMED, "/swap/sessions/3");
+		h.fs.symlinks.set("/swap/sessions/3/projects", `${HOME}/.claude/projects`);
+		h.fs.seed(REAL, MODE_PLAN);
+		expect((await loaded(h)).transcriptPath).toBe(REAL);
+	});
+	test("a symlinked projects directory does not make one file two matches: the newest of different files still wins", async () => {
+		const h = setup(NAMED, "/swap/sessions/3");
+		h.fs.symlinks.set("/swap/sessions/3/projects", `${HOME}/.claude/projects`);
+		h.fs.seed(NAMED.replace("proj-sub", "older"), MODE_PLAN);
+		h.fs.seed(REAL, MODE_PLAN);
+		h.fs.mtimes.set(NAMED.replace("proj-sub", "older"), 1);
+		h.fs.mtimes.set(REAL, 2);
+		expect((await loaded(h)).transcriptPath).toBe(REAL);
+	});
 });

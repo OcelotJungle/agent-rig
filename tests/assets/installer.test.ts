@@ -12,6 +12,7 @@ const EXPECTED_DIRECTORY_FILE_COUNT = 2;
 const SUCCESS_EXIT_CODE = 0;
 const MARKETPLACE_LIST_JSON = "plugin marketplace list --json";
 const allPathsExist = async (): Promise<boolean> => true;
+const keepPath = async (path: string): Promise<string> => path;
 
 // The text `claude plugin marketplace list --json` prints: an array of objects, each with a string `name`.
 function marketplaceListJson(names: readonly string[]): string {
@@ -268,7 +269,7 @@ describe("applyPlugins", () => {
       "plugin list --json": "[]",
     });
 
-    const first = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, plan);
+    const first = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, plan);
     expect(first.ok).toBe(true);
     expect(runner.calls).toEqual([
       ["claude", "plugin", "marketplace", "list", "--json"],
@@ -285,7 +286,7 @@ describe("applyPlugins", () => {
       [MARKETPLACE_LIST_JSON]: marketplaceListJson(["openai-codex", "claude-plugins-official", "telegram-hub-local"]),
       "plugin list --json": JSON.stringify(plan.map(({ id }) => ({ id }))),
     });
-    const second = await applyPlugins({ runner: secondRunner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, plan, first.value.records);
+    const second = await applyPlugins({ runner: secondRunner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, plan, first.value.records);
     expect(second.ok).toBe(true);
     // The plugin list is always read (a hand-removed plugin must come back), but nothing is changed.
     expect(secondRunner.calls).toEqual([
@@ -300,7 +301,7 @@ describe("applyPlugins", () => {
       "plugin list --json": JSON.stringify([{ id: "codex@openai-codex" }]),
     });
     const result = await applyPlugins(
-      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist },
+      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath },
       [{ enabled: false, id: "codex@openai-codex", marketplace: "openai-codex", source: "openai/codex-plugin-cc" }],
     );
     expect(result.ok).toBe(true);
@@ -321,7 +322,7 @@ describe("applyPlugins", () => {
       "plugin list --json": JSON.stringify([{ id: "codex@openai-codex" }]),
     });
     const result = await applyPlugins(
-      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist },
+      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath },
       [{ enabled: true, id: "codex@openai-codex", marketplace: "openai-codex", source: "openai/codex-plugin-cc" }],
     );
     expect(result.ok).toBe(true);
@@ -343,7 +344,7 @@ describe("applyPlugins", () => {
       "plugin list --json": "[]",
     });
 
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, plan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, plan);
 
     expect(result.ok).toBe(true);
     expect(runner.calls).toEqual([
@@ -364,7 +365,7 @@ describe("applyPlugins", () => {
     });
 
     const result = await applyPlugins(
-      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist },
+      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath },
       [{ enabled: true, id: "codex@openai-codex", marketplace: "openai-codex", source: "openai/codex-plugin-cc" }],
     );
 
@@ -389,7 +390,7 @@ describe("applyPlugins stale local marketplaces", () => {
       "plugin list --json": JSON.stringify([{ id: "tg-hub@old-hub" }, { id: "other@elsewhere" }]),
     });
 
-    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, hubPlan);
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, hubPlan);
 
     expect(result.ok).toBe(true);
     expect(runner.calls).toEqual([
@@ -402,13 +403,38 @@ describe("applyPlugins stale local marketplaces", () => {
     ]);
   });
 
+  test("removes a marketplace registered through a symlink to the planned folder, under another name", async () => {
+    const runner = makeRunner({
+      [MARKETPLACE_LIST_JSON]: directoryListing([{ name: "old-hub", path: "C:/links/hub" }]),
+      "plugin list --json": JSON.stringify([{ id: "tg-hub@old-hub" }]),
+    });
+    const realPath = async (path: string): Promise<string> => (path === "C:/links/hub" ? "C:/projects/hub" : path);
+
+    const result = await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath }, hubPlan);
+
+    expect(result.ok).toBe(true);
+    expect(runner.calls).toContainEqual(["claude", "plugin", "marketplace", "remove", "old-hub"]);
+  });
+
+  test("keeps a marketplace of a different real folder even when the text looks alike", async () => {
+    const runner = makeRunner({
+      [MARKETPLACE_LIST_JSON]: directoryListing([{ name: "other-hub", path: "C:/links/hub" }]),
+      "plugin list --json": "[]",
+    });
+    const realPath = async (path: string): Promise<string> => (path === "C:/links/hub" ? "C:/elsewhere/hub" : path);
+
+    await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath }, hubPlan);
+
+    expect(runner.calls).not.toContainEqual(["claude", "plugin", "marketplace", "remove", "other-hub"]);
+  });
+
   test("removes nothing when the path is already registered under the planned name", async () => {
     const runner = makeRunner({
       [MARKETPLACE_LIST_JSON]: directoryListing([{ name: "telegram-hub", path: "C:/projects/hub" }]),
       "plugin list --json": "[]",
     });
 
-    await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, hubPlan);
+    await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, hubPlan);
 
     expect(runner.calls).toEqual([
       ["claude", "plugin", "marketplace", "list", "--json"],
@@ -424,7 +450,7 @@ describe("applyPlugins stale local marketplaces", () => {
     });
 
     const result = await applyPlugins(
-      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist },
+      { runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath },
       [{ enabled: true, id: "agent-rig-window@agent-rig", marketplace: "agent-rig", source: "C:/projects/rig/plugins/agent-rig-window" }],
     );
 
@@ -445,7 +471,7 @@ describe("applyPlugins stale local marketplaces", () => {
       "plugin list --json": JSON.stringify([{ id: "x@other-hub" }]),
     });
 
-    await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist }, hubPlan);
+    await applyPlugins({ runner, claudeCommand: "claude", messages: TEST_MESSAGES, pathExists: allPathsExist, realPath: keepPath }, hubPlan);
 
     expect(runner.calls.filter((call) => call.includes("remove") || call.includes("uninstall"))).toEqual([]);
   });
