@@ -62,6 +62,33 @@ class CreationTimesTests(unittest.TestCase):
             self.assertNotEqual(RECORD.main(["session_record.py", "created-at", "1"]), 0)
 
 
+class ListModeTests(unittest.TestCase):
+    def test_prints_every_process_with_its_command_line_and_creation_time(self):
+        processes = {
+            300: Process(pid=300, parent=150, name="claude.exe", created_us=EPOCH_2023_US, command_line="claude --resume abc"),
+            301: Process(pid=301, parent=300, name="conhost.exe", created_us=None),
+        }
+        with mock.patch.object(RECORD, "load_process_table", return_value=(processes, None)) as load, mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(RECORD.main(["session_record.py", "list"]), 0)
+        load.assert_called_once_with(with_command_line=True)
+        self.assertEqual(json.loads(output.getvalue()), [
+            {"pid": 300, "parent": 150, "name": "claude.exe", "commandLine": "claude --resume abc", "createdAt": "2023-11-14T22:13:20.000000Z"},
+            {"pid": 301, "parent": 300, "name": "conhost.exe", "commandLine": "", "createdAt": None},
+        ])
+
+    def test_fails_when_the_process_table_cannot_be_loaded(self):
+        with mock.patch.object(RECORD, "load_process_table", return_value=(None, "query failed")), mock.patch("sys.stderr", new_callable=io.StringIO):
+            self.assertNotEqual(RECORD.main(["session_record.py", "list"]), 0)
+
+    def test_windows_query_asks_for_the_command_line_only_when_told_to(self):
+        self.assertNotIn("CommandLine", RECORD.windows_table_command(False))
+        self.assertIn("CommandLine", RECORD.windows_table_command(True))
+
+    def test_windows_rows_carry_the_command_line(self):
+        text = json.dumps([{"ProcessId": 7, "ParentProcessId": 4, "Name": "cmd.exe", "CommandLine": "cmd.exe /c x", "Created": 116444736010000000}])
+        self.assertEqual(RECORD.parse_windows_table(text)[7].command_line, "cmd.exe /c x")
+
+
 class ResolveClaudeTests(unittest.TestCase):
     def test_claude_pid_that_is_a_claude_ancestor_wins_over_the_nearest_one(self):
         process, error = RECORD.resolve_claude(TREE, HOOK_PARENT, {"CLAUDE_PID": str(CLAUDE_OUTER)})
@@ -201,6 +228,14 @@ class LinuxTableTests(unittest.TestCase):
         self.assertEqual(table_result[60].name, "bash")
         self.assertEqual(table_result[60].parent, 50)
         self.assertEqual(RECORD.resolve_claude(table_result, 60, {})[0].pid, 50)
+
+    def test_command_lines_are_read_only_when_asked_for(self):
+        (self.proc / "stat").write_text("btime 1700000000\n", encoding="utf-8")
+        self.add(50, "claude", 1, 250, ["/usr/local/bin/claude", "--resume", "abc"])
+        plain, _ = RECORD.linux_process_table(proc=self.proc, clock_ticks=100)
+        full, _ = RECORD.linux_process_table(proc=self.proc, clock_ticks=100, with_command_line=True)
+        self.assertEqual(plain[50].command_line, "")
+        self.assertEqual(full[50].command_line, "/usr/local/bin/claude --resume abc")
 
     def test_missing_proc_gives_an_error(self):
         table_result, error = RECORD.linux_process_table(proc=self.proc / "missing", clock_ticks=100)

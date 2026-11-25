@@ -1,5 +1,7 @@
 import type { SpawnLaunch } from "../src/commands/session-run.js";
 import type { Platform } from "../src/feature.js";
+import type { ProcessEntry } from "../src/ports.js";
+import type { Result } from "../src/result.js";
 import type { SessionRecord } from "../src/session-core.js";
 
 import { describe, expect, test } from "bun:test";
@@ -10,7 +12,7 @@ import { buildLaunchCommand } from "../src/launch-command.js";
 import { messagesFor } from "../src/messages.js";
 import { lookupSession, SESSION_POLL_MS } from "../src/session-core.js";
 import { apiFail, apiOk } from "../src/output.js";
-import { ok } from "../src/result.js";
+import { err, ok } from "../src/result.js";
 import { withSessionEnding } from "../src/session-ending.js";
 import { baseManifest, createMemoryRuntime, FAKE_OWNER_CREATED, seedFeature, seedHubManifest } from "./fakes/memory-runtime.js";
 import { ACCOUNT_ONE, answerAccountLookup, answerOwnerQueries, DEFAULT_LOGIN, ownerLine, seedDefaultLogin } from "./fakes/session-owner-fixture.js";
@@ -680,6 +682,137 @@ describe("session run and mode", () => {
 			expect(refused).toBe("session-ending");
 			expect(result).toBe(1);
 			expect(await h.fs.stat(`${ROOT}/sessions/${ID}/ending.json`)).toBeNull();
+		});
+	});
+	describe("a launch whose process never registers closes the window it opened", () => {
+		const at = (ms: number): string => new Date(ms).toISOString();
+		const row = (pid: number, parent: number, name: string, commandLine: string, createdMs: number | string): ProcessEntry => ({ pid, parent, name, commandLine, createdAt: typeof createdMs === "number" ? at(createdMs) : createdMs });
+		const RESUME = `claude --resume ${ID}`;
+		const OTHER_ID = "22222222-2222-2222-2222-222222222222";
+		const EARLIER_PID = 42;
+		const TERMINAL_PID = 400;
+		const FIRST_ROOT = 100;
+		const FIRST_CHILD = 101;
+		const SECOND_ROOT = 110;
+		const SECOND_CHILD = 111;
+		const SCREEN = "Do you trust the files in this folder?\n> 1. Yes, proceed\n  2. No, exit";
+		// The host's table at the timeout: one launch's window (two roots, each with a payload under it), a terminal process that
+		// holds every window, a process of this session from before the launch (named in the record), an older process of the same
+		// session, rig's own process, another session's window and an unrelated one.
+		const windowTable = (): ProcessEntry[] => [
+			row(10, 1, "bun.exe", `bun rig session run ${ID} --account 1`, -50),
+			row(TERMINAL_PID, 1, "WindowsTerminal.exe", `WindowsTerminal.exe --resume ${ID}`, 500),
+			row(FIRST_ROOT, TERMINAL_PID, "cmd.exe", `cmd.exe /c ${RESUME} & exit /b 0`, 500),
+			row(FIRST_CHILD, FIRST_ROOT, "claude.exe", RESUME, 600),
+			row(102, FIRST_CHILD, "node.exe", "node mcp.js", 650),
+			row(SECOND_ROOT, TERMINAL_PID, "cmd.exe", `cmd.exe /c cswap run 1 --share-history -- --resume ${ID}`, 520),
+			row(SECOND_CHILD, SECOND_ROOT, "claude.exe", RESUME, 560),
+			row(200, 5, "claude.exe", RESUME, -1000),
+			row(EARLIER_PID, 5, "claude.exe", RESUME, CREATED),
+			row(300, 5, "notepad.exe", "notepad.exe", 700),
+			row(310, TERMINAL_PID, "claude.exe", `claude --resume ${OTHER_ID}`, 700),
+		];
+		type Probe = { killed: number[]; read: number[] };
+		// The process the record names is gone: its pid now belongs to a process created later.
+		const recordedProcessGone = (h: ReturnType<typeof setup>): void => {
+			h.runtime.process.createdAt = async (pids) => ok(Object.fromEntries(pids.map((pid) => [String(pid), pid === h.runtime.lock.process.pid ? FAKE_OWNER_CREATED : "pid reused by a later process"])));
+		};
+		const probeWindow = (h: ReturnType<typeof setup>, table: ProcessEntry[], screen: Result<string>): Probe => {
+			const probe: Probe = { killed: [], read: [] };
+			recordedProcessGone(h);
+			h.runtime.process.listProcesses = async () => ok(table);
+			h.runtime.process.readConsoleText = async (pid) => { probe.read.push(pid); return screen; };
+			h.runtime.process.killTree = async (pid) => { probe.killed.push(pid); return ok(undefined); };
+			return probe;
+		};
+		const earlierRecord: SessionRecord = { ...session, processes: [{ pid: EARLIER_PID, pidCreated: CREATED, startedAt: CREATED }] };
+		test("kills exactly the roots of this launch's processes, reads the deepest one's screen first, and refuses with the screen", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const order: string[] = [];
+			const probe = probeWindow(h, windowTable(), ok(`${SCREEN}\n\n`));
+			const read = h.runtime.process.readConsoleText;
+			h.runtime.process.readConsoleText = async (pid) => { order.push("read"); return read(pid); };
+			const kill = h.runtime.process.killTree;
+			h.runtime.process.killTree = async (pid, force) => { order.push("kill"); expect(force).toBe(true); return kill(pid, force); };
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(code(result)).toBe("launch-timeout");
+			expect(probe.killed).toEqual([FIRST_ROOT, SECOND_ROOT]);
+			expect(probe.read).toEqual([FIRST_CHILD]);
+			expect(order).toEqual(["read", "kill", "kill"]);
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeoutWindowClosedScreen(SCREEN));
+			const events = eventsOf(h);
+			expect(events).toHaveLength(1);
+			expect(events[0]).toMatchObject({ level: "warn", type: "launch-blocked-screen" });
+			expect(events[0].text).toBe(messagesFor("en").session.launchBlockedScreenEvent(ID, 1, `${FIRST_ROOT}, ${SECOND_ROOT}`, SCREEN));
+		});
+		test("a screen that cannot be read still closes the window and refuses with no excerpt", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const probe = probeWindow(h, windowTable(), err("the helper timed out"));
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(probe.killed).toEqual([FIRST_ROOT, SECOND_ROOT]);
+			expect(code(result)).toBe("launch-timeout");
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeoutWindowClosed());
+			expect(eventsOf(h)).toHaveLength(1);
+			expect(eventsOf(h)[0].text).toBe(messagesFor("en").session.launchBlockedScreenEvent(ID, 1, `${FIRST_ROOT}, ${SECOND_ROOT}`, ""));
+		});
+		test("an empty screen is no excerpt", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			probeWindow(h, windowTable(), ok("\n  \n"));
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeoutWindowClosed());
+		});
+		test("no process of this launch in the table gives the plain timeout, no kill and no event", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const probe = probeWindow(h, windowTable().filter((entry) => entry.pid < FIRST_ROOT || entry.pid >= 200), ok(SCREEN));
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(code(result)).toBe("launch-timeout");
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeout());
+			expect(probe).toEqual({ killed: [], read: [] });
+			expect(eventsOf(h)).toEqual([]);
+		});
+		test("a host with no process table gives the plain timeout", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			recordedProcessGone(h);
+			h.runtime.process.listProcesses = async () => err("no process table");
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeout());
+			expect(eventsOf(h)).toEqual([]);
+		});
+		test("a launch that registers closes nothing", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			const probe = probeWindow(h, windowTable(), ok(SCREEN));
+			h.runtime.process.createdAt = async () => ok({ "43": CREATED });
+			const result = await runSession(h.runtime, session, "plan", "1", fakeSpawn(h, () => h.fs.seed(`${ROOT}/sessions/${ID}.json`, recordWith(43, CREATED))));
+			expect(code(result)).toBe("ok");
+			expect(probe).toEqual({ killed: [], read: [] });
+			expect(eventsOf(h)).toEqual([]);
+		});
+		test("a kill that could not be done leaves the plain timeout and no event", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			probeWindow(h, windowTable(), ok(SCREEN));
+			h.runtime.process.killTree = async () => err("taskkill did not start");
+			const result = await runSession(h.runtime, earlierRecord, "plan", "1", fakeSpawn(h));
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeout());
+			expect(eventsOf(h)).toEqual([]);
+		});
+		test("the mode switch gives up the same way", async () => {
+			const h = setup();
+			seedLaunchers(h);
+			h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n${JSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
+			h.fs.seed(`${ROOT}/sessions/${ID}.json`, JSON.stringify({ ...raw, pid: EARLIER_PID, ended_at: null }));
+			answerAccountLookup(h, '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}');
+			const probe = probeWindow(h, windowTable(), ok(SCREEN));
+			const result = await modeCommand(h.runtime, [ID, "auto"], () => {});
+			expect(code(result)).toBe("launch-timeout");
+			expect(result.ok ? "" : result.error.message).toBe(messagesFor("en").session.launchTimeoutWindowClosedScreen(SCREEN));
+			expect(probe.killed).toEqual([FIRST_ROOT, SECOND_ROOT]);
 		});
 	});
 	test("CLI writes one JSON object on a mode success and run failure", async () => {

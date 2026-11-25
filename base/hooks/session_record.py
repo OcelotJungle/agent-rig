@@ -7,6 +7,7 @@ is a claude ancestor of the hook, otherwise the nearest claude ancestor. It also
 gone and turns a still-running legacy pid of the record into a process file. `end` deletes only its own process file.
 The hook prints nothing and always exits 0.
 Process table: PowerShell Get-CimInstance on Windows, /proc on Linux. Other systems get pid null and a pid_error.
+Two more modes print JSON and exit 1 on failure: `created-at <pid>...` (creation time per pid) and `list` (every process with its command line).
 """
 import contextlib
 import json
@@ -31,10 +32,11 @@ SESSIONS_DIR_PARTS = (".agent-rig", "sessions")
 PROCESSES_DIR_NAME = "processes"
 PROC_STAT_STARTTIME_INDEX = 19
 PROC_STAT_PPID_INDEX = 1
-WINDOWS_TABLE_COMMAND = (
-    "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,"
-    "@{n='Created';e={if($_.CreationDate){$_.CreationDate.ToFileTimeUtc()}else{0}}} | ConvertTo-Json -Compress"
-)
+WINDOWS_TABLE_COLUMNS = "ProcessId,ParentProcessId,Name,"
+# The command line is asked only by the `list` mode: the hooks and `created-at` do not need it, and it is the largest column.
+WINDOWS_COMMAND_LINE_COLUMN = "CommandLine,"
+WINDOWS_TABLE_TAIL = "@{n='Created';e={if($_.CreationDate){$_.CreationDate.ToFileTimeUtc()}else{0}}} | ConvertTo-Json -Compress"
+WINDOWS_TABLE_PREFIX = "$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process | Select-Object "
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -44,6 +46,8 @@ class Process:
     parent: int
     name: str
     created_us: int | None
+    # Empty unless the table was loaded with command lines (the `list` mode); a process whose line cannot be read has an empty one too.
+    command_line: str = ""
 
 
 def session_id_valid(value):
@@ -96,14 +100,26 @@ def parse_windows_table(text):
         pid = row["ProcessId"]
         created = row["Created"]
         created_us = (created - FILETIME_EPOCH_100NS) // FILETIME_TICKS_PER_US if created else None
-        table[pid] = Process(pid=pid, parent=row["ParentProcessId"], name=row["Name"], created_us=created_us)
+        command_line = row.get("CommandLine")
+        table[pid] = Process(
+            pid=pid,
+            parent=row["ParentProcessId"],
+            name=row["Name"],
+            created_us=created_us,
+            command_line=command_line if isinstance(command_line, str) else "",
+        )
     return table
 
 
-def windows_process_table(run=subprocess.run):
+def windows_table_command(with_command_line):
+    columns = WINDOWS_TABLE_COLUMNS + (WINDOWS_COMMAND_LINE_COLUMN if with_command_line else "")
+    return WINDOWS_TABLE_PREFIX + columns + WINDOWS_TABLE_TAIL
+
+
+def windows_process_table(run=subprocess.run, with_command_line=False):
     try:
         done = run(
-            ["powershell", "-NoProfile", "-Command", WINDOWS_TABLE_COMMAND],
+            ["powershell", "-NoProfile", "-Command", windows_table_command(with_command_line)],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=POWERSHELL_TIMEOUT_SECONDS,
@@ -133,7 +149,7 @@ def read_btime(stat_path):
     raise ValueError("no btime line in proc stat")
 
 
-def linux_process_table(proc=Path("/proc"), clock_ticks=None):
+def linux_process_table(proc=Path("/proc"), clock_ticks=None, with_command_line=False):
     ticks = clock_ticks or os.sysconf("SC_CLK_TCK")
     try:
         btime = read_btime(proc / "stat")
@@ -149,20 +165,24 @@ def linux_process_table(proc=Path("/proc"), clock_ticks=None):
         except (OSError, ValueError, IndexError) as error:
             return None, f"process table: {error}"
         name = comm
+        command_line = ""
         with contextlib.suppress(OSError):
-            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            raw = (entry / "cmdline").read_bytes()
+            argv = raw.split(b"\0")
             if argv[0]:
                 name = PurePosixPath(argv[0].decode("utf-8", errors="replace")).name
+            if with_command_line:
+                command_line = " ".join(part.decode("utf-8", errors="replace") for part in argv if part)
         pid = int(entry.name)
         created_us = btime * SECOND_US + start_ticks * SECOND_US // ticks
-        table[pid] = Process(pid=pid, parent=ppid, name=name, created_us=created_us)
+        table[pid] = Process(pid=pid, parent=ppid, name=name, created_us=created_us, command_line=command_line)
     return table, None
 
 
-def load_process_table():
+def load_process_table(with_command_line=False):
     if sys.platform == "win32":
-        return windows_process_table()
-    return linux_process_table()
+        return windows_process_table(with_command_line=with_command_line)
+    return linux_process_table(with_command_line=with_command_line)
 
 
 def iso_seconds(moment):
@@ -294,8 +314,32 @@ def run_event(event, stdin_text, home, env, start_pid, load_table, now):
     write_json_atomic(path, record)
 
 
+def list_processes():
+    # Every process as {pid, parent, name, commandLine, createdAt}; a process whose creation time is unknown has createdAt null.
+    table, error = load_process_table(with_command_line=True)
+    if table is None:
+        raise ValueError(error or "process table unavailable")
+    return [
+        {
+            "pid": process.pid,
+            "parent": process.parent,
+            "name": process.name,
+            "commandLine": process.command_line,
+            "createdAt": iso_micro_from_us(process.created_us) if process.created_us is not None else None,
+        }
+        for process in table.values()
+    ]
+
+
 def main(argv):
     event = argv[1] if len(argv) > 1 else ""
+    if event == "list":
+        try:
+            print(json.dumps(list_processes()))
+            return 0
+        except Exception as error:
+            sys.stderr.write(f"session_record: {error}\n")
+            return 1
     if event == "created-at":
         try:
             pids = [int(value) for value in argv[2:]]

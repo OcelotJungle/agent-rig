@@ -351,6 +351,8 @@ export const createMemoryRuntime = (platform: RuntimePorts["platform"] = "linux"
 			createdAt: async () => ok({ [String(FAKE_OWNER_PID)]: FAKE_OWNER_CREATED }),
 			killTree: async () => ok(undefined),
 			killGroup: async () => ok(undefined),
+			listProcesses: async () => ok([]),
+			readConsoleText: async () => err("no console in the memory runtime"),
 			run: async (command, args, options) => {
 				processCalls.push({ command, args, options });
 				if (command === "claude" && args.join(" ") === "plugin marketplace list --json") {

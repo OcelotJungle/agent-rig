@@ -1,6 +1,6 @@
 import type { FileSystem } from "../file-system.js";
 import type { Language, Messages } from "../messages.js";
-import type { RuntimePorts, ProcessOptions, ProcessOutput, ProcessPorts, StreamingRun } from "../ports.js";
+import type { RuntimePorts, ProcessEntry, ProcessOptions, ProcessOutput, ProcessPorts, StreamingRun } from "../ports.js";
 import type { HostPlatform } from "../node-file-operations.js";
 import type { Result } from "../result.js";
 import type { RigState } from "../state.js";
@@ -20,6 +20,8 @@ import { makeDirectoryExclusive, modeOf, resolveTarget, writeDurable, writeExclu
 import { err, errorText, ok } from "../result.js";
 import { readStoredLanguage } from "../state.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
+import { readConsoleText } from "./console-text.js";
+import { parseProcessTable } from "./process-table.js";
 import { runProcess, spawnDetached } from "./process-runner.js";
 import { countGroupMembers, groupMemberPids, PROCESS_TABLE_ARGUMENTS } from "./run-members.js";
 import { confineToKillOnCloseJob, jobMembersOtherThanSelf, terminateJobMembersOtherThanSelf } from "./windows-job.js";
@@ -281,6 +283,15 @@ export const createFileSystem = (messages: Messages, hostKind: HostPlatform = ho
 
 const createProcessPorts = (pathEnvironment: string, language: Language): ProcessPorts => {
 	const messages = messagesFor(language);
+	// The host's process table, asked of session_record.py in one of its modes (`created-at <pid>...`, `list`); its stdout on success.
+	const processTableOutput = async (mode: readonly string[]): Promise<Result<string>> => {
+		const python = hostPlatform() === "win32" ? "python" : "python3";
+		const script = fileURLToPath(new URL("../../base/hooks/session_record.py", import.meta.url));
+		const result = await ports.run(python, ["-I", script, ...mode]);
+		if (!result.ok) return result;
+		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || messages.failure.processTableQueryFailed());
+		return ok(result.value.stdout);
+	};
 	const ports: ProcessPorts = {
 	run: (command: string, args: readonly string[], options?: ProcessOptions) => runProcess(pathEnvironment, command, args, messages, options),
 	spawnDetached: (command, graceMs, stderrLimit, stderrPath, options) => spawnDetached(command, graceMs, stderrLimit, stderrPath, language, options),
@@ -369,15 +380,17 @@ const createProcessPorts = (pathEnvironment: string, language: Language): Proces
 		const result = await ports.run("kill", ["-KILL", "--", `-${pid}`]);
 		return result.ok ? ok(undefined) : result;
 	},
+	listProcesses: async (): Promise<Result<ProcessEntry[]>> => {
+		const table = await processTableOutput(["list"]);
+		return table.ok ? parseProcessTable(table.value, messages) : table;
+	},
+	readConsoleText: (pid: number): Promise<Result<string>> => readConsoleText(ports, messages, hostPlatform(), pid),
 	createdAt: async (pids: readonly number[]): Promise<Result<Record<string, string | null>>> => {
 		if (pids.length === 0) return ok({});
-		const python = hostPlatform() === "win32" ? "python" : "python3";
-		const script = fileURLToPath(new URL("../../base/hooks/session_record.py", import.meta.url));
-		const result = await ports.run(python, ["-I", script, "created-at", ...pids.map(String)]);
-		if (!result.ok) return result;
-		if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(result.value.stderr || messages.failure.processTableQueryFailed());
+		const table = await processTableOutput(["created-at", ...pids.map(String)]);
+		if (!table.ok) return table;
 		try {
-			const value: unknown = JSON.parse(result.value.stdout);
+			const value: unknown = JSON.parse(table.value);
 			if (typeof value !== "object" || value === null || Array.isArray(value)) return err(messages.failure.processTableInvalid());
 			const times: Record<string, string | null> = {};
 			for (const [key, time] of Object.entries(value)) {

@@ -33,6 +33,16 @@ export type StreamingRun = {
 	finishOutput(): Promise<Result<void>>;
 };
 
+// One row of the host's process table. `commandLine` is empty when the host cannot tell it; `createdAt` is null when the
+// creation time is unknown (a process whose time is unknown is never taken for a launched one).
+export type ProcessEntry = {
+	pid: number;
+	parent: number;
+	name: string;
+	commandLine: string;
+	createdAt: string | null;
+};
+
 export type ProcessPorts = {
 	run(command: string, args: readonly string[], options?: ProcessOptions): Promise<Result<ProcessOutput>>;
 	spawnDetached(command: readonly string[], graceMs: number, stderrLimit: number, stderrPath: string, options?: { windowsHide?: boolean }): Promise<Result<{ exited: boolean; exitCode: number | null; stderr: string; pid?: number }>>;
@@ -45,6 +55,11 @@ export type ProcessPorts = {
 	killRunMembers(): Promise<Result<void>>;
 	isAvailable(command: string): Promise<boolean>;
 	createdAt(pids: readonly number[]): Promise<Result<Record<string, string | null>>>;
+	// Every process of the host with its parent, command line and creation time (Windows and Linux; error on a host with no process table).
+	listProcesses(): Promise<Result<ProcessEntry[]>>;
+	// The visible text of the console screen of a process, non-empty rows only (Windows only; error elsewhere and when the console cannot
+	// be read). Read-only: the console is not changed. The read runs in a hidden helper process and is bounded in time.
+	readConsoleText(pid: number): Promise<Result<string>>;
 	// Kill contract (killTree, killGroup): error only when the kill could not be done at all (the killer did not start, the process table
 	// could not be read, the platform has no such kill). A killer that ran and exited non-zero is ok; callers verify by liveness.
 	killTree(pid: number, force?: boolean): Promise<Result<void>>;

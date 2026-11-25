@@ -1,4 +1,5 @@
 import type { ApiResult, ProgressEvent } from "../output.js";
+import type { LaunchedWindow } from "../launch-window.js";
 import type { RuntimePorts } from "../ports.js";
 import type { SessionRecord } from "../session-core.js";
 import type { LaunchGate, LaunchStart, SessionEnding } from "../session-ending.js";
@@ -10,6 +11,7 @@ import { readFeature } from "../feature.js";
 import { joinPath } from "../file-system.js";
 import { buildLaunchCommand } from "../launch-command.js";
 import { launchPath, LAUNCH_TOKEN } from "../launch-safety.js";
+import { closeLaunchedWindow } from "../launch-window.js";
 import { messagesFor } from "../messages.js";
 import { apiFail, apiOk, ACCOUNT_CONFIG_BUSY, ACCOUNT_PROFILE_INCOMPLETE, ACCOUNT_PROFILE_MISSING, ACCOUNT_PROFILE_UNREADABLE, ERROR_CODE_USAGE, WORKSPACE_UNTRUSTED, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
 import { errorText } from "../result.js";
@@ -40,6 +42,7 @@ const WINDOWS_EXECUTABLE_SUFFIXES = [".exe", ".com", ".cmd", ".bat"] as const;
 // The rig event a refused launch leaves for the user, next to the failed result.
 const OWNER_SWITCH_REFUSED_EVENT = "owner-switch-refused";
 const ACCOUNT_CONSENT_REFUSED_EVENT = "account-consent-refused";
+const LAUNCH_BLOCKED_SCREEN_EVENT = "launch-blocked-screen";
 const MODES = ["manual", "auto", "acceptEdits", "plan", "dontAsk"] as const;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -240,12 +243,25 @@ const refuseLaunch = async (runtime: RuntimePorts, session: string, account: num
 	return apiFail(OWNER_SWITCH_UNAVAILABLE, m.ownerSwitchRefused(held.reason, attempts, detail));
 };
 
+// A launch whose process never registered left its window on a screen that wants a person. The window is closed (its screen's
+// text is read first, only to put it into the message) and the launch is refused with that text; a launch whose window could not
+// be found is refused as before.
+const refuseUnregistered = async (runtime: RuntimePorts, launched: LaunchedWindow, account: number | null): Promise<ApiResult<never>> => {
+	const m = messagesFor(runtime.language).session;
+	const closed = await closeLaunchedWindow(runtime, launched);
+	if (closed.killed.length === 0) return apiFail(LAUNCH_TIMEOUT, m.launchTimeout());
+	// A failed event write must not hide the refusal itself.
+	await emitRigEvent(runtime, LAUNCH_BLOCKED_SCREEN_EVENT, "warn", m.launchBlockedScreenEvent(launched.sessionId, account, closed.killed.join(", "), closed.excerpt));
+	return apiFail(LAUNCH_TIMEOUT, closed.excerpt === "" ? m.launchTimeoutWindowClosed() : m.launchTimeoutWindowClosedScreen(closed.excerpt));
+};
+
 // Waits for the launched process to register: a process the record did not name before the launch, alive, within the deadline.
-const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, deadline: number): Promise<ApiResult<number>> => {
+// On the deadline the launch's window is closed and the launch refused.
+const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, account: number | null, spawnedAt: Date, deadline: number): Promise<ApiResult<number>> => {
+	const earlier = new Set(session.processes.map(processKey));
 	for (;;) {
 		const current = await lookupSession(runtime, session.id);
 		if (!current.ok) return current;
-		const earlier = new Set(session.processes.map(processKey));
 		const started = current.value.processes.filter((process) => !earlier.has(processKey(process)));
 		if (started.length > 0) {
 			const currentLive = await liveProcesses(runtime, { ...current.value, processes: started });
@@ -254,7 +270,7 @@ const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, 
 			if (first !== undefined) return apiOk(first.pid);
 		}
 		const remaining = deadline - runtime.clock.now().getTime();
-		if (remaining <= 0) return apiFail(LAUNCH_TIMEOUT, messagesFor(runtime.language).session.launchTimeout());
+		if (remaining <= 0) return refuseUnregistered(runtime, { sessionId: session.id, earlier, spawnedAt }, account);
 		await runtime.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
 	}
 };
@@ -273,6 +289,8 @@ const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, lau
 		if (!current.ok) return current;
 		const reading = await readOwner(runtime, current.value, launch.target);
 		if (!reading.ok) return reading;
+		// Taken before the spawn, so every process of this launch was created at or after it.
+		const spawnedAt = runtime.clock.now();
 		const spawned = await spawnCommand(launch.command, ownerStep(runtime, reading.value));
 		if (!spawned.ok) return spawned;
 		if (spawned.value.kind === "declined") {
@@ -285,7 +303,7 @@ const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, lau
 		const owner = spawned.value.decision;
 		// With no owner switch to make Claude Code may refuse the session at once: the grace check is all the launch can tell.
 		if (owner.ownerSwitch === "none") return apiOk({ session: session.id, pid: null, mode, account, ...owner });
-		const registered = await awaitRegistration(runtime, session, spawned.value.deadline);
+		const registered = await awaitRegistration(runtime, session, account, spawnedAt, spawned.value.deadline);
 		return registered.ok ? apiOk({ session: session.id, pid: registered.value, mode, account, ...owner }) : registered;
 	}
 };
