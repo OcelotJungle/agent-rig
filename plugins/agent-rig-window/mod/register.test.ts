@@ -27,15 +27,17 @@ type World = {
   autocompacts: string[];
   compactResult: { skip?: string };
   autocompactText?: string;
+  // What `$.session.id()` answers now; a test changes it to switch the session inside the window.
+  sessionId: string;
   clock: ReturnType<typeof mock.clock>;
 };
 
 // Every `$` call the module makes, answered by the test; `session.start` is the engine's own echo.
 function world(on: On): World {
-  const w: World = { files: new Map(), dirs: new Set(), pidText: CLAUDE_PID, compactions: [], snapshotWrites: 0, context: { tokens: TOKENS, window: WINDOW }, renames: [], autocompacts: [], compactResult: {}, clock: mock.clock(on) };
+  const w: World = { files: new Map(), dirs: new Set(), pidText: CLAUDE_PID, compactions: [], snapshotWrites: 0, context: { tokens: TOKENS, window: WINDOW }, renames: [], autocompacts: [], compactResult: {}, sessionId: SESSION, clock: mock.clock(on) };
   on("session.start", (_, e) => ({ cwd: e.cwd }));
   on("env.get", (_, e) => ({ value: e.name === "HOME" ? HOME : undefined }));
-  on("session.id", () => ({ value: SESSION }));
+  on("session.id", () => ({ value: w.sessionId }));
   on("session.usage", () => ({ value: { startedAt: 0, context: w.context, rateLimits: [{ kind: "five_hour", percentUsed: 5 }] } }));
   on("fs.write", (_, e) => {
     w.files.set(norm(e.path), e.text);
@@ -288,4 +290,62 @@ test("a request whose id is not a safe file name is ignored", async ($, on) => {
   w.files.set(`${DIR}/requests/note.txt`, "{}");
   await w.clock.advance(POLL_MS);
   expect([...w.files.keys()].filter(path => path.includes("/responses/"))).toEqual([]);
+});
+
+// The session a window runs can change after the process started (a resume or /clear inside the window):
+// the engine fires no second session.start for it, so the module follows `$.session.id()` as it polls.
+const SWITCHED = "sess-2";
+const SWITCHED_DIR = `${HOME}/.agent-rig/sessions/${SWITCHED}`;
+const requestIn = (w: World, dir: string, id: string, body: unknown) => w.files.set(`${dir}/requests/${id}.json`, JSON.stringify(body));
+
+test("after the session changes inside the window, requests come from the new session's directory and usage is written there", async ($, on) => {
+  const w = world(on);
+  await start($);
+  expect(w.files.has(`${DIR}/usage.json`)).toBe(true);
+  w.sessionId = SWITCHED;
+  requestIn(w, SWITCHED_DIR, "c1", { id: "c1", op: "compact" });
+  requestIn(w, SWITCHED_DIR, "u1", { id: "u1", op: "usage" });
+  await w.clock.advance(POLL_MS);
+  expect(w.files.has(`${SWITCHED_DIR}/usage.json`)).toBe(true);
+  expect(w.compactions.length).toBe(1);
+  expect(JSON.parse(w.files.get(`${SWITCHED_DIR}/responses/c1.json`) ?? "null")?.ok).toBe(true);
+  expect(JSON.parse(w.files.get(`${SWITCHED_DIR}/responses/u1.json`) ?? "null")?.ok).toBe(true);
+  expect(w.files.has(`${SWITCHED_DIR}/requests/c1.json`)).toBe(false);
+  // Nothing of the new session is written under the old one.
+  expect([...w.files.keys()].filter(path => path.startsWith(`${DIR}/`))).toEqual([`${DIR}/usage.json`]);
+  // A later measurement lands in the new directory too.
+  const before = w.files.get(`${SWITCHED_DIR}/usage.json`);
+  await $.session.measure({ context: { tokens: 9, window: WINDOW }, rateLimits: [{ kind: "seven_day", percentUsed: 42 }], changed: ["rateLimits"] });
+  await w.clock.settle();
+  expect(w.files.get(`${SWITCHED_DIR}/usage.json`)).not.toBe(before);
+});
+
+test("a request claimed before the session changed is still answered in the directory it came from", async ($, on) => {
+  const w = world(on);
+  on("turn.start", (_, e) => ({ turnId: e.turnId }));
+  on("turn.complete", (_, e) => ({ text: e.answer }));
+  await start($);
+  await $.turn.start({ text: "hi", turnId: "t1" });
+  request(w, "c1", { id: "c1", op: "compact" });
+  await w.clock.advance(POLL_MS);
+  expect(w.files.get(`${DIR}/claims/c1/state`)).toBe("waiting");
+  w.sessionId = SWITCHED;
+  await w.clock.advance(POLL_MS);
+  await $.turn.complete({ answer: "done", durationMs: 1, isAborted: false, turnId: "t1", reason: "answer" });
+  await w.clock.advance(POLL_MS);
+  expect(JSON.parse(w.files.get(`${DIR}/responses/c1.json`) ?? "null")?.ok).toBe(true);
+  expect(w.files.has(`${DIR}/requests/c1.json`)).toBe(false);
+  expect(w.files.has(`${SWITCHED_DIR}/responses/c1.json`)).toBe(false);
+});
+
+test("a session id that is not usable switches the window off until a usable one returns", async ($, on) => {
+  const w = world(on);
+  await start($);
+  w.sessionId = "bad id";
+  request(w, "u1", { id: "u1", op: "usage" });
+  await w.clock.advance(POLL_MS);
+  expect(response(w, "u1")).toBeUndefined();
+  w.sessionId = SESSION;
+  await w.clock.advance(POLL_MS);
+  expect(response(w, "u1")?.ok).toBe(true);
 });

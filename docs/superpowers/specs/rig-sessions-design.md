@@ -4,9 +4,16 @@ The in-window module of the `agent-rig-window` plugin (`plugins/agent-rig-window
 running Claude Code session: a snapshot of its usage, and a request queue through which rig asks the session to do
 something only the session itself can do. Everything lives under `~/.agent-rig/sessions/<session id>/`.
 
-The module learns the home directory (`HOME`, else `USERPROFILE`) and the session id from the engine's API
-(`$.env.get`, `$.session.id`). It stays off when either is missing or the id is not a safe file name
-(`[A-Za-z0-9_-]{1,64}`); it never depends on anything outside the plugin folder.
+The module learns the home directory (`HOME`, else `USERPROFILE`) from the engine's API (`$.env.get`) once, at start.
+The session id is not captured at start: the engine fires `session.start` once per process, never again on `/clear` or
+a resume inside the window, after which the process goes on under another session id. The module reads `$.session.id`
+on every poll and every snapshot, so the directory `<session id>/` always belongs to the session the window runs now.
+When the session changes, the module writes the usage snapshot in the new directory at once and serves the new
+`requests/` folder; ids seen in the old folder are dropped. A request already claimed before the change is answered in
+the directory it was claimed in, never in the new one and never silently dropped; a request left unclaimed in the old
+directory is not served (rig's wait ends with `session-timeout` or `session-ended`, as for any session with no live
+module). The module is idle only while there is no home directory or the current id is not a safe file name
+(`[A-Za-z0-9_-]{1,64}`), and resumes when a usable id returns; it never depends on anything outside the plugin folder.
 
 ## `rig session`
 
@@ -57,7 +64,8 @@ When the owner cannot be switched the launch is refused and no window opens. The
 
 ## Snapshot: `usage.json`
 
-Written once when the session starts, again on every `session.measure`, and after every completed compaction of the main
+Written once when the session starts, again on every `session.measure`, at once when the process changes its session
+(into the new session's directory), and after every completed compaction of the main
 conversation (manual, automatic, or plugin requested; not precompute, subagent compaction, or a skipped compaction). The
 window rewrites it immediately after its own compaction for a rig `compact` request, before writing the answer; other
 compactions rewrite it through the `session.compact` hook.

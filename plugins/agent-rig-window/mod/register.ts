@@ -1,5 +1,5 @@
 // The in-window module of rig (hooks.json -> modules): usage snapshots and a request queue under
-// ~/.agent-rig/sessions/<session id>/. The logic is in window.ts; here are only the engine's `$` calls.
+// ~/.agent-rig/sessions/<session id>/ (the session the process runs now). The logic is in window.ts; here are only the engine's `$` calls.
 import type { Register } from "claude-code";
 
 import { claimCommand, ensureDirCommand, ID_PATTERN, moveCommand, removeCommand, removeTreeCommand } from "./protocol";
@@ -21,9 +21,8 @@ export const register: Register = on => {
     cancelPoll?.();
     cancelPoll = undefined;
     const home = (await $.env.get("HOME")) ?? (await $.env.get("USERPROFILE"));
-    const id = await $.session.id();
-    if (home === undefined || !ID_PATTERN.test(id)) {
-      $.ui.log("agent-rig-window: no home directory or an unusable session id; the window files are off", { to: "debug" });
+    if (home === undefined) {
+      $.ui.log("agent-rig-window: no home directory; the window files are off", { to: "debug" });
       return result;
     }
     const base = home.replaceAll("\\", "/").replace(/\/$/, "");
@@ -33,7 +32,13 @@ export const register: Register = on => {
     const rawPid = (printed?.exitCode === 0 ? printed.stdout : "").trim();
     const pid = PID_PATTERN.test(rawPid) && Number.isSafeInteger(Number(rawPid)) ? Number(rawPid) : undefined;
     const run = async (argv: string[]): Promise<boolean> => (await $.process.run(argv)).exitCode === 0;
-    const w = new Window(`${base}/${ROOT_DIR}/${id}`, {
+    const w = new Window({
+      // Read on every use: the engine fires no second session.start when the process changes its session (a resume,
+      // /clear), so the id read once at start would go stale; `$.session.id()` answers the session it runs now.
+      sessionDir: async () => {
+        const id = await $.session.id();
+        return ID_PATTERN.test(id) ? `${base}/${ROOT_DIR}/${id}` : undefined;
+      },
       list: async dir => {
         try {
           return (await $.fs.list(dir)).filter(entry => entry.kind !== "dir").map(entry => entry.name);

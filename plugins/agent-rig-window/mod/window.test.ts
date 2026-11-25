@@ -15,7 +15,7 @@ type Shared = { files: Map<string, string>; dirs: Set<string>; writes: string[];
 const shared = (): Shared => ({ files: new Map(), dirs: new Set(), writes: [], states: [], now: 1_000_000 });
 
 // One process's view of the shared folder; `ran` records what this process executed.
-function process(s: Shared, ran: string[]): Deps {
+function process(s: Shared, ran: string[], dirOf: () => string = () => DIR): Deps {
   return {
     list: async dir => [...s.files.keys()].filter(path => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes("/")).map(path => path.slice(dir.length + 1)),
     read: async path => s.files.get(path),
@@ -49,6 +49,7 @@ function process(s: Shared, ran: string[]): Deps {
     },
     now: () => s.now,
     pid: PID,
+    sessionDir: async () => dirOf(),
   };
 }
 
@@ -59,8 +60,8 @@ test("one request is run once and answered once by two windows on one folder", a
   const s = shared();
   const ranA: string[] = [];
   const ranB: string[] = [];
-  const a = new Window(DIR, process(s, ranA));
-  const b = new Window(DIR, process(s, ranB));
+  const a = new Window(process(s, ranA));
+  const b = new Window(process(s, ranB));
   put(s, "c1", { id: "c1", op: "compact" });
   put(s, "r1", { id: "r1", op: "rename", args: { name: "x" } });
   put(s, "u1", { id: "u1", op: "usage" });
@@ -78,7 +79,7 @@ test("only a completed main conversation compaction rewrites usage with its live
   const s = shared();
   const deps = process(s, []);
   deps.usage = async () => ({ context: { window: 10, breakdown: { totalTokens: 13_000 } }, rateLimits: [] });
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
 
   await w.compacted("manual", undefined, false);
   const snapshot = JSON.parse(s.files.get(`${DIR}/usage.json`) ?? "null");
@@ -111,12 +112,12 @@ test("a queued post-compaction snapshot reads after an earlier measurement and s
       rateLimits: [],
     };
   };
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
   const earlier = w.measured();
   compacted = true;
   const later = w.compacted("manual", undefined, false);
 
-  await Promise.resolve();
+  await flush();
   expect(reads).toBe(1);
   release?.();
   await Promise.all([earlier, later]);
@@ -140,7 +141,7 @@ test("a compact request rewrites usage after compaction and before its response,
     compacted = true;
     return { tokensBefore: 20_000, tokensAfter: 13_000 };
   };
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
   put(s, "c1", { id: "c1", op: "compact" });
   await w.poll();
   await flush();
@@ -154,7 +155,7 @@ test("a compact request rewrites usage after compaction and before its response,
   const skipped = shared();
   const skippedDeps = process(skipped, []);
   skippedDeps.compact = async () => ({ skip: "vetoed" });
-  const skippedWindow = new Window(DIR, skippedDeps);
+  const skippedWindow = new Window(skippedDeps);
   put(skipped, "c2", { id: "c2", op: "compact" });
   await skippedWindow.poll();
   await flush();
@@ -164,8 +165,8 @@ test("a compact request rewrites usage after compaction and before its response,
 
 test("a claimed request records the claimant pid, and a window forgets ids answered by the other", async () => {
   const s = shared();
-  const a = new Window(DIR, process(s, []));
-  const b = new Window(DIR, process(s, []));
+  const a = new Window(process(s, []));
+  const b = new Window(process(s, []));
   a.turn(true);
   b.turn(true);
   put(s, "c1", { id: "c1", op: "compact" });
@@ -192,7 +193,7 @@ test("a request answered and removed before the late window claims it is not run
     s.files.delete(`${DIR}/requests/c1.json`);
     return names;
   };
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
   await w.poll();
   expect(ran).toEqual([]);
   expect(s.dirs.has(`${DIR}/claims/c1`)).toBe(false);
@@ -206,7 +207,7 @@ const flush = async () => {
 
 test("a request during a turn writes waiting, then running once the turn ends", async () => {
   const s = shared();
-  const w = new Window(DIR, process(s, []));
+  const w = new Window(process(s, []));
   w.turn(true);
   put(s, "c1", { id: "c1", op: "compact" });
   await w.poll();
@@ -220,7 +221,7 @@ test("a request during a turn writes waiting, then running once the turn ends", 
 
 test("a request with no turn running writes only running, and immediate ops write nothing", async () => {
   const s = shared();
-  const w = new Window(DIR, process(s, []));
+  const w = new Window(process(s, []));
   put(s, "c1", { id: "c1", op: "compact" });
   put(s, "u1", { id: "u1", op: "usage" });
   put(s, "m1", { id: "m1", op: "mode", args: { mode: "plan" } });
@@ -240,7 +241,7 @@ test("a second request queued behind a running first writes waiting, then runnin
     await gate;
     return { tokensBefore: 2, tokensAfter: 1 };
   };
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
   put(s, "c1", { id: "c1", op: "compact" });
   put(s, "r1", { id: "r1", op: "rename", args: { name: "x" } });
   await w.poll();
@@ -259,7 +260,7 @@ test("a rejected compaction goes back to waiting and is not rewritten while it s
     if (rejects-- > 0) throw new Error("a turn is running");
     return { tokensBefore: 2, tokensAfter: 1 };
   };
-  const w = new Window(DIR, deps);
+  const w = new Window(deps);
   put(s, "c1", { id: "c1", op: "compact" });
   await w.poll();
   await flush();
@@ -267,4 +268,33 @@ test("a rejected compaction goes back to waiting and is not rewritten while it s
   await w.poll();
   await flush();
   expect(s.states).toEqual(["c1:running", "c1:waiting", "c1:running"]);
+});
+
+test("when the session changes, a claimed request is answered in its own directory, an unclaimed one of the old session is left, and the new directory is served", async () => {
+  const OTHER = "/home/tester/.agent-rig/sessions/sess-2";
+  const s = shared();
+  let current = DIR;
+  const deps = process(s, [], () => current);
+  let rejects = 1;
+  deps.compact = async () => {
+    if (rejects-- > 0) throw new Error("a turn is running");
+    return { tokensBefore: 2, tokensAfter: 1 };
+  };
+  const w = new Window(deps);
+  await w.measured();
+  put(s, "c1", { id: "c1", op: "compact" });
+  await w.poll();
+  await flush();
+  // c1 is claimed and waits for a retry; a request left unclaimed in the old directory after the switch is not served.
+  current = OTHER;
+  s.files.set(`${DIR}/requests/late.json`, JSON.stringify({ id: "late", op: "usage" }));
+  s.files.set(`${OTHER}/requests/n1.json`, JSON.stringify({ id: "n1", op: "usage" }));
+  await w.poll();
+  await flush();
+  expect(s.files.has(`${OTHER}/usage.json`)).toBe(true);
+  expect(s.files.has(`${OTHER}/responses/n1.json`)).toBe(true);
+  expect(s.files.has(`${DIR}/responses/late.json`)).toBe(false);
+  expect(s.files.has(`${DIR}/responses/c1.json`)).toBe(true);
+  expect(s.files.has(`${OTHER}/responses/c1.json`)).toBe(false);
+  expect(s.files.has(`${DIR}/requests/c1.json`)).toBe(false);
 });

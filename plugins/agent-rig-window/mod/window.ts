@@ -17,6 +17,9 @@ const MODE_UNAVAILABLE = "the permission mode is not exposed by the engine API";
 export type Compaction = { skip?: string; tokensBefore?: number; tokensAfter?: number };
 
 export type Deps = {
+  // The directory of the session the window runs now (`<home>/.agent-rig/sessions/<id>`), read when it is used:
+  // a process can change its session (resume, /clear) after start. undefined when there is no usable session id.
+  sessionDir(): Promise<string | undefined>;
   // File names in the directory; empty when it is missing.
   list(dir: string): Promise<string[]>;
   // The file's text; undefined when it cannot be read.
@@ -40,13 +43,15 @@ export type Deps = {
   readonly pid: number | undefined;
 };
 
-type Pending = { request: Request; failed: number };
+// A claimed request keeps the directory it was claimed in: it is answered there even if the session changed since.
+type Pending = { request: Request; dir: string; failed: number };
 
 export class Window {
   // Ids picked up and not yet answered and removed: a request is handled once.
   private seen = new Set<string>();
-  // Ids this window claimed and has not answered: they are not forgotten while the request file stays.
-  private claimed = new Set<string>();
+  // Ids this window claimed and has not answered, with the session directory each was claimed in: they are not
+  // forgotten while the request file stays.
+  private claimed = new Map<string, string>();
   private pending: Pending[] = [];
   // The last state written for each claimed id, so a state is written only when it changes.
   private states = new Map<string, string>();
@@ -55,17 +60,19 @@ export class Window {
   private turnRuns = false;
   private rateLimits: Usage["rateLimits"] | undefined;
   private snapshotWrites: Promise<void> = Promise.resolve();
+  // The session directory the window serves now; follows deps.sessionDir() (see sync).
+  private dir: string | undefined;
+  // Whether sync has read the session once: the first read is not a change of session.
+  private known = false;
 
-  constructor(
-    private dir: string,
-    private deps: Deps,
-  ) {}
+  constructor(private deps: Deps) {}
 
   // Called at session start and from the session.measure hook; `rateLimits` is the measure event's reading.
   measured(rateLimits?: Usage["rateLimits"]): Promise<void> {
     if (rateLimits !== undefined) this.rateLimits = rateLimits;
     this.snapshotWrites = this.snapshotWrites.then(async () => {
-      await this.deps.writeAtomic(`${this.dir}/${USAGE_FILE}`, JSON.stringify(await this.snapshot()));
+      const dir = await this.sync();
+      if (dir !== undefined) await this.deps.writeAtomic(`${dir}/${USAGE_FILE}`, JSON.stringify(await this.snapshot()));
     }).catch(() => {
       // The files are not writable now: the next measurement tries again.
     });
@@ -89,7 +96,14 @@ export class Window {
     if (this.polling) return;
     this.polling = true;
     try {
-      const names = await this.deps.list(`${this.dir}/${REQUESTS_DIR}`);
+      const known = this.known;
+      const before = this.dir;
+      const dir = await this.sync();
+      // The session changed: its usage is written in the new directory at once, not at the next measurement.
+      // (The first directory the window learns is not a change: measured() at start writes it.)
+      if (known && dir !== before) await this.measured();
+      if (dir === undefined) return;
+      const names = await this.deps.list(`${dir}/${REQUESTS_DIR}`);
       const listed = new Set<string>();
       for (const name of [...names].sort()) {
         const id = idOfFile(name);
@@ -97,7 +111,7 @@ export class Window {
         listed.add(id);
         if (this.seen.has(id)) continue;
         this.seen.add(id);
-        await this.intake(id);
+        await this.intake(dir, id);
       }
       // An id whose request is gone (another window answered it) is forgotten.
       for (const id of this.seen) if (!listed.has(id) && !this.claimed.has(id)) this.seen.delete(id);
@@ -106,6 +120,19 @@ export class Window {
     } finally {
       this.polling = false;
     }
+  }
+
+  // Moves the window to the session the process runs now. What belonged to the previous session (the ids seen in
+  // its request folder) is dropped; a request already claimed stays in the work lists with its own directory and is
+  // answered there. Process-wide state (a running turn, the account's rate limits) is not the session's and stays.
+  private async sync(): Promise<string | undefined> {
+    const dir = await this.deps.sessionDir();
+    this.known = true;
+    if (dir !== this.dir) {
+      this.dir = dir;
+      this.seen = new Set(this.claimed.keys());
+    }
+    return dir;
   }
 
   private async snapshot(): Promise<UsageSnapshot> {
@@ -121,22 +148,22 @@ export class Window {
 
   // Records which process holds the claim: rig tells a dead claimant from the identity of this pid. Without a known
   // pid nothing is written, and rig waits for the request's own timeout.
-  private async recordPid(id: string): Promise<void> {
+  private async recordPid(dir: string, id: string): Promise<void> {
     const pid = this.deps.pid;
     if (pid === undefined) return;
     try {
-      await this.deps.writeAtomic(`${this.dir}/${CLAIMS_DIR}/${id}/${CLAIM_PID_FILE}`, String(pid));
+      await this.deps.writeAtomic(`${dir}/${CLAIMS_DIR}/${id}/${CLAIM_PID_FILE}`, String(pid));
     } catch {
       // The claim stays without a pid: rig waits for the request's own timeout.
     }
   }
 
   // Writes claims/<id>/state when the state changes: rig reports progress from it (waiting for the turn, running).
-  private async recordState(id: string, state: string): Promise<void> {
+  private async recordState(dir: string, id: string, state: string): Promise<void> {
     if (this.states.get(id) === state) return;
     this.states.set(id, state);
     try {
-      await this.deps.writeAtomic(`${this.dir}/${CLAIMS_DIR}/${id}/${CLAIM_STATE_FILE}`, state);
+      await this.deps.writeAtomic(`${dir}/${CLAIMS_DIR}/${id}/${CLAIM_STATE_FILE}`, state);
     } catch {
       // Like the pid file, the state is advisory: without it rig reports no progress, and the request is unaffected.
     }
@@ -144,8 +171,8 @@ export class Window {
 
   // One request, one executor: the window that makes the claim directory runs and answers the request; another
   // process with the same session id (a second window, `claude -p --resume`) finds the claim taken and skips it.
-  private async intake(id: string): Promise<void> {
-    const claimDir = `${this.dir}/${CLAIMS_DIR}/${id}`;
+  private async intake(dir: string, id: string): Promise<void> {
+    const claimDir = `${dir}/${CLAIMS_DIR}/${id}`;
     try {
       if (!(await this.deps.claim(claimDir))) return;
     } catch {
@@ -153,32 +180,32 @@ export class Window {
       this.seen.delete(id);
       return;
     }
-    await this.recordPid(id);
+    await this.recordPid(dir, id);
     // Read after the claim: a request already answered and removed (rig then removes its claim) is not run again.
-    const text = await this.deps.read(`${this.dir}/${REQUESTS_DIR}/${id}.json`);
+    const text = await this.deps.read(`${dir}/${REQUESTS_DIR}/${id}.json`);
     if (text === undefined) {
       await this.deps.removeTree(claimDir).catch(() => undefined);
       this.seen.delete(id);
       return;
     }
-    this.claimed.add(id);
+    this.claimed.set(id, dir);
     const parsed = parseRequest(id, text);
-    if (!parsed.ok) return this.answer({ id, ok: false, error: parsed.error });
+    if (!parsed.ok) return this.answer(dir, { id, ok: false, error: parsed.error });
     const request = parsed.value;
     // The read-only ops answer at once; compact, rename and autocompact wait for the turn to end.
     if (request.op === "usage") {
       try {
-        return await this.answer({ id, ok: true, result: await this.snapshot() });
+        return await this.answer(dir, { id, ok: true, result: await this.snapshot() });
       } catch (e) {
-        return this.answer({ id, ok: false, error: errorText(e) });
+        return this.answer(dir, { id, ok: false, error: errorText(e) });
       }
     }
-    if (request.op === "mode") return this.answer({ id, ok: false, error: MODE_UNAVAILABLE });
+    if (request.op === "mode") return this.answer(dir, { id, ok: false, error: MODE_UNAVAILABLE });
     // A request that cannot start in this pass (a turn runs, or another request is ahead of it) is marked waiting; one
     // that work() starts at once is never marked.
     const blocked = this.turnRuns || this.pending.length > 0;
-    this.pending.push({ request, failed: 0 });
-    if (blocked) await this.recordState(id, CLAIM_STATE_WAITING);
+    this.pending.push({ request, dir, failed: 0 });
+    if (blocked) await this.recordState(dir, id, CLAIM_STATE_WAITING);
     void this.work();
   }
 
@@ -188,15 +215,15 @@ export class Window {
     this.working = true;
     try {
       for (let head = this.pending[0]; head && !this.turnRuns; head = this.pending[0]) {
-        await this.recordState(head.request.id, CLAIM_STATE_RUNNING);
+        await this.recordState(head.dir, head.request.id, CLAIM_STATE_RUNNING);
         const outcome = await this.run(head);
         if (outcome === undefined) {
           // Rejected (a turn runs or just started): it waits for a later try.
-          await this.recordState(head.request.id, CLAIM_STATE_WAITING);
+          await this.recordState(head.dir, head.request.id, CLAIM_STATE_WAITING);
           return;
         }
         this.pending.shift();
-        await this.answer(outcome);
+        await this.answer(head.dir, outcome);
       }
     } finally {
       this.working = false;
@@ -233,10 +260,10 @@ export class Window {
   }
 
   // Writes the response, then removes the request; an id whose request could not be removed stays seen.
-  private async answer(response: Response): Promise<void> {
+  private async answer(dir: string, response: Response): Promise<void> {
     try {
-      await this.deps.writeAtomic(`${this.dir}/${RESPONSES_DIR}/${response.id}${RESPONSE_SUFFIX}`, responseText(response));
-      await this.deps.remove(`${this.dir}/${REQUESTS_DIR}/${response.id}.json`);
+      await this.deps.writeAtomic(`${dir}/${RESPONSES_DIR}/${response.id}${RESPONSE_SUFFIX}`, responseText(response));
+      await this.deps.remove(`${dir}/${REQUESTS_DIR}/${response.id}.json`);
       this.seen.delete(response.id);
       this.claimed.delete(response.id);
       this.states.delete(response.id);
