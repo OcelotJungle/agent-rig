@@ -219,6 +219,13 @@ export class Window {
     try {
       for (let head = this.pending[0]; head && !this.turnRuns; head = this.pending[0]) {
         await this.recordState(head.dir, head.request.id, CLAIM_STATE_RUNNING);
+        // rig's deadline removes the request file first and reads this state after. So after `running` is written the
+        // request is checked again: if it is gone, rig has withdrawn it (and said "not run"), and it is dropped here;
+        // if it is still there, rig reads `running` and says "may still complete". The two never disagree.
+        if ((await this.deps.read(`${head.dir}/${REQUESTS_DIR}/${head.request.id}.json`)) === undefined) {
+          await this.drop(head);
+          continue;
+        }
         const outcome = await this.run(head);
         if (outcome === undefined) {
           // Rejected (a turn runs or just started): it waits for a later try.
@@ -231,6 +238,17 @@ export class Window {
     } finally {
       this.working = false;
     }
+  }
+
+  // A request its sender withdrew: nothing runs and nothing is answered, and every trace of it (the lists, the claim
+  // directory, the state just written) goes.
+  private async drop(head: Pending): Promise<void> {
+    const { id } = head.request;
+    this.pending.shift();
+    this.seen.delete(id);
+    this.claimed.delete(id);
+    this.states.delete(id);
+    await this.deps.removeTree(`${head.dir}/${CLAIMS_DIR}/${id}`).catch(() => undefined);
   }
 
   // undefined: not done, tried again at the next poll.

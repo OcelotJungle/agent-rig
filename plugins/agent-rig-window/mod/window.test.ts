@@ -325,6 +325,30 @@ test("a prompt request waits for the turn to end, then submits", async () => {
   expect(JSON.parse(s.files.get(`${DIR}/responses/p1.json`) ?? "null").ok).toBe(true);
 });
 
+test("a claimed prompt whose sender withdrew it while a turn ran is never submitted, never answered, and its claim is removed", async () => {
+  const s = shared();
+  const ran: string[] = [];
+  const w = new Window(process(s, ran));
+  w.turn(true);
+  put(s, "p1", { id: "p1", op: "prompt", args: { text: "go on" } });
+  await w.poll();
+  await flush();
+  expect(s.states).toEqual(["p1:waiting"]);
+  // rig's deadline withdraws the request and removes its claim; the module still holds the id in its queue.
+  s.files.delete(`${DIR}/requests/p1.json`);
+  w.turn(false);
+  await flush();
+  expect(ran).toEqual([]);
+  expect(answers(s)).toEqual([]);
+  expect(s.dirs.has(`${DIR}/claims/p1`)).toBe(false);
+  expect([...s.files.keys()].filter(path => path.includes("/claims/p1"))).toEqual([]);
+  // The next request is served: a dropped head does not block the queue.
+  put(s, "p2", { id: "p2", op: "prompt", args: { text: "next" } });
+  await w.poll();
+  await flush();
+  expect(ran).toEqual(["prompt:next"]);
+});
+
 test("a prompt a hook refused, or a submit that fails, is an error answer and is not submitted again", async () => {
   const s = shared();
   const deps = process(s, []);

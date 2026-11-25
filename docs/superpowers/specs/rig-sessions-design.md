@@ -128,6 +128,12 @@ request cannot start now (a turn runs, another request is ahead of it, or a comp
 rig removes the request and then the claim directory, in that order: a module that listed the request earlier and claims
 late then finds the request gone.
 
+The deadline decides one way for both sides: rig first withdraws the request (removes the file) and only then reads the
+claim state, `running` giving `session-timeout-running` and anything else `session-timeout`. The module, right after it
+writes `running` for a claimed request (including one that waited behind a turn), reads the request file again; a request
+that is gone was withdrawn, so the module does not run it, writes no answer and removes its claim directory. A request
+that rig reports as not run is therefore never run later, and one reported as possibly run was started.
+
 | Op | Args | Result |
 | --- | --- | --- |
 | `usage` | none | a fresh snapshot, same fields as `usage.json` |

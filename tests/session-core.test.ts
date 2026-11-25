@@ -240,6 +240,33 @@ describe("session core", () => {
 		const answer = await requestSession(w.h.runtime, record, "compact", {}, SESSION_POLL_MS * 3);
 		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout");
 	});
+	// At the deadline rig withdraws the request before it reads the claim state, so a module that re-reads the request
+	// after writing `running` and a rig that reads the state never disagree (see "Request queue" in the spec).
+	test("the deadline removes the request file before it reads the claim state", async () => {
+		const w = claimWithState("waiting");
+		const order: string[] = [];
+		const requestPath = `${ROOT}/abc/requests/event-1.json`;
+		const readText = w.h.fs.readText.bind(w.h.fs);
+		const remove = w.h.fs.remove.bind(w.h.fs);
+		w.h.fs.readText = async (path) => { if (path === `${w.claim}/state`) order.push("read-state"); return readText(path); };
+		w.h.fs.remove = async (path) => { if (path === requestPath) order.push("remove-request"); return remove(path); };
+		const answer = await requestSession(w.h.runtime, record, "prompt", { text: "go on" }, SESSION_POLL_MS * 3);
+		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout");
+		expect(order.indexOf("remove-request")).toBeGreaterThanOrEqual(0);
+		expect(order.indexOf("remove-request")).toBeLessThan(order.lastIndexOf("read-state"));
+		expect(w.h.fs.files.has(requestPath)).toBe(false);
+	});
+	test("a module that writes running after the withdrawal and before rig's state read makes the answer session-timeout-running", async () => {
+		const w = claimWorld(() => null, false);
+		const requestPath = `${ROOT}/abc/requests/event-1.json`;
+		const remove = w.h.fs.remove.bind(w.h.fs);
+		w.h.fs.remove = async (path) => {
+			await remove(path);
+			if (path === requestPath) w.h.fs.seed(`${w.claim}/state`, "running");
+		};
+		const answer = await requestSession(w.h.runtime, record, "prompt", { text: "go on" }, SESSION_POLL_MS * 3);
+		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout-running");
+	});
 	describe("the module of this process is up (usage snapshot written at or after a moment)", () => {
 		const SINCE = 5000;
 		const usagePath = `${ROOT}/abc/usage.json`;

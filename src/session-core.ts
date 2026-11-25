@@ -271,9 +271,12 @@ export const requestSession = async (r: RuntimePorts, session: SessionRecord, op
 		let malformed = false;
 		// The last progress code sent: each is sent when the module's observed state changes to it, never twice in a row.
 		let lastCode: string | null = null;
+		const readState = async (): Promise<string | null> => {
+			try { return (await r.fs.readText(joinPath(claimDir, CLAIM_STATE_FILE))).trim(); } catch (e) { if (!missing(e)) throw e; }
+			return null;
+		};
 		for (;;) {
-			let stateText: string | null = null;
-			try { stateText = (await r.fs.readText(joinPath(claimDir, CLAIM_STATE_FILE))).trim(); } catch (e) { if (!missing(e)) throw e; }
+			const stateText = await readState();
 			if (stateText === CLAIM_STATE_WAITING && lastCode !== PROGRESS_CODE_SESSION_WAITING) { progress({ code: PROGRESS_CODE_SESSION_WAITING }); lastCode = PROGRESS_CODE_SESSION_WAITING; }
 			if (stateText === CLAIM_STATE_RUNNING && lastCode === PROGRESS_CODE_SESSION_WAITING) { progress({ code: PROGRESS_CODE_SESSION_RUNNING }); lastCode = PROGRESS_CODE_SESSION_RUNNING; }
 			let text: string | null = null;
@@ -321,8 +324,14 @@ export const requestSession = async (r: RuntimePorts, session: SessionRecord, op
 				if (now === null || now !== claimant.created) return apiFail(SESSION_CLAIM_LOST, m.claimLost());
 			}
 			const remaining = deadline - r.clock.now().getTime();
-			// A request the module began (state `running`) may still complete: that is told apart from one it never started.
-			if (remaining <= 0) return stateText === CLAIM_STATE_RUNNING ? apiFail(SESSION_TIMEOUT_RUNNING, m.timeoutRunning()) : apiFail(SESSION_TIMEOUT, m.timeout());
+			if (remaining <= 0) {
+				// The deadline withdraws the request first and reads the claim state after. The module writes `running` and then
+				// re-reads the request, dropping it when it is gone. So either `running` was written before this read (we say the
+				// request may still complete, and it may), or the withdrawal came before the module's re-read (we say it did not
+				// run, and the module drops it). The two sides never disagree about one request.
+				try { await r.fs.remove(path); } catch (e) { if (!missing(e)) throw e; }
+				return await readState() === CLAIM_STATE_RUNNING ? apiFail(SESSION_TIMEOUT_RUNNING, m.timeoutRunning()) : apiFail(SESSION_TIMEOUT, m.timeout());
+			}
 			await r.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
 		}
 	} catch (e) { return apiFail(SESSION_IO, m.io(errorText(e))); }
