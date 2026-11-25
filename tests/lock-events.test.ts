@@ -43,6 +43,11 @@ class MemoryFileSystem implements FileSystem {
 		this.files.set(path, value);
 		return ok(true);
 	}
+	async makeDirectoryExclusive(path: string): Promise<Result<boolean>> {
+		if (this.directories.has(path)) return ok(false);
+		this.directories.add(path);
+		return ok(true);
+	}
 	async resolveTarget(path: string): Promise<string> { return path; }
 	async modeOf(): Promise<number | null> { return null; }
 	async writeDurable(path: string, value: string): Promise<void> { this.files.set(path, value); }

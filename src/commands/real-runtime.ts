@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { createNodeAssetFileSystem } from "../assets/node-asset-file-system.js";
 import { atomicWrite, toSlashPath } from "../file-system.js";
 import { DEFAULT_LANGUAGE, messagesFor } from "../messages.js";
-import { modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
+import { makeDirectoryExclusive, modeOf, resolveTarget, writeDurable, writeExclusiveAtomic } from "../node-file-operations.js";
 import { err, errorText, ok } from "../result.js";
 import { readStoredLanguage } from "../state.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
@@ -267,6 +267,7 @@ export const createFileSystem = (messages: Messages, hostKind: HostPlatform = ho
 	ensureDirectory: async (path) => { await fs.mkdir(path, { recursive: true }); },
 	removeDirectoryTree: async (path) => { await fs.rm(path, { recursive: true, force: true }); },
 	writeExclusive: (path, value) => writeExclusiveAtomic(path, value, hostKind, messages),
+	makeDirectoryExclusive: (path) => makeDirectoryExclusive(path, messages),
 	resolveTarget,
 	modeOf,
 	writeDurable: (path, value, mode) => writeDurable(path, value, mode, hostKind),

@@ -161,6 +161,13 @@ export class MemoryFileSystem implements FileSystem {
 		return ok(true);
 	}
 
+	async makeDirectoryExclusive(path: string): Promise<Result<boolean>> {
+		if (this.directories.has(path) || this.files.has(path)) return ok(false);
+		this.record(`mkdir-exclusive:${path}`);
+		this.directories.add(path);
+		return ok(true);
+	}
+
 	// The real file of a path: a symlinked directory on the way (`symlinks`) and a symlinked file (`links`) are followed.
 	async resolveTarget(path: string): Promise<string> {
 		const real = this.resolveSymlinks(path);

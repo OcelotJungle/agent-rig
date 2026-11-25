@@ -27,6 +27,8 @@ export type FileSystem = {
 	removeDirectoryTree(path: string): Promise<void>;
 	// Creates the file already complete, or reports false when the name exists; never exposes a partial file.
 	writeExclusive(path: string, value: string): Promise<Result<boolean>>;
+	// Creates the directory (its parent must exist) and reports true, or reports false when the name exists: the one atomic step a directory mutex needs.
+	makeDirectoryExclusive(path: string): Promise<Result<boolean>>;
 	// The real file behind a path: symlinks in the file itself or in any directory on its path are followed. A write
 	// replaces this file; two paths name one file when they resolve to the same one. A path that does not exist keeps its text.
 	resolveTarget(path: string): Promise<string>;

@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveLaunch } from "../src/commands/session-run.js";
 import { ok } from "../src/result.js";
 import { createMemoryRuntime } from "./fakes/memory-runtime.js";
-import { ACCOUNT_ONE, answerOwnerQueries } from "./fakes/session-owner-fixture.js";
+import { ACCOUNT_ONE, answerAccountLookup, answerOwnerQueries } from "./fakes/session-owner-fixture.js";
 
 const ID = "11111111-1111-1111-1111-111111111111";
 const ROOT = "/home/test/.agent-rig";
@@ -40,8 +40,7 @@ describe("cswap lookup of a launch", () => {
 	});
 	test("one lookup serves the account decision and the launch", async () => {
 		const h = windows("C:/bin", ["C:/bin/cswap.cmd"]);
-		h.runtime.process.run = async () => ok({ stdout: ACCOUNT_LOOKUP, stderr: "", exitCode: 0 });
-		answerOwnerQueries(h, { 12: ACCOUNT_ONE });
+		answerAccountLookup(h, ACCOUNT_LOOKUP);
 		const paths = statPaths(h);
 		const result = await resolveLaunch(h.runtime, session, null, null);
 		expect(result.ok && result.value.account).toBe("12");

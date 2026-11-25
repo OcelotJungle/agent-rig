@@ -155,6 +155,22 @@ export const ownerIdsOf = async (runtime: RuntimePorts, state: RigState, account
 	return ok({ accountUuid, organizationUuid });
 };
 
+// Where Claude Code keeps the settings of one cswap account, from the helper's `config-dir --account N` query: the
+// directory, its `.claude.json`, whether that is the default login's own (`isDefault`) and whether the file exists.
+// The answer is `{dir, file, isDefault, exists}` or `{error: text}`.
+export type AccountConfigDir = { dir: string; file: string; isDefault: boolean; exists: boolean };
+
+export const configDirOf = async (runtime: RuntimePorts, state: RigState, account: number): Promise<Result<AccountConfigDir>> => {
+	const messages = messagesFor(runtime.language);
+	const answer = await runAllowlistTool(runtime, state, messages, ["config-dir", "--account", String(account)]);
+	if (!answer.ok) return answer;
+	const failed = itemError(answer.value, messages);
+	if (failed !== null) return err(failed);
+	const { dir, file, isDefault, exists } = answer.value;
+	if (typeof dir !== "string" || dir === "" || typeof file !== "string" || file === "" || typeof isDefault !== "boolean" || typeof exists !== "boolean") return err(messages.info.allowlistBadConfigDir());
+	return ok({ dir, file, isDefault, exists });
+};
+
 const categoryShown = (state: RigState, category: "codex" | "volunteers", answer: Result<Record<string, unknown>>, messages: Messages): Result<boolean> => {
 	if (state.features[category] !== true) return ok(false);
 	if (!answer.ok) return answer;

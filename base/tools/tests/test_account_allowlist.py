@@ -443,5 +443,145 @@ class OwnerCliTest(CliRunner):
         self.assertEqual(proc.stdout, "")
 
 
+class ConfigDirCliTest(CliRunner):
+    """`config-dir --account <N>` prints {"dir", "file", "isDefault", "exists"}: where `cswap run N` keeps the config
+    file that holds the per-folder consent. The default login's config when N is that login (email + organization
+    compared, as cswap's `run` does), else the account's side profile `sessions/<N>-<slug(email)>`."""
+
+    def config_dir(self, home, account, own_config_dir=None):
+        proc = self.run_cli(home, ["config-dir", "--account", account], own_config_dir)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(len(proc.stdout.splitlines()), 1, proc.stdout)
+        return json.loads(proc.stdout)
+
+    def sequence_with(self, home, accounts, active=1):
+        home.sequence(json.dumps({"activeAccountNumber": active, "accounts": accounts}))
+
+    def default_login(self, home, email, org):
+        (home.root / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": email, "organizationUuid": org}}), encoding="utf-8")
+
+    def profile(self, home, name, with_file=True):
+        directory = home.root / ".claude-swap-backup" / "sessions" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        if with_file:
+            (directory / ".claude.json").write_text("{}", encoding="utf-8")
+        return directory
+
+    def test_other_account_than_the_default_login_uses_its_side_profile(self):
+        home = Home(self)
+        self.sequence_with(home, {"1": {"email": "one@example.test", "organizationUuid": "org-one"},
+                                  "3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        self.default_login(home, "one@example.test", "org-one")
+        directory = self.profile(home, "3-three_example.test")
+        result = self.config_dir(home, "3")
+        self.assertEqual(result, {"dir": directory.as_posix(), "file": (directory / ".claude.json").as_posix(),
+                                  "isDefault": False, "exists": True})
+
+    def test_the_default_login_uses_the_default_config_whatever_the_active_number_says(self):
+        home = Home(self)
+        # activeAccountNumber says 1, but the default config belongs to account 3: the config decides.
+        self.sequence_with(home, {"1": {"email": "one@example.test", "organizationUuid": "org-one"},
+                                  "3": {"email": "three@example.test", "organizationUuid": "org-three"}}, active=1)
+        self.default_login(home, "three@example.test", "org-three")
+        result = self.config_dir(home, "3")
+        self.assertEqual(result["isDefault"], True)
+        self.assertEqual(result["dir"], home.root.as_posix())
+        self.assertEqual(result["file"], (home.root / ".claude.json").as_posix())
+        self.assertEqual(result["exists"], True)
+        self.assertEqual(self.config_dir(home, "1")["isDefault"], False)
+
+    def test_same_email_in_another_organization_is_not_the_default_login(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        self.default_login(home, "three@example.test", "org-other")
+        self.assertEqual(self.config_dir(home, "3")["isDefault"], False)
+
+    def test_missing_organization_on_both_sides_is_the_same_empty_organization(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test"}})
+        (home.root / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": "three@example.test", "organizationUuid": None}}), encoding="utf-8")
+        self.assertEqual(self.config_dir(home, "3")["isDefault"], True)
+
+    def test_the_process_own_config_dir_is_ignored(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        self.default_login(home, "three@example.test", "org-three")
+        result = self.config_dir(home, "3", own_config_dir=str(home.root / "elsewhere"))
+        self.assertEqual(result["isDefault"], True)
+
+    def test_missing_profile_is_reported_not_created(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        result = self.config_dir(home, "3")
+        self.assertEqual(result["isDefault"], False)
+        self.assertEqual(result["exists"], False)
+        self.assertFalse((home.root / ".claude-swap-backup" / "sessions").exists())
+
+    def test_profile_dir_without_its_config_file_does_not_exist(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        self.profile(home, "3-three_example.test", with_file=False)
+        self.assertEqual(self.config_dir(home, "3")["exists"], False)
+
+    def test_slug_keeps_ascii_alphanumerics_dot_underscore_dash_and_replaces_the_rest(self):
+        # cswap's slugify_email (claude_swap/session.py): NFC, then every char outside [A-Za-z0-9._-] becomes "_".
+        self.assertEqual(al.slugify_email("a.b_c-d+tag@Ex-ample.test"), "a.b_c-d_tag_Ex-ample.test")
+        self.assertEqual(al.slugify_email("user name@exämple.test"), "user_name_ex_mple.test")
+        # a decomposed "e" + combining accent is composed first (NFC): one character, one underscore.
+        self.assertEqual(al.slugify_email("é@x.test"), "__x.test")
+        self.assertEqual(al.slugify_email("١@x.test"), "__x.test")
+
+    def test_slug_of_the_email_names_the_profile_dir(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "a+b@example.test", "organizationUuid": "org-three"}})
+        directory = self.profile(home, "3-a_b_example.test")
+        result = self.config_dir(home, "3")
+        self.assertEqual(result["dir"], directory.as_posix())
+        self.assertEqual(result["exists"], True)
+
+    def test_leading_zeros_name_the_same_account(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        self.assertTrue(self.config_dir(home, "03")["dir"].endswith("/3-three_example.test"))
+
+    def test_legacy_default_config_file_is_the_default_config(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        legacy = home.root / ".claude" / ".config.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(json.dumps({"oauthAccount": {"emailAddress": "three@example.test",
+                                                       "organizationUuid": "org-three"}}), encoding="utf-8")
+        result = self.config_dir(home, "3")
+        self.assertEqual(result["isDefault"], True)
+        self.assertEqual(result["file"], legacy.as_posix())
+        self.assertEqual(result["dir"], legacy.parent.as_posix())
+
+    def test_unreadable_default_config_is_not_the_default_login(self):
+        home = Home(self)
+        self.sequence_with(home, {"3": {"email": "three@example.test", "organizationUuid": "org-three"}})
+        (home.root / ".claude.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(self.config_dir(home, "3")["isDefault"], False)
+
+    def test_unknown_account_or_missing_email_is_an_error_line(self):
+        home = Home(self)
+        result = self.config_dir(home, "3")
+        self.assertEqual(list(result), ["error"])
+        self.assertIn("sequence.json", result["error"])
+        self.sequence_with(home, {"3": {"organizationUuid": "org-three"}, "4": {"email": ""}})
+        for account in ("3", "4", "9"):
+            result = self.config_dir(home, account)
+            self.assertEqual(list(result), ["error"], account)
+            self.assertIn(account, result["error"])
+
+    def test_non_decimal_account_is_a_usage_error(self):
+        home = Home(self)
+        for bad in ("four", "-1", ""):
+            proc = self.run_cli(home, ["config-dir", "--account", bad])
+            self.assertEqual(proc.returncode, 2, bad)
+            self.assertEqual(proc.stdout, "", bad)
+
+
 if __name__ == "__main__":
     unittest.main()

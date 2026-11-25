@@ -11,12 +11,13 @@ import { joinPath } from "../file-system.js";
 import { buildLaunchCommand } from "../launch-command.js";
 import { launchPath, LAUNCH_TOKEN } from "../launch-safety.js";
 import { messagesFor } from "../messages.js";
-import { apiFail, apiOk, ERROR_CODE_USAGE, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
+import { apiFail, apiOk, ACCOUNT_CONFIG_BUSY, ACCOUNT_PROFILE_INCOMPLETE, ACCOUNT_PROFILE_MISSING, ACCOUNT_PROFILE_UNREADABLE, ERROR_CODE_USAGE, WORKSPACE_UNTRUSTED, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
 import { errorText } from "../result.js";
 import { liveProcesses, lookupSession, lookupSessionForCommand, processKey, recordedConfigDir, sessionLive, SESSION_POLL_MS } from "../session-core.js";
 import { withSessionEnding } from "../session-ending.js";
 import { describeDetail, readOwner, writeOwner } from "../session-owner.js";
 import { scanTranscriptBackwards } from "../transcript-scan.js";
+import { prepareFolderConsent } from "./account-config.js";
 import { accountOf, INFO_ERROR_STATE_UNREADABLE } from "./info.js";
 import { resolveOwnerTarget } from "./session-owner-target.js";
 import { emitRigEvent, readRigState } from "./shared.js";
@@ -38,6 +39,7 @@ const WINDOWS_PATH_SEPARATOR = ";";
 const WINDOWS_EXECUTABLE_SUFFIXES = [".exe", ".com", ".cmd", ".bat"] as const;
 // The rig event a refused launch leaves for the user, next to the failed result.
 const OWNER_SWITCH_REFUSED_EVENT = "owner-switch-refused";
+const ACCOUNT_CONSENT_REFUSED_EVENT = "account-consent-refused";
 const MODES = ["manual", "auto", "acceptEdits", "plan", "dontAsk"] as const;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -174,6 +176,27 @@ const spawnLaunch = async <D, S>(runtime: RuntimePorts, directory: string, now: 
 
 type ResolvedLaunch = { command: string[]; account: string; target: OwnerTarget };
 
+// A launch under an account starts in that account's profile, which must already hold the folder's consent: the
+// default config's consent is carried into it, and a launch for which that cannot be done is refused before any window
+// is opened, with a rig event next to the failed result.
+const carryFolderConsent = async (runtime: RuntimePorts, session: SessionRecord, account: number): Promise<ApiResult<null>> => {
+	const state = await readRigState(runtime);
+	if (!state.ok) return apiFail(INFO_ERROR_STATE_UNREADABLE, state.error);
+	const m = messagesFor(runtime.language).session;
+	// The directory was checked by prepareLaunch.
+	const outcome = await prepareFolderConsent(runtime, state.value, account, session.cwd ?? "");
+	if (outcome.ok) return apiOk(null);
+	if (outcome.reason === "account-lookup") return apiFail(LAUNCH_ACCOUNT_LOOKUP, m.launchAccountLookup(outcome.detail));
+	await emitRigEvent(runtime, ACCOUNT_CONSENT_REFUSED_EVENT, "warn", m.accountConsentRefusedEvent(session.id, account, outcome.reason));
+	switch (outcome.reason) {
+		case WORKSPACE_UNTRUSTED: return apiFail(WORKSPACE_UNTRUSTED, m.workspaceUntrusted(outcome.detail));
+		case ACCOUNT_PROFILE_MISSING: return apiFail(ACCOUNT_PROFILE_MISSING, m.accountProfileMissing(account));
+		case ACCOUNT_PROFILE_INCOMPLETE: return apiFail(ACCOUNT_PROFILE_INCOMPLETE, m.accountProfileIncomplete(account));
+		case ACCOUNT_PROFILE_UNREADABLE: return apiFail(ACCOUNT_PROFILE_UNREADABLE, m.accountProfileUnreadable(account, outcome.detail));
+		case ACCOUNT_CONFIG_BUSY: return apiFail(ACCOUNT_CONFIG_BUSY, m.accountConfigBusy(account));
+	}
+};
+
 // The whole launch, account and the account's owner ids included, resolved into a Result before any destructive step. A
 // failed account lookup matters only where cswap could use the account; without cswap the session starts as before 0.7.0,
 // without one.
@@ -192,7 +215,12 @@ export const resolveLaunch = async (runtime: RuntimePorts, session: SessionRecor
 	const command = await prepareLaunch(runtime, session, accountText, mode, cswap);
 	if (!command.ok) return command;
 	const target = await resolveOwnerTarget(runtime, cswap, accountText);
-	return target.ok ? apiOk({ command: command.value, account: accountText, target: target.value }) : target;
+	if (!target.ok) return target;
+	if (accountText !== "") {
+		const consent = await carryFolderConsent(runtime, session, Number(accountText));
+		if (!consent.ok) return consent;
+	}
+	return apiOk({ command: command.value, account: accountText, target: target.value });
 };
 
 // What the launch's guarded step does with a reading: it goes on (the owner line is appended inside the launch

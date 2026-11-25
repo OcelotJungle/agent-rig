@@ -13,7 +13,7 @@ import { apiFail, apiOk } from "../src/output.js";
 import { ok } from "../src/result.js";
 import { withSessionEnding } from "../src/session-ending.js";
 import { baseManifest, createMemoryRuntime, FAKE_OWNER_CREATED, seedFeature, seedHubManifest } from "./fakes/memory-runtime.js";
-import { ACCOUNT_ONE, answerOwnerQueries, DEFAULT_LOGIN, ownerLine, seedDefaultLogin } from "./fakes/session-owner-fixture.js";
+import { ACCOUNT_ONE, answerAccountLookup, answerOwnerQueries, DEFAULT_LOGIN, ownerLine, seedDefaultLogin } from "./fakes/session-owner-fixture.js";
 
 const ID = "11111111-1111-1111-1111-111111111111";
 const ROOT = "/home/test/.agent-rig";
@@ -591,8 +591,7 @@ describe("session run and mode", () => {
 			const h = setup();
 			seedLaunchers(h);
 			h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n${JSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
-			const owners = h.runtime.process.run.bind(h.runtime.process);
-			h.runtime.process.run = async (command, args, options) => args.includes("owner") ? owners(command, args, options) : ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}', stderr: "", exitCode: 0 });
+			answerAccountLookup(h, '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}');
 			atLaunchTransition(h, async () => { h.fs.seed("/transcript", "x\n"); });
 			const spawns = countSpawns(h);
 			expect(code(await modeCommand(h.runtime, [ID, "auto"], () => {}))).toBe(REFUSED);
@@ -635,8 +634,7 @@ describe("session run and mode", () => {
 			answerProcessTable(h);
 			h.fs.seed("/transcript", `${ownerLine(DEFAULT_LOGIN, ID)}\n${JSON.stringify({ type: "permission-mode", permissionMode: "plan" })}\n`);
 			const before = await h.fs.readText("/transcript");
-			const owners = h.runtime.process.run.bind(h.runtime.process);
-			h.runtime.process.run = async (command, args, options) => args.includes("owner") ? owners(command, args, options) : ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}', stderr: "", exitCode: 0 });
+			answerAccountLookup(h, '{"accounts":{"/cfg/1-test":{"present":true,"account":1}},"categories":{}}');
 			afterFirstLiveCheck(h, () => h.fs.seed(`${ROOT}/sessions/${ID}.json`, registeredRecord));
 			const spawns = countSpawns(h);
 			expect(code(await modeCommand(h.runtime, [ID, "auto"], () => {}))).toBe("session-running");

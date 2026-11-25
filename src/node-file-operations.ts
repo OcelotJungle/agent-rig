@@ -54,6 +54,17 @@ export const writeDurable = async (path: string, value: string, mode: number | n
 	if (mode !== null && platform === "posix") await fs.chmod(path, mode);
 };
 
+// Creates one directory (its parent must exist) and says whether this call made it: mkdir is atomic, so of several callers exactly one gets true.
+export const makeDirectoryExclusive = async (path: string, messages: Messages): Promise<Result<boolean>> => {
+	try {
+		await fs.mkdir(path);
+		return ok(true);
+	} catch (error) {
+		if (errorCode(error) === "EEXIST") return ok(false);
+		return err(messages.failure.createFailed(path, errorText(error)));
+	}
+};
+
 // The file appears under its final name already complete, or not at all: a hard link is atomic and fails if the name exists.
 export const writeExclusiveAtomic = async (path: string, value: string, platform: HostPlatform, messages: Messages): Promise<Result<boolean>> => {
 	const temporaryPath = `${path}.${randomUUID()}.tmp`;

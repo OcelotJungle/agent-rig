@@ -35,6 +35,12 @@ export const LAUNCH_ACCOUNT_LOOKUP = "launch-account-lookup";
 export const LAUNCH_FAILED = "launch-failed";
 export const LAUNCH_TIMEOUT = "launch-timeout";
 export const OWNER_SWITCH_UNAVAILABLE = "owner-switch-unavailable";
+// A launch under an account is refused before any window because the folder's consent cannot be carried into the account's profile.
+export const WORKSPACE_UNTRUSTED = "workspace-untrusted";
+export const ACCOUNT_PROFILE_MISSING = "account-profile-missing";
+export const ACCOUNT_PROFILE_INCOMPLETE = "account-profile-incomplete";
+export const ACCOUNT_PROFILE_UNREADABLE = "account-profile-unreadable";
+export const ACCOUNT_CONFIG_BUSY = "account-config-busy";
 export const SESSION_RUNNING = "session-running";
 export const EXEC_BAD_ID = "exec-bad-id";
 export const EXEC_UNKNOWN = "exec-unknown";
