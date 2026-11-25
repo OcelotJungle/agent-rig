@@ -68,10 +68,11 @@ None.
   volunteers and of important changes, a second attempt after a volunteer's failure.
 - A project outside the allowlist (`REFUSED:`) — straight to `codex`. The allowlist is in the local file
   `~/.agent-rig/volunteer-projects.json`, format `{"allowed": ["<folder>"]}`; without it every folder is refused.
-- Accounts: `start` and `reply` also refuse on a claude-swap account outside the `volunteers` list of
-  `~/.agent-rig/account-allowlist.json` (`{"codex": [1, 4], "volunteers": [1, 4]}`), through the shared
-  `base/tools/account-allowlist.py`; a `SessionStart` hook (`volunteer-run.py session-hint`) tells such a session not to
-  launch the volunteer. No file or no `volunteers` key means no restriction.
+- Project denylist: volunteers work on every account, but `start` and `reply` refuse when the session's own project
+  directory (the launcher's working directory, not a job's `cwd:`) is, or lies inside, a directory in the `volunteers`
+  list of `~/.agent-rig/project-denylist.json` (`{"codex": ["<project dir>"], "volunteers": ["<project dir>"]}`), through
+  the shared `base/tools/project-denylist.py`; a `SessionStart` hook (`volunteer-run.py session-hint`) tells such a
+  session not to launch the volunteer. No file or no `volunteers` key means no restriction.
 - A job ends as `done`, `question`, `blocked` or `malformed`. `question` — answer through `reply: <job>`; `blocked` —
   remove the `access:` or `environment:` cause, repeat the task. Environment failures require one retry; unfinished
   work alone is never a blocker. `malformed` — the same task to `codex` on `luna` (`terra` if the task is complex)

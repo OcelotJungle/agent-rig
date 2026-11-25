@@ -80,8 +80,8 @@
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-03-task-ownership-codex-on.md` | volunteers | 04.03 | claude | Windows | `volunteers` on; `codex` on | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-03-task-ownership-codex-off.md` | volunteers | 04.03 | claude | Windows | `volunteers` on; `codex` off | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-04-background.md` | volunteers | 04.04 | claude | Windows | `volunteers` on | — | — | — | — | — | — |
-| Rule | `features/volunteers/rules/claude-delegation-04-volunteers-05-allowlist-codex-on.md` | volunteers | 04.05 | claude | Windows | `volunteers` on; `codex` on | — | — | — | — | — | — |
-| Rule | `features/volunteers/rules/claude-delegation-04-volunteers-05-allowlist-codex-off.md` | volunteers | 04.05 | claude | Windows | `volunteers` on; `codex` off | — | — | — | — | — | — |
+| Rule | `features/volunteers/rules/claude-delegation-04-volunteers-05-denylist-codex-on.md` | volunteers | 04.05 | claude | Windows | `volunteers` on; `codex` on | — | — | — | — | — | — |
+| Rule | `features/volunteers/rules/claude-delegation-04-volunteers-05-denylist-codex-off.md` | volunteers | 04.05 | claude | Windows | `volunteers` on; `codex` off | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-06-failure-codex-on.md` | volunteers | 04.06 | claude | Windows | `volunteers` on; `codex` on | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-06-failure-codex-off.md` | volunteers | 04.06 | claude | Windows | `volunteers` on; `codex` off | — | — | — | — | — | — |
 | Rule | `features/volunteers/rules/claude-delegation-04-volunteers-07-commits.md` | volunteers | 04.07 | claude | Windows | `volunteers` on | — | — | — | — | — | — |

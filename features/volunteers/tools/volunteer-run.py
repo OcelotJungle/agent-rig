@@ -12,9 +12,10 @@ Commands:
   cancel <job>                         stop the worker and everything it started
   list                                 recent jobs and their states
   prompt-path --cwd DIR                a fresh prompt file name under DIR/.tmp
-  session-hint                         SessionStart hook: context for a cswap account outside the volunteers allowlist
+  session-hint                         SessionStart hook: context for a project directory in the volunteers denylist
 
-start and reply refuse on a cswap account outside "volunteers" in ~/.agent-rig/account-allowlist.json.
+start and reply refuse when the working directory is, or is inside, a directory listed under "volunteers" in
+~/.agent-rig/project-denylist.json.
 
 The model is never chosen by the caller: the supervisor takes them in order from the cache
 ~/.claude/volunteer-jobs/models.json (built by volunteer-models.py), uses one model at a time and
@@ -50,20 +51,20 @@ process_job_spec = importlib.util.spec_from_file_location(
     "process_job", Path(__file__).resolve().parents[3] / "base/tools/process-job.py")
 process_job = importlib.util.module_from_spec(process_job_spec)
 process_job_spec.loader.exec_module(process_job)
-allowlist_spec = importlib.util.spec_from_file_location(
-    "account_allowlist", Path(__file__).resolve().parents[3] / "base/tools/account-allowlist.py")
-account_allowlist = importlib.util.module_from_spec(allowlist_spec)
-allowlist_spec.loader.exec_module(account_allowlist)
+denylist_spec = importlib.util.spec_from_file_location(
+    "project_denylist", Path(__file__).resolve().parents[3] / "base/tools/project-denylist.py")
+project_denylist = importlib.util.module_from_spec(denylist_spec)
+denylist_spec.loader.exec_module(project_denylist)
 failures_spec = importlib.util.spec_from_file_location("volunteer_failures", Path(__file__).resolve().parent / "volunteer-failures.py")
 failures_module = importlib.util.module_from_spec(failures_spec)
 failures_spec.loader.exec_module(failures_module)
 is_permanent_status = failures_module.is_permanent_status
 
 HOME = Path.home()
-ALLOWLIST_CATEGORY = "volunteers"
-# SessionStart context for a session on a cswap account that the allowlist does not cover
+DENYLIST_CATEGORY = "volunteers"
+# SessionStart context for a session whose project directory the denylist covers
 SESSION_HINT = (
-    "Volunteers are disabled in this session: this cswap account is not in the volunteers account allowlist. "
+    "Volunteers are disabled in this session: this project is in the volunteers project denylist. "
     "The \"Volunteers\" section and every mention of volunteers in CLAUDE.md do not apply in this session; work "
     "as the rules describe when volunteers are off. Do not launch the `volunteer` subagent; do it silently, "
     "without telling the user."
@@ -999,11 +1000,11 @@ def spawn_supervisor(d):
 
 
 def cmd_session_hint(a):
-    account_allowlist.session_hint(ALLOWLIST_CATEGORY, SESSION_HINT, home=HOME)
+    project_denylist.session_hint(DENYLIST_CATEGORY, SESSION_HINT, project_denylist.hook_project_dir(), home=HOME)
 
 
 def cmd_start(a):
-    account_allowlist.refuse_if_blocked(ALLOWLIST_CATEGORY, home=HOME)
+    project_denylist.refuse_if_blocked(DENYLIST_CATEGORY, home=HOME)
     try:
         cwd = check_cwd(a.cwd or os.getcwd())
     except Fail as f:
@@ -1101,7 +1102,7 @@ def cmd_wait(a):
 
 
 def cmd_reply(a):
-    account_allowlist.refuse_if_blocked(ALLOWLIST_CATEGORY, home=HOME)
+    project_denylist.refuse_if_blocked(DENYLIST_CATEGORY, home=HOME)
     d = job_dir(a.job)
     st = read_json(d / "state.json") or {}
     if st.get("status") not in REPLY_STATUSES or not st.get("session_id"):

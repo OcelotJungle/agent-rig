@@ -24,7 +24,7 @@ const defaultLoginTarget = async (runtime: RuntimePorts): Promise<OwnerTarget> =
 };
 
 // The account the launch will run under, as ids. With cswap and a number the ids come from cswap's registry through the
-// allowlist helper, and a failed query fails the launch before anything is stopped; with cswap and no number the account
+// cswap-account helper, and a failed query fails the launch before anything is stopped; with cswap and no number the account
 // is picked by cswap itself, so it is unknown; without cswap it is the default login.
 export const resolveOwnerTarget = async (runtime: RuntimePorts, cswapFound: string | null, accountText: string): Promise<ApiResult<OwnerTarget>> => {
 	if (cswapFound === null) return apiOk(await defaultLoginTarget(runtime));

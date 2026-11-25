@@ -33,13 +33,13 @@ A feature is a set of rules, hooks, plugins and programs under one name. The fea
 | `reflection` | on | Linux, Windows, macOS | Reflection after Claude Code turns. |
 | `analysis-gate` | off | Linux, Windows, macOS | Requires a fresh `.tmp/analysis.md` (sections `## Unknowns` and `## Class`, valid 30 minutes) before agent launches and time estimates: Agent launches without it are blocked, and the reflection (if on) flags an estimate named without it. |
 | `subagent-tasks-guard` | on | Linux, Windows, macOS | Blocks a subagent from reporting or ending while a background task it started (Monitor, background Bash, background Agent) is still alive: the refusal names the tasks and asks to stop them with TaskStop. The main session is never guarded. |
-| `codex` | on | Linux, Windows, macOS | Delegating tasks through Codex. Which claude-swap accounts may use it is set in `~/.agent-rig/account-allowlist.json`: `{"codex": [1, 4], "volunteers": [1, 4]}` (the `volunteers` key is shared with that feature). A missing file or key means no restriction; on another account the launcher refuses `start` and `reply` and the session gets a hint not to use Codex. |
+| `codex` | on | Linux, Windows, macOS | Delegating tasks through Codex. Works on every account. Projects where it must not be used are listed in `~/.agent-rig/project-denylist.json`: `{"codex": ["<project dir>"], "volunteers": ["<project dir>"]}` (the `volunteers` key is shared with that feature). A missing file or key means no restriction; in a listed project or below it (the session's own directory, not a job's `cwd:`) the launcher refuses `start` and `reply` and the session gets a hint not to use Codex. |
 | `telegram` | on | Linux, Windows, macOS | Integration with the Telegram hub. |
 | `rtk` | on | Linux, Windows, macOS | Shortening tool output with RTK. |
 | `superpowers` | on | Linux, Windows, macOS | The Superpowers plugin. |
 | `skills` | on | Linux, Windows, macOS | Reusable Claude Code skills. |
 | `js-ts-rules` | off | Linux, Windows, macOS | JavaScript and TypeScript conventions. |
-| `volunteers` | off | Windows only | Delegating routine work to volunteer models. Allowed folders are listed in `~/.agent-rig/volunteer-projects.json`: `{"allowed": ["<folder>"]}`. Which claude-swap accounts may use volunteers is set under the `volunteers` key of `~/.agent-rig/account-allowlist.json` (`{"codex": [1, 4], "volunteers": [1, 4]}`); a missing file or key means no restriction. |
+| `volunteers` | off | Windows only | Delegating routine work to volunteer models. Allowed folders are listed in `~/.agent-rig/volunteer-projects.json`: `{"allowed": ["<folder>"]}`. Works on every account; projects where volunteers must not be used are listed under the `volunteers` key of `~/.agent-rig/project-denylist.json` (`{"codex": ["<project dir>"], "volunteers": ["<project dir>"]}`); a missing file or key means no restriction. |
 | `pwsh` | off | Windows only | PowerShell command in the Telegram hub (needs `telegram`). |
 | `cmd` | off | Windows only | Command Prompt command in the Telegram hub (needs `telegram`). |
 

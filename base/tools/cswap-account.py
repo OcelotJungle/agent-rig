@@ -1,22 +1,19 @@
-"""Per-category allowlist of claude-swap (cswap) account numbers; loaded by path by the agent run launchers.
+"""Facts about claude-swap (cswap) accounts, read from its files; used by the session launchers and the telegram hub.
 
-Config: ~/.agent-rig/account-allowlist.json, `{"codex": [1, 4], "volunteers": [1, 4]}`.
-  - no file, or a category key missing: that category is unrestricted
-  - a category list present: the session's cswap account number must be in it
-Account of the session:
-  - ~/.claude-swap-backup/sequence.json missing: no cswap, the account is unknown and nothing is restricted
+Account of a session (`batch`):
+  - ~/.claude-swap-backup/sequence.json missing: no cswap, the account is unknown
   - CLAUDE_CONFIG_DIR unset or the main ~/.claude: the main login, `activeAccountNumber` of sequence.json
   - CLAUDE_CONFIG_DIR = .../sessions/<N>-<name>: account N
-  - anything else (unreadable sequence.json, a profile dir without a number): unknown, so a restricted category fails closed
-Malformed config: every category is refused, naming the file.
+  - anything else (unreadable sequence.json, a profile dir without a number): unknown (account null)
 Query from outside (the telegram hub's /info):
-  python -I account-allowlist.py check <codex|volunteers> --config-dir <dir>
-prints {"allowed": bool, "reason": str} as one JSON line; an empty or omitted --config-dir is the main login.
+  python -I cswap-account.py batch --config-dir <dir>...
+prints {"accounts": {"<dir>": {"present": bool, "account": int|null} | {"error": str}}} as one JSON line; an empty
+--config-dir is the main login.
 Owner of a cswap account (the session launchers' owner lookup):
-  python -I account-allowlist.py owner --account <N>
+  python -I cswap-account.py owner --account <N>
 prints {"accountUuid": str, "organizationUuid": str} from accounts[N] of sequence.json, or {"error": str}; exit 0 in both cases.
 Config of a cswap account (where `cswap run N` keeps the per-folder consent of the session it starts):
-  python -I account-allowlist.py config-dir --account <N>
+  python -I cswap-account.py config-dir --account <N>
 prints {"dir": str, "file": str, "isDefault": bool, "exists": bool} (forward slashes), or {"error": str}; exit 0 in both
 cases. Mirrors cswap's `run` (claude_swap/session.py): with no CLAUDE_CONFIG_DIR, an account whose email and organization
 equal the default config's oauthAccount runs on the default config (~/.claude.json, or the legacy ~/.claude/.config.json
@@ -41,12 +38,6 @@ SESSIONS_PARTS = (".claude-swap-backup", "sessions")
 CLAUDE_JSON = ".claude.json"
 LEGACY_CONFIG_JSON = ".config.json"
 MAIN_PROFILE = ".claude"
-CATEGORIES = ("codex", "volunteers")
-CONFIG_DISPLAY = "~/.agent-rig/account-allowlist.json"
-
-
-def config_path(home):
-    return Path(home) / ".agent-rig" / "account-allowlist.json"
 
 
 def _read_sequence(home):
@@ -172,72 +163,11 @@ def current_account(env=None, home=None):
     return True, int(match.group(1)) if match else None
 
 
-def load_config(home):
-    """(config dict, error text or None). A missing file is an empty config."""
-    path = config_path(home)
-    if not path.is_file():
-        return {}, None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
-        return {}, f"{CONFIG_DISPLAY} is malformed ({e.__class__.__name__}); fix or delete it"
-    if not isinstance(data, dict):
-        return {}, f"{CONFIG_DISPLAY} is malformed (the top level must be an object); fix or delete it"
-    for category in CATEGORIES:
-        if category in data and not (isinstance(data[category], list) and all(_is_number(n) for n in data[category])):
-            return {}, f'{CONFIG_DISPLAY} is malformed ("{category}" must be a list of account numbers); fix or delete it'
-    return data, None
-
-
-def check(category, env=None, home=None):
-    """(allowed, reason). The reason is empty when allowed."""
-    home = Path.home() if home is None else Path(home)
-    config, error = load_config(home)
-    if error:
-        return False, f"REFUSED: {category} is blocked: {error}"
-    allowed = config.get(category)
-    if allowed is None:
-        return True, ""
-    present, number = current_account(env, home)
-    if not present:
-        return True, ""
-    listed = ", ".join(str(n) for n in allowed) or "none"
-    if number is None:
-        return False, (f"REFUSED: {category} is limited to cswap accounts [{listed}] by {CONFIG_DISPLAY}, "
-                       "but the account of this session cannot be determined")
-    if number not in allowed:
-        return False, (f"REFUSED: {category} is not allowed on cswap account {number} "
-                       f"(allowed: {listed}; set in {CONFIG_DISPLAY})")
-    return True, ""
-
-
-def refuse_if_blocked(category, env=None, home=None):
-    """Exit with the refusal text when the category is blocked on this account."""
-    allowed, reason = check(category, env, home)
-    if not allowed:
-        raise SystemExit(reason)
-
-
-def session_hint(category, hint, env=None, home=None, out=None):
-    """Print the SessionStart hook output carrying `hint` when the category is blocked on this account."""
-    allowed, reason = check(category, env, home)
-    if allowed:
-        return
-    text = json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                              "additionalContext": f"{hint} ({reason})"}}, ensure_ascii=True)
-    print(text, file=out)
-
-
 def build_parser():
-    parser = argparse.ArgumentParser(description="Query the cswap account allowlist.")
+    parser = argparse.ArgumentParser(description="Facts about claude-swap accounts.")
     commands = parser.add_subparsers(dest="command", required=True)
-    query = commands.add_parser("check", help="print whether a category is allowed for a Claude config dir")
-    query.add_argument("category", choices=CATEGORIES)
-    query.add_argument("--config-dir", default="",
-                       help="the CLAUDE_CONFIG_DIR of the session; empty or omitted is the main login")
-    batch =commands.add_parser("batch", help="query accounts and categories in one process")
+    batch = commands.add_parser("batch", help="the cswap account of each Claude config dir, in one process")
     batch.add_argument("--config-dir", action="append", required=True)
-    batch.add_argument("--category", action="append", choices=CATEGORIES, default=[])
     owner_parser = commands.add_parser("owner", help="print the accountUuid and organizationUuid of a cswap account")
     owner_parser.add_argument("--account", type=account_number, required=True, help="the cswap account number")
     config_parser = commands.add_parser("config-dir", help="print where `cswap run N` keeps the config of a cswap account")
@@ -246,10 +176,8 @@ def build_parser():
 
 
 def main(argv=None):
-    """`check <category> --config-dir <dir>`: one line of JSON {"allowed", "reason"}, exit 0 in both cases.
-    `batch --config-dir <dir>... [--category <name>...]`: one line of JSON {"accounts", "categories"}; accounts maps
-    each dir to {"present", "account"} (account is null when unknown) and categories maps each category to
-    {"allowed", "reason"}. An item whose check raised is {"error": text} instead; the other items are unaffected.
+    """`batch --config-dir <dir>...`: one line of JSON {"accounts"}; accounts maps each dir to {"present", "account"}
+    (account is null when unknown), or to {"error": text} when its lookup raised; the other dirs are unaffected.
     `owner --account <N>`: one line of JSON {"accountUuid", "organizationUuid"} of cswap account N, or {"error": text}.
 
     `config-dir --account <N>`: one line of JSON {"dir", "file", "isDefault", "exists"} of the config `cswap run N` uses, or {"error": text}.
@@ -263,28 +191,15 @@ def main(argv=None):
     if args.command == "owner":
         print(json.dumps(owner(args.account), ensure_ascii=True))
         return 0
-    if args.command == "batch":
-        accounts = {}
-        for directory in args.config_dir:
-            env = {"CLAUDE_CONFIG_DIR": directory} if directory else {}
-            try:
-                present, number = current_account(env)
-                accounts[directory] = {"present": present, "account": number}
-            except Exception as e:  # one bad directory must not fail the others
-                accounts[directory] = {"error": f"{e.__class__.__name__}: {e}"}
-        env = {"CLAUDE_CONFIG_DIR": args.config_dir[0]} if args.config_dir[0] else {}
-        categories = {}
-        for category in args.category:
-            try:
-                allowed, reason = check(category, env)
-                categories[category] = {"allowed": allowed, "reason": reason}
-            except Exception as e:  # one failing category must not fail the others
-                categories[category] = {"error": f"{e.__class__.__name__}: {e}"}
-        print(json.dumps({"accounts": accounts, "categories": categories}, ensure_ascii=True))
-        return 0
-    env = {"CLAUDE_CONFIG_DIR": args.config_dir} if args.config_dir else {}
-    allowed, reason = check(args.category, env)
-    print(json.dumps({"allowed": allowed, "reason": reason}, ensure_ascii=True))
+    accounts = {}
+    for directory in args.config_dir:
+        env = {"CLAUDE_CONFIG_DIR": directory} if directory else {}
+        try:
+            present, number = current_account(env)
+            accounts[directory] = {"present": present, "account": number}
+        except Exception as e:  # one bad directory must not fail the others
+            accounts[directory] = {"error": f"{e.__class__.__name__}: {e}"}
+    print(json.dumps({"accounts": accounts}, ensure_ascii=True))
     return 0
 
 

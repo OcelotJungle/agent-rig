@@ -36,7 +36,7 @@ export type InfoData = {
 	session: string;
 	account: number | null;
 	claude: Block<ClaudeReading>;
-	// Absent when the feature is off or the account is not on the allowlist.
+	// Absent when the feature is off or the session's project is on the denylist.
 	codex?: Block<CodexReading>;
 	volunteers?: Block<VolunteerReading>;
 	context: Block<ContextReading>;

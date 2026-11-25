@@ -164,7 +164,7 @@ Sections are headings in `CLAUDE.md` and `~/.codex/AGENTS.md`.
 
 | Part | On at install | Platforms | Files | Hook | Rules |
 |---|---|---|---|---|---|
-| base | always | all | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (Windows only), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `hooks/system-temp-guard.py`, `tools/patchlib.py`, `tools/account-allowlist.py`, `agents/explore.md`, `agents/general-purpose.md` | SessionStart and PreToolUse | see below |
+| base | always | all | `hooks/project-tmp.sh`, `hooks/project-tmp-settings.ps1` (Windows only), `hooks/compact_history.py`, `hooks/no_ampersand.py`, `hooks/system-temp-guard.py`, `tools/patchlib.py`, `tools/cswap-account.py`, `tools/project-denylist.py`, `agents/explore.md`, `agents/general-purpose.md` | SessionStart and PreToolUse | see below |
 | `reflection` | yes | all | `hooks/reflect.py`, `hooks/reflect_prompt.md` | `Stop` | — |
 | `codex` | yes | all | `tools/codex-run.py`, `agents/codex.md`, plugin `codex@openai-codex` | `SessionStart`: `codex-run.py session-hint` | "Delegating to Codex" |
 | `telegram` | yes | all | plugin `telegram-hub` from the hub clone, the hub service, including `/bash` | plugin hooks | "Attention chime", the line about Telegram mode |
@@ -183,30 +183,37 @@ allows project `.tmp` and home-directory sessions; variable-based and computed s
 The repository has no personal paths or project names. The folders in which a volunteer works are listed in the local file
 `~/.agent-rig/volunteer-projects.json` (`{"allowed": ["<folder>"]}`). Without this file the volunteer refuses all folders.
 
-Account allowlist. The local file `~/.agent-rig/account-allowlist.json` (`{"codex": [1, 4], "volunteers": [1, 4]}`)
-lists, per category, the claude-swap (cswap) account numbers that may use the `codex` and `volunteers` features. One
-shared module, `base/tools/account-allowlist.py`, loaded by path by `codex-run.py` and `volunteer-run.py`, resolves the
-session's account and answers whether a category is allowed:
-- The account: no `~/.claude-swap-backup/sequence.json` means no cswap, the account is unknown and nothing is
-  restricted. With `CLAUDE_CONFIG_DIR` unset or resolving to `~/.claude` the account is `activeAccountNumber` of
-  `sequence.json`; with `CLAUDE_CONFIG_DIR` = `.../<N>-<name>` it is `N`; anything else is "cannot be determined".
-- A missing file or a missing category key leaves that category unrestricted. With the category listed and cswap
-  present, an account outside the list, or one that cannot be determined, is refused (fail closed). A malformed file
-  refuses every category and names the file.
+Project denylist. The `codex` and `volunteers` features work on every cswap account. The local file
+`~/.agent-rig/project-denylist.json` (`{"codex": ["C:/projects/bloxels"], "volunteers": ["C:/projects/bloxels"]}`) lists,
+per category, the project directories where a session must not use the feature. One shared module,
+`base/tools/project-denylist.py`, loaded by path by `codex-run.py` and `volunteer-run.py`, answers whether a category is
+allowed in a project directory:
+- The project directory of a run is the launcher's working directory. For the `SessionStart` hook it is the `cwd` field of
+  the hook's JSON input on stdin when present, else the working directory; `CLAUDE_PROJECT_DIR` is not relied on. Only the
+  session's own directory is gated: a job's `cwd:` pointing into a denied project from another project is not refused.
+- A directory is denied when it is a listed directory or lies inside one. Paths are compared as resolved real paths
+  (symlinks and junctions followed), component by component (`C:/projects/bloxels-backup` is not inside
+  `C:/projects/bloxels`), case-insensitively where the OS is, and `/` and `\` are equivalent.
+- A missing file or a missing category key denies nothing for that category. A malformed file (bad JSON, a top level that is
+  not an object, a category value that is not a list of non-empty strings) refuses every category and names the file.
 - Enforcement is in the launchers, before any work is spent: `codex-run.py` and `volunteer-run.py` refuse `start` and
   `reply` (a reply also spends the line's work); `list`, `cancel`, `wait`, `attach` and `prompt-path` stay allowed. The
-  refusal names the category, the account number and the file.
+  refusal reads `REFUSED: <category> is not allowed in project <listed dir> (set in ~/.agent-rig/project-denylist.json)`.
 - Each feature declares a `SessionStart` hook, `<launcher> session-hint`. It prints a context hint (do not launch the
-  subagent of that feature; do the work as the rules describe with the feature off, silently) only when the current
-  account is not allowed, so a session on another account never spends a delegation attempt. The hint is model context,
-  not user output, so it is English like the other hook texts; only a hook's `statusMessage` is translated.
+  subagent of that feature; do the work as the rules describe with the feature off, silently) only when the session's
+  project is denied, so such a session never spends a delegation attempt. The hint is model context, not user output, so
+  it is English like the other hook texts; only a hook's `statusMessage` is translated.
 - The query for outside programs, the contract for readers outside the launchers (the telegram hub's `/info` uses it to hide
-  the Codex and volunteer blocks on an account that is not allowed): `python -I <clone>/base/tools/account-allowlist.py check
-  <codex|volunteers> --config-dir <dir>` prints one line of JSON, `{"allowed": true|false, "reason": "<empty or refusal
-  text>"}`, and exits 0 in both cases. `--config-dir` plays the role of the session's `CLAUDE_CONFIG_DIR`; an empty or omitted
-  value is the main login; the process's own `CLAUDE_CONFIG_DIR` is ignored. An unknown category or bad usage is an argparse
-  error with a nonzero exit. The answer comes from the same `check` the launchers use, so no reader reimplements the rule.
-  Importing the module runs no CLI.
+  the Codex and volunteer blocks in a denied project): `python -I <clone>/base/tools/project-denylist.py check
+  <codex|volunteers> --project-dir <dir>` prints one line of JSON, `{"allowed": true|false, "reason": "<empty or refusal
+  text>"}`, and exits 0 in both cases; `python -I <clone>/base/tools/project-denylist.py batch --project-dir <dir>
+  --category <name>...` prints `{"categories": {"<name>": {"allowed", "reason"} | {"error"}}}` for several categories in one
+  process. `--project-dir` is required and plays the role of the session's working directory. An unknown category or bad
+  usage is an argparse error with a nonzero exit. The answer comes from the same `check` the launchers use, so no reader
+  reimplements the rule. Importing the module runs no CLI.
+- The cswap account facts (`base/tools/cswap-account.py`: the session's account number, the owner of an account, the
+  config directory of an account, `batch --config-dir <dir>...`) are a separate tool with no allowlist; they serve account
+  switching and `/info`, not the feature gates.
 
 The `codex` supervisor owns each Codex process tree through the shared process-job helper `base/tools/process-job.py`. It
 closes the job after every turn or stop, including normal completion; if cancellation times out, the client stops the

@@ -13,6 +13,7 @@ import { messagesFor } from "../messages.js";
 import { apiFail, apiOk } from "../output.js";
 import { PROCESS_SUCCESS_EXIT_CODE } from "../ports.js";
 import { err, ok } from "../result.js";
+import { readSession } from "../session-core.js";
 import { readRigState } from "./shared.js";
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -20,7 +21,8 @@ const MS_PER_SECOND = 1000;
 // A python helper that hangs must not hang `rig info`, so each helper call (account and volunteer limits) gets five seconds.
 const HELPER_TIMEOUT_MS = 5 * MS_PER_SECOND;
 const CODEX_HOME_VARIABLE = "CODEX_HOME";
-const ACCOUNT_SCRIPT = "base/tools/account-allowlist.py";
+const ACCOUNT_SCRIPT = "base/tools/cswap-account.py";
+const DENYLIST_SCRIPT = "base/tools/project-denylist.py";
 const VOLUNTEER_TOOLS_DIRECTORY = "features/volunteers/tools";
 const VOLUNTEER_SCRIPT = "volunteer-models.py";
 // Bound diagnostics from an external process, as for launch stderr.
@@ -110,22 +112,33 @@ const readOptionalText = async (runtime: RuntimePorts, path: string): Promise<st
 	}
 };
 
-const runAllowlistTool = async (runtime: RuntimePorts, state: RigState, messages: Messages, args: readonly string[]): Promise<Result<Record<string, unknown>>> => {
-	const result = await runtime.process.run(runtime.pythonCommand, ["-I", joinPath(state.paths.repo, ACCOUNT_SCRIPT), ...args], { timeoutMs: HELPER_TIMEOUT_MS });
-	if (!result.ok) return err(messages.info.allowlistFailed(result.error));
-	if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(messages.info.allowlistExit(result.value.exitCode, result.value.stderr.trim().slice(0, STDERR_HEAD_LIMIT)));
+// The three failure texts of one python helper: it did not run, it exited non-zero, it printed no JSON object.
+type ToolFailures = { failed: (detail: string) => string; exit: (code: number, stderr: string) => string; badJson: () => string };
+
+const runTool = async (runtime: RuntimePorts, state: RigState, script: string, failures: ToolFailures, args: readonly string[]): Promise<Result<Record<string, unknown>>> => {
+	const result = await runtime.process.run(runtime.pythonCommand, ["-I", joinPath(state.paths.repo, script), ...args], { timeoutMs: HELPER_TIMEOUT_MS });
+	if (!result.ok) return err(failures.failed(result.error));
+	if (result.value.exitCode !== PROCESS_SUCCESS_EXIT_CODE) return err(failures.exit(result.value.exitCode, result.value.stderr.trim().slice(0, STDERR_HEAD_LIMIT)));
 	const parsed = parseJson(result.value.stdout.trim());
-	return isRecord(parsed) ? ok(parsed) : err(messages.info.allowlistBadJson());
+	return isRecord(parsed) ? ok(parsed) : err(failures.badJson());
 };
 
-// The helper answers `{error: text}` for an item whose check raised; the item fails alone.
-const itemError = (answer: unknown, messages: Messages): string | null =>
-	isRecord(answer) && typeof answer.error === "string" ? messages.info.allowlistItemFailed(answer.error) : null;
+// The cswap account helper: which account a config dir belongs to, its owner ids and its config dir.
+const runAccountTool = (runtime: RuntimePorts, state: RigState, messages: Messages, args: readonly string[]): Promise<Result<Record<string, unknown>>> =>
+	runTool(runtime, state, ACCOUNT_SCRIPT, { failed: messages.info.accountToolFailed, exit: messages.info.accountToolExit, badJson: messages.info.accountToolBadJson }, args);
+
+// The project denylist helper: whether a feature category is allowed in a project directory.
+const runDenylistTool = (runtime: RuntimePorts, state: RigState, messages: Messages, args: readonly string[]): Promise<Result<Record<string, unknown>>> =>
+	runTool(runtime, state, DENYLIST_SCRIPT, { failed: messages.info.denylistToolFailed, exit: messages.info.denylistToolExit, badJson: messages.info.denylistToolBadJson }, args);
+
+// A helper answers `{error: text}` for an item whose check raised; the item fails alone.
+const itemError = (answer: unknown, describe: (detail: string) => string): string | null =>
+	isRecord(answer) && typeof answer.error === "string" ? describe(answer.error) : null;
 
 const parseAccount = (answer: unknown, messages: Messages): Result<number | null> => {
-	const failed = itemError(answer, messages);
+	const failed = itemError(answer, messages.info.accountItemFailed);
 	if (failed !== null) return err(failed);
-	if (!isRecord(answer) || typeof answer.present !== "boolean" || !(answer.account === null || (typeof answer.account === "number" && Number.isSafeInteger(answer.account)))) return err(messages.info.allowlistBadAccount());
+	if (!isRecord(answer) || typeof answer.present !== "boolean" || !(answer.account === null || (typeof answer.account === "number" && Number.isSafeInteger(answer.account)))) return err(messages.info.accountBadAccount());
 	return ok(answer.account);
 };
 
@@ -138,7 +151,7 @@ const accountInAnswer = (answer: Result<Record<string, unknown>>, configDir: str
 
 export const accountOf = async (runtime: RuntimePorts, state: RigState, configDir: string): Promise<Result<number | null>> => {
 	const messages = messagesFor(runtime.language);
-	const answer = await runAllowlistTool(runtime, state, messages, ["batch", "--config-dir", configDir]);
+	const answer = await runAccountTool(runtime, state, messages, ["batch", "--config-dir", configDir]);
 	return accountInAnswer(answer, configDir, messages);
 };
 
@@ -146,12 +159,12 @@ export const accountOf = async (runtime: RuntimePorts, state: RigState, configDi
 // query. The answer is `{accountUuid, organizationUuid}` or `{error: text}`; the values stay in rig's pipe.
 export const ownerIdsOf = async (runtime: RuntimePorts, state: RigState, account: number): Promise<Result<OwnerIds>> => {
 	const messages = messagesFor(runtime.language);
-	const answer = await runAllowlistTool(runtime, state, messages, ["owner", "--account", String(account)]);
+	const answer = await runAccountTool(runtime, state, messages, ["owner", "--account", String(account)]);
 	if (!answer.ok) return answer;
-	const failed = itemError(answer.value, messages);
+	const failed = itemError(answer.value, messages.info.accountItemFailed);
 	if (failed !== null) return err(failed);
 	const { accountUuid, organizationUuid } = answer.value;
-	if (typeof accountUuid !== "string" || accountUuid === "" || typeof organizationUuid !== "string" || organizationUuid === "") return err(messages.info.allowlistBadOwner());
+	if (typeof accountUuid !== "string" || accountUuid === "" || typeof organizationUuid !== "string" || organizationUuid === "") return err(messages.info.accountBadOwner());
 	return ok({ accountUuid, organizationUuid });
 };
 
@@ -162,23 +175,36 @@ export type AccountConfigDir = { dir: string; file: string; isDefault: boolean; 
 
 export const configDirOf = async (runtime: RuntimePorts, state: RigState, account: number): Promise<Result<AccountConfigDir>> => {
 	const messages = messagesFor(runtime.language);
-	const answer = await runAllowlistTool(runtime, state, messages, ["config-dir", "--account", String(account)]);
+	const answer = await runAccountTool(runtime, state, messages, ["config-dir", "--account", String(account)]);
 	if (!answer.ok) return answer;
-	const failed = itemError(answer.value, messages);
+	const failed = itemError(answer.value, messages.info.accountItemFailed);
 	if (failed !== null) return err(failed);
 	const { dir, file, isDefault, exists } = answer.value;
-	if (typeof dir !== "string" || dir === "" || typeof file !== "string" || file === "" || typeof isDefault !== "boolean" || typeof exists !== "boolean") return err(messages.info.allowlistBadConfigDir());
+	if (typeof dir !== "string" || dir === "" || typeof file !== "string" || file === "" || typeof isDefault !== "boolean" || typeof exists !== "boolean") return err(messages.info.accountBadConfigDir());
 	return ok({ dir, file, isDefault, exists });
 };
 
-const categoryShown = (state: RigState, category: "codex" | "volunteers", answer: Result<Record<string, unknown>>, messages: Messages): Result<boolean> => {
+type Category = "codex" | "volunteers";
+
+// Whether a category's block is shown: its feature is on and the session's project is not on the denylist.
+// `answer` is the denylist helper's `batch` answer (`categories[category]`), consulted only for a feature that is on.
+const categoryShown = (state: RigState, category: Category, answer: Result<Record<string, unknown>>, messages: Messages): Result<boolean> => {
 	if (state.features[category] !== true) return ok(false);
 	if (!answer.ok) return answer;
 	const categories = answer.value.categories;
 	const entry = isRecord(categories) ? categories[category] : undefined;
-	const failed = itemError(entry, messages);
+	const failed = itemError(entry, messages.info.denylistItemFailed);
 	if (failed !== null) return err(failed);
-	return isRecord(entry) && typeof entry.allowed === "boolean" ? ok(entry.allowed) : err(messages.info.allowlistBadCategory(category));
+	return isRecord(entry) && typeof entry.allowed === "boolean" ? ok(entry.allowed) : err(messages.info.denylistBadCategory(category));
+};
+
+// The denylist helper's answer for the session's project directory (the cwd of its record). A session whose project
+// directory is not known fails the answer, so its blocks are errors and never silently allowed.
+const denylistAnswer = async (runtime: RuntimePorts, state: RigState, sessionId: string, categories: readonly Category[], messages: Messages): Promise<Result<Record<string, unknown>>> => {
+	if (categories.length === 0) return ok({});
+	const session = await readSession(runtime, sessionId);
+	if (!session.ok || session.value.cwd === null || session.value.cwd === "") return err(messages.info.noProjectDirectory());
+	return runDenylistTool(runtime, state, messages, ["batch", "--project-dir", session.value.cwd, ...categories.flatMap((category) => ["--category", category])]);
 };
 
 const sessionsDirectory = (runtime: RuntimePorts): string => joinPath(runtime.home, ".agent-rig", "sessions");
@@ -305,12 +331,13 @@ export const infoCommand = async (runtime: RuntimePorts, sessionId: string): Pro
 	}
 	const directories = [...new Set([configDir, ...others.map((other) => other.directory)])];
 	const categories = (["codex", "volunteers"] as const).filter((category) => state.features[category] === true);
-	const answer = await runAllowlistTool(runtime, state, messages, ["batch", ...directories.flatMap((directory) => ["--config-dir", directory]), ...categories.flatMap((category) => ["--category", category])]);
+	const answer = await runAccountTool(runtime, state, messages, ["batch", ...directories.flatMap((directory) => ["--config-dir", directory])]);
 	const accounts = answer.ok && isRecord(answer.value.accounts) ? answer.value.accounts : {};
 	const account = accountInAnswer(answer, configDir, messages);
 	const claude = account.ok ? freshestClaudeLimits(sessionId, account.value, own, others, accounts, messages) : account;
-	const codexCheck = categoryShown(state, "codex", answer, messages);
-	const volunteerCheck = categoryShown(state, "volunteers", answer, messages);
+	const denylist = await denylistAnswer(runtime, state, sessionId, categories, messages);
+	const codexCheck = categoryShown(state, "codex", denylist, messages);
+	const volunteerCheck = categoryShown(state, "volunteers", denylist, messages);
 	const codex = !codexCheck.ok ? blockError(BLOCK_SCRIPT_FAILED, codexCheck.error) : codexCheck.value ? await codexBlock(runtime, messages) : null;
 	const volunteers = !volunteerCheck.ok ? blockError(BLOCK_SCRIPT_FAILED, volunteerCheck.error) : volunteerCheck.value ? await volunteerBlock(runtime, state, messages) : null;
 	return apiOk({

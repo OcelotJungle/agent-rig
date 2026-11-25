@@ -1,4 +1,4 @@
-"""Guard the cswap account allowlist shared by the codex and volunteers launchers (account-allowlist.py).
+"""Guard the cswap account facts tool (cswap-account.py): current account, owner, config dir.
 
 Run from the clone root: python -I -m unittest discover -s base/tools/tests -v
 Every test injects the home directory and the environment; nothing reads the real ~ or cswap files.
@@ -15,20 +15,19 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-MODULE = Path(__file__).resolve().parents[1] / "account-allowlist.py"
-SPEC = importlib.util.spec_from_file_location("account_allowlist", MODULE)
+MODULE = Path(__file__).resolve().parents[1] / "cswap-account.py"
+SPEC = importlib.util.spec_from_file_location("cswap_account", MODULE)
 al = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(al)
 
 ACTIVE_ACCOUNT = 4
-HINT = "do not use the feature"
 CLI_TIMEOUT_SECONDS = 60
 # Variables that pick the home directory or the Claude config dir; the CLI tests set the ones they need.
 HOME_ENV = ("HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "CLAUDE_CONFIG_DIR")
 
 
 class Home:
-    """A throwaway home directory with optional cswap files and allowlist config."""
+    """A throwaway home directory with optional cswap files."""
 
     def __init__(self, test):
         tmp = tempfile.TemporaryDirectory()
@@ -40,11 +39,6 @@ class Home:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text if text is not None else json.dumps({"activeAccountNumber": active, "accounts": {"1": {}, "4": {}}}),
                         encoding="utf-8")
-
-    def config(self, data):
-        path = self.root / ".agent-rig" / "account-allowlist.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
 
     def side_dir(self, name):
         return str(self.root / ".claude-swap-backup" / "sessions" / name)
@@ -96,119 +90,12 @@ class CurrentAccountTest(unittest.TestCase):
         self.assertEqual(al.current_account(home.side_env("2-x"), home.root), (True, 2))
 
 
-class CheckTest(unittest.TestCase):
-    def check(self, home, category="codex", env=None):
-        return al.check(category, {} if env is None else env, home.root)
-
-    def test_no_config_file_allows_everything(self):
-        home = Home(self)
-        home.sequence()
-        self.assertEqual(self.check(home, env=home.side_env("2-x")), (True, ""))
-
-    def test_missing_category_key_is_unrestricted(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"volunteers": [1]})
-        self.assertEqual(self.check(home, "codex", home.side_env("2-x")), (True, ""))
-        self.assertFalse(self.check(home, "volunteers", home.side_env("2-x"))[0])
-
-    def test_listed_main_and_side_accounts_are_allowed(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        self.assertTrue(self.check(home)[0])
-        self.assertTrue(self.check(home, env=home.side_env("1-x"))[0])
-
-    def test_unlisted_account_is_refused_with_category_number_and_file(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4], "volunteers": [1, 4]})
-        for category in ("codex", "volunteers"):
-            allowed, reason = self.check(home, category, home.side_env("2-x"))
-            self.assertFalse(allowed)
-            self.assertIn(category, reason)
-            self.assertIn("account 2", reason)
-            self.assertIn("account-allowlist.json", reason)
-            self.assertTrue(reason.startswith("REFUSED"))
-
-    def test_unlisted_main_account_is_refused(self):
-        home = Home(self)
-        home.sequence(active=2)
-        home.config({"codex": [1, 4]})
-        self.assertFalse(self.check(home)[0])
-
-    def test_no_cswap_means_no_restriction(self):
-        home = Home(self)
-        home.config({"codex": [1]})
-        self.assertEqual(self.check(home), (True, ""))
-
-    def test_undeterminable_account_fails_closed_when_the_category_is_listed(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        allowed, reason = self.check(home, env=home.side_env("odd"))
-        self.assertFalse(allowed)
-        self.assertIn("cannot be determined", reason)
-        self.assertIn("account-allowlist.json", reason)
-
-    def test_undeterminable_account_is_fine_for_an_unlisted_category(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"volunteers": [1]})
-        self.assertTrue(self.check(home, "codex", home.side_env("odd"))[0])
-
-    def test_empty_list_blocks_every_account(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": []})
-        self.assertFalse(self.check(home)[0])
-
-    def test_malformed_config_refuses_every_category_naming_the_file(self):
-        bad_configs = ["{oops", "[1, 4]", json.dumps({"codex": "1"}), json.dumps({"codex": [1, "4"]}),
-                       json.dumps({"volunteers": [True]})]
-        for bad in bad_configs:
-            home = Home(self)
-            home.config(bad)
-            for category in ("codex", "volunteers"):
-                allowed, reason = self.check(home, category)
-                self.assertFalse(allowed, bad)
-                self.assertIn("account-allowlist.json", reason)
-                self.assertIn("malformed", reason)
-
-    def test_malformed_config_refuses_even_without_cswap(self):
-        home = Home(self)
-        home.config("{oops")
-        self.assertFalse(self.check(home)[0])
-
-
-class EntryPointsTest(unittest.TestCase):
-    def test_refuse_if_blocked_exits_with_the_reason_only_when_blocked(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        al.refuse_if_blocked("codex", {}, home.root)
-        with self.assertRaises(SystemExit) as raised:
-            al.refuse_if_blocked("codex", home.side_env("2-x"), home.root)
-        self.assertIn("account 2", str(raised.exception))
-
-    def test_session_hint_is_silent_when_allowed_and_json_when_blocked(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        out = io.StringIO()
-        al.session_hint("codex", HINT, {}, home.root, out)
-        self.assertEqual(out.getvalue(), "")
-        al.session_hint("codex", HINT, home.side_env("2-x"), home.root, out)
-        payload = json.loads(out.getvalue())["hookSpecificOutput"]
-        self.assertEqual(payload["hookEventName"], "SessionStart")
-        self.assertIn(HINT, payload["additionalContext"])
-        self.assertIn("account 2", payload["additionalContext"])
-
+class ImportTest(unittest.TestCase):
     def test_importing_the_module_does_not_run_the_cli(self):
-        spec = importlib.util.spec_from_file_location("account_allowlist_import", MODULE)
+        spec = importlib.util.spec_from_file_location("cswap_account_import", MODULE)
         module = importlib.util.module_from_spec(spec)
         out = io.StringIO()
-        argv = ["account-allowlist.py", "check", "codex", "--config-dir", ""]
+        argv = ["cswap-account.py", "batch", "--config-dir", ""]
         with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(out):
             spec.loader.exec_module(module)
         self.assertEqual(out.getvalue(), "")
@@ -226,103 +113,18 @@ class CliRunner(unittest.TestCase):
                               encoding="utf-8", timeout=CLI_TIMEOUT_SECONDS, check=False)
 
 
-class CliTest(CliRunner):
-    """`check <category> --config-dir <dir>` run as a subprocess."""
-
-    def query(self, home, category, config_dir=None, own_config_dir=None):
-        argv = ["check", category]
-        if config_dir is not None:
-            argv += ["--config-dir", config_dir]
-        proc = self.run_cli(home, argv, own_config_dir)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(len(proc.stdout.splitlines()), 1, proc.stdout)
-        return json.loads(proc.stdout)
-
-    def test_allowed_account_prints_allowed_true_with_empty_reason(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        self.assertEqual(self.query(home, "codex", home.side_dir("1-x")), {"allowed": True, "reason": ""})
-
-    def test_refused_side_profile_prints_the_refusal_and_still_exits_zero(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        result = self.query(home, "codex", home.side_dir("2-x"))
-        self.assertFalse(result["allowed"])
-        self.assertTrue(result["reason"].startswith("REFUSED"))
-        self.assertIn("account 2", result["reason"])
-        self.assertIn("account-allowlist.json", result["reason"])
-
-    def test_empty_config_dir_is_the_main_login_account(self):
-        home = Home(self)
-        home.sequence(active=2)
-        home.config({"codex": [1, 4]})
-        self.assertFalse(self.query(home, "codex", "")["allowed"])
-        home.sequence(active=4)
-        self.assertEqual(self.query(home, "codex", ""), {"allowed": True, "reason": ""})
-
-    def test_omitted_config_dir_is_the_main_login_account(self):
-        home = Home(self)
-        home.sequence(active=2)
-        home.config({"codex": [1, 4]})
-        self.assertFalse(self.query(home, "codex")["allowed"])
-
-    def test_own_claude_config_dir_is_ignored(self):
-        home = Home(self)
-        home.sequence()
-        home.config({"codex": [1, 4]})
-        # the process's own CLAUDE_CONFIG_DIR points at refused account 2; the query is about the main login (4)
-        self.assertTrue(self.query(home, "codex", "", own_config_dir=home.side_dir("2-x"))["allowed"])
-        self.assertTrue(self.query(home, "codex", None, own_config_dir=home.side_dir("2-x"))["allowed"])
-        # the flag wins over the process's own variable: own says account 1 (allowed), the flag says account 2
-        self.assertFalse(self.query(home, "codex", home.side_dir("2-x"),
-                                    own_config_dir=home.side_dir("1-x"))["allowed"])
-
-    def test_unrestricted_without_cswap_is_allowed_even_when_listed_empty(self):
-        home = Home(self)
-        home.config({"volunteers": []})
-        self.assertEqual(self.query(home, "volunteers", ""), {"allowed": True, "reason": ""})
-
-    def test_malformed_config_prints_a_refusal_naming_the_file(self):
-        home = Home(self)
-        home.config("{oops")
-        result = self.query(home, "volunteers", "")
-        self.assertFalse(result["allowed"])
-        self.assertIn("malformed", result["reason"])
-        self.assertIn("account-allowlist.json", result["reason"])
-
-    def test_unknown_category_is_an_argparse_error(self):
-        home = Home(self)
-        proc = self.run_cli(home, ["check", "telegram", "--config-dir", ""])
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertEqual(proc.stdout, "")
-        self.assertIn("invalid choice", proc.stderr)
-
-    def test_missing_category_or_command_is_a_usage_error(self):
-        home = Home(self)
-        for argv in (["check"], []):
-            proc = self.run_cli(home, argv)
-            self.assertNotEqual(proc.returncode, 0, argv)
-            self.assertEqual(proc.stdout, "", argv)
-
-
 class BatchCliTest(CliRunner):
-    """`batch --config-dir <dir>...` prints {"accounts", "categories"} as one JSON line."""
+    """`batch --config-dir <dir>...` prints {"accounts"} as one JSON line."""
 
-    def test_batch_queries_directories_and_categories(self):
+    def test_batch_queries_directories(self):
         home = Home(self)
         home.sequence(active=3)
-        home.config({"codex": [3], "volunteers": []})
         side = home.side_dir("2-x")
-        proc = self.run_cli(home, ["batch", "--config-dir", "", "--config-dir", side,
-                                   "--config-dir", side, "--category", "codex", "--category", "volunteers"])
+        proc = self.run_cli(home, ["batch", "--config-dir", "", "--config-dir", side, "--config-dir", side])
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        result = json.loads(proc.stdout)
-        self.assertEqual(result["accounts"], {"": {"present": True, "account": 3},
-                                              side: {"present": True, "account": 2}})
-        self.assertTrue(result["categories"]["codex"]["allowed"])
-        self.assertFalse(result["categories"]["volunteers"]["allowed"])
+        self.assertEqual(len(proc.stdout.splitlines()), 1, proc.stdout)
+        self.assertEqual(json.loads(proc.stdout),
+                         {"accounts": {"": {"present": True, "account": 3}, side: {"present": True, "account": 2}}})
 
     def test_batch_without_cswap_or_known_account(self):
         home = Home(self)
@@ -335,18 +137,22 @@ class BatchCliTest(CliRunner):
         proc = self.run_cli(home, ["batch", "--config-dir", side])
         self.assertEqual(json.loads(proc.stdout)["accounts"][side], {"present": True, "account": None})
 
+    def test_the_process_own_config_dir_is_ignored(self):
+        home = Home(self)
+        home.sequence()
+        proc = self.run_cli(home, ["batch", "--config-dir", ""], own_config_dir=home.side_dir("2-x"))
+        self.assertEqual(json.loads(proc.stdout)["accounts"][""], {"present": True, "account": ACTIVE_ACCOUNT})
+
+    def test_the_command_goes_without_a_category_and_a_missing_config_dir_is_a_usage_error(self):
+        home = Home(self)
+        for argv in (["batch", "--config-dir", "", "--category", "codex"], ["batch"], []):
+            proc = self.run_cli(home, argv)
+            self.assertNotEqual(proc.returncode, 0, argv)
+            self.assertEqual(proc.stdout, "", argv)
+
 
 class BatchIsolationTest(unittest.TestCase):
-    """One directory or category that raises is reported as {"error": text}; the others keep their answers."""
-
-    def run_batch(self, argv, **patches):
-        out = io.StringIO()
-        with contextlib.ExitStack() as stack:
-            for name, value in patches.items():
-                stack.enter_context(mock.patch.object(al, name, value))
-            stack.enter_context(contextlib.redirect_stdout(out))
-            self.assertEqual(al.main(argv), 0)
-        return json.loads(out.getvalue())
+    """One directory that raises is reported as {"error": text}; the others keep their answers."""
 
     def test_a_raising_directory_does_not_fail_the_others(self):
         def account(env=None, home=None):
@@ -354,21 +160,13 @@ class BatchIsolationTest(unittest.TestCase):
             if directory == "bad":
                 raise ValueError("embedded null byte")
             return True, 7
-        result = self.run_batch(["batch", "--config-dir", "good", "--config-dir", "bad", "--config-dir", "fine"],
-                                current_account=account)
+        out = io.StringIO()
+        with mock.patch.object(al, "current_account", account), contextlib.redirect_stdout(out):
+            self.assertEqual(al.main(["batch", "--config-dir", "good", "--config-dir", "bad", "--config-dir", "fine"]), 0)
+        result = json.loads(out.getvalue())
         self.assertEqual(result["accounts"]["good"], {"present": True, "account": 7})
         self.assertEqual(result["accounts"]["fine"], {"present": True, "account": 7})
         self.assertIn("embedded null byte", result["accounts"]["bad"]["error"])
-
-    def test_a_raising_category_does_not_fail_the_others(self):
-        def check(category, env=None, home=None):
-            if category == "codex":
-                raise OSError("unreadable")
-            return True, ""
-        result = self.run_batch(["batch", "--config-dir", "good", "--category", "codex", "--category", "volunteers"],
-                                check=check)
-        self.assertEqual(result["categories"]["volunteers"], {"allowed": True, "reason": ""})
-        self.assertIn("unreadable", result["categories"]["codex"]["error"])
 
 
 class OwnerCliTest(CliRunner):

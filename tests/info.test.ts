@@ -36,7 +36,11 @@ const SINGLE_OUTPUT_LINE = 1;
 const HELPER_MESSAGE = "boom";
 
 type Harness = ReturnType<typeof createMemoryRuntime>;
-type Tool = { accounts: Record<string, number | null>; allowed: Record<string, boolean>; volunteers: (options?: ProcessOptions) => Result<ProcessOutput>; failure?: Result<ProcessOutput>; rawAccounts?: Record<string, unknown>; rawCategories?: Record<string, unknown> };
+const PROJECT_DIRECTORY = "/work/project";
+const DENIED_DIRECTORY = "/work/denied";
+const ACCOUNT_SCRIPT = "cswap-account.py";
+const DENYLIST_SCRIPT = "project-denylist.py";
+type Tool = { accounts: Record<string, number | null>; allowed: Record<string, boolean>; deniedProjects: string[]; volunteers: (options?: ProcessOptions) => Result<ProcessOutput>; failure?: Result<ProcessOutput>; denylistFailure?: Result<ProcessOutput>; rawAccounts?: Record<string, unknown>; rawCategories?: Record<string, unknown> };
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
@@ -45,8 +49,8 @@ const seedState = (harness: Harness, features: Record<string, boolean>): void =>
 	harness.fs.seed(STATE_PATH, JSON.stringify(state));
 };
 
-const seedSession = (harness: Harness, id: string, configDir: string, usage?: unknown): void => {
-	harness.fs.seed(`${SESSIONS}/${id}.json`, JSON.stringify({ session_id: id, config_dir: configDir }));
+const seedSession = (harness: Harness, id: string, configDir: string, usage?: unknown, cwd: string | null = PROJECT_DIRECTORY): void => {
+	harness.fs.seed(`${SESSIONS}/${id}.json`, JSON.stringify({ session_id: id, config_dir: configDir, cwd, transcript_path: null, started_at: iso(NOW) }));
 	if (usage !== undefined) harness.fs.seed(`${SESSIONS}/${id}/usage.json`, JSON.stringify(usage));
 };
 
@@ -61,7 +65,8 @@ const claudeUsage = (at: number, fiveHour: number, week: number, resetFive: numb
 
 const stdout = (value: unknown): Result<ProcessOutput> => ok({ stdout: JSON.stringify(value), stderr: "", exitCode: PROCESS_SUCCESS_EXIT_CODE });
 
-// The runtime whose python calls (the allowlist tool and the volunteer script) are answered from `tool`.
+// The runtime whose python calls (the account tool, the project denylist tool and the volunteer script) are answered from `tool`.
+// The denylist answers `allowed: false` for a category the tool does not allow and for a project listed in `deniedProjects`.
 const withTool = (harness: Harness, tool: Tool, language: RuntimePorts["language"] = "en"): RuntimePorts => ({
 	...harness.runtime,
 	language,
@@ -70,18 +75,27 @@ const withTool = (harness: Harness, tool: Tool, language: RuntimePorts["language
 		run: async (command, args, options) => {
 			harness.processCalls.push({ command, args, options });
 			const [, script, subcommand, third] = args;
-			if (script.endsWith("account-allowlist.py") && subcommand === "batch") {
+			if (script.endsWith(ACCOUNT_SCRIPT) && subcommand === "batch") {
 				if (tool.failure) return tool.failure;
 				const accounts: Record<string, unknown> = {};
-				const categories: Record<string, unknown> = {};
 				for (let index = 3; index < args.length; index += 2) {
 					const name = args[index + 1];
 					if (args[index] === "--config-dir") accounts[name] = { present: true, account: tool.accounts[name] ?? null };
-					if (args[index] === "--category") categories[name] = { allowed: tool.allowed[name] === true, reason: "" };
 				}
-				return stdout({ accounts: { ...accounts, ...tool.rawAccounts }, categories: { ...categories, ...tool.rawCategories } });
+				return stdout({ accounts: { ...accounts, ...tool.rawAccounts } });
 			}
-			if (script.endsWith("account-allowlist.py") && subcommand === "check") {
+			if (script.endsWith(DENYLIST_SCRIPT) && subcommand === "batch") {
+				if (tool.failure) return tool.failure;
+				if (tool.denylistFailure) return tool.denylistFailure;
+				const projectDirectory = args[args.indexOf("--project-dir") + 1];
+				const categories: Record<string, unknown> = {};
+				for (let index = 3; index < args.length; index += 2) {
+					const name = args[index + 1];
+					if (args[index] === "--category") categories[name] = { allowed: tool.allowed[name] === true && !tool.deniedProjects.includes(projectDirectory), reason: "" };
+				}
+				return stdout({ categories: { ...categories, ...tool.rawCategories } });
+			}
+			if (script.endsWith(DENYLIST_SCRIPT) && subcommand === "check") {
 				return stdout({ allowed: tool.allowed[third] === true, reason: "" });
 			}
 			if (script.endsWith("volunteer-models.py")) return tool.volunteers(options);
@@ -95,6 +109,7 @@ const noVolunteers = (): Result<ProcessOutput> => ok({ stdout: "", stderr: "", e
 const tool = (overrides: Partial<Tool> = {}): Tool => ({
 	accounts: { [OWN_DIRECTORY]: 1, [SAME_ACCOUNT_DIRECTORY]: 1, [OTHER_ACCOUNT_DIRECTORY]: 2 },
 	allowed: { codex: true, volunteers: true },
+	deniedProjects: [],
 	volunteers: noVolunteers,
 	...overrides,
 });
@@ -201,21 +216,74 @@ describe("rig info", () => {
 		expect(volunteerCall?.args).toEqual(["-I", `${TOOLS_DIRECTORY}/volunteer-models.py`, "limits", "--json"]);
 	});
 
-	test("the codex and volunteers keys are absent when the feature is off or the account is not allowed", async () => {
+	test("the codex and volunteers keys are absent when the feature is off or the category is not allowed", async () => {
 		const usage = claudeUsage(NOW, 10, 40, NOW + HOUR, NOW + DAY);
 		const keys = ["session", "account", "claude", "context"];
 
 		const featureOff = baseHarness({ codex: false, volunteers: false });
 		seedSession(featureOff, OWN_ID, OWN_DIRECTORY, usage);
 		expect(Object.keys(await infoOf(withTool(featureOff, tool())) ?? {})).toEqual(keys);
+		expect(featureOff.processCalls.filter((call) => call.args[1].endsWith(DENYLIST_SCRIPT))).toHaveLength(0);
 
 		const refused = baseHarness({ codex: true, volunteers: true });
 		seedSession(refused, OWN_ID, OWN_DIRECTORY, usage);
 		expect(Object.keys(await infoOf(withTool(refused, tool({ allowed: { codex: false, volunteers: false } }))) ?? {})).toEqual(keys);
-		expect(refused.processCalls.filter((call) => call.args[2] === "batch")).toHaveLength(1);
+		expect(refused.processCalls.filter((call) => call.args[1].endsWith(DENYLIST_SCRIPT) && call.args[2] === "batch")).toHaveLength(1);
 	});
 
-	test("failed allowlist processes make every dependent block an error", async () => {
+	test("a session in a denied project hides the codex and volunteers blocks; one in an allowed project shows them", async () => {
+		const usage = claudeUsage(NOW, 10, 40, NOW + HOUR, NOW + DAY);
+		const denied = baseHarness({ codex: true, volunteers: true });
+		seedSession(denied, OWN_ID, OWN_DIRECTORY, usage, DENIED_DIRECTORY);
+		const deniedRuntime = withTool(denied, tool({ deniedProjects: [DENIED_DIRECTORY] }));
+		expect(Object.keys(await infoOf(deniedRuntime) ?? {})).toEqual(["session", "account", "claude", "context"]);
+
+		const allowed = baseHarness({ codex: true, volunteers: true });
+		seedSession(allowed, OWN_ID, OWN_DIRECTORY, usage, PROJECT_DIRECTORY);
+		expect(Object.keys(await infoOf(withTool(allowed, tool({ deniedProjects: [DENIED_DIRECTORY] }))) ?? {})).toEqual(["session", "account", "claude", "codex", "volunteers", "context"]);
+	});
+
+	test("the denylist is asked about the session's project directory and the enabled categories only", async () => {
+		const harness = baseHarness({ codex: true, volunteers: false });
+		seedSession(harness, OWN_ID, OWN_DIRECTORY, undefined, DENIED_DIRECTORY);
+
+		await infoOf(withTool(harness, tool()));
+
+		const calls = harness.processCalls.filter((call) => call.args[1].endsWith(DENYLIST_SCRIPT));
+		expect(calls).toHaveLength(1);
+		expect(calls[0].args).toEqual(["-I", `${REPO}/base/tools/${DENYLIST_SCRIPT}`, "batch", "--project-dir", DENIED_DIRECTORY, "--category", "codex"]);
+	});
+
+	test("a session without a known project directory fails the enabled blocks, never allows them", async () => {
+		const harness = baseHarness({ codex: true, volunteers: true });
+		seedSession(harness, OWN_ID, OWN_DIRECTORY, claudeUsage(NOW, 10, 40, NOW + HOUR, NOW + DAY), null);
+
+		const body = await infoOf(withTool(harness, tool()));
+
+		const message = messagesFor("en").info.noProjectDirectory();
+		expect(body).toMatchObject({
+			account: 1,
+			codex: { error: { code: "script-failed", message } },
+			volunteers: { error: { code: "script-failed", message } },
+		});
+		expect(harness.processCalls.filter((call) => call.args[1].endsWith(DENYLIST_SCRIPT))).toHaveLength(0);
+	});
+
+	test("a failing denylist process fails only the codex and volunteers blocks; the account and claude blocks stay", async () => {
+		const harness = baseHarness({ codex: true, volunteers: true });
+		seedSession(harness, OWN_ID, OWN_DIRECTORY, claudeUsage(NOW, 10, 40, NOW + HOUR, NOW + DAY));
+
+		const body = await infoOf(withTool(harness, tool({ denylistFailure: err("denylist spawn failed") })));
+
+		expect(body).toMatchObject({
+			account: 1,
+			claude: { limits: [{ kind: "seven_day" }, { kind: "five_hour" }] },
+			codex: { error: { code: "script-failed", message: "Project denylist helper: denylist spawn failed" } },
+			volunteers: { error: { code: "script-failed", message: "Project denylist helper: denylist spawn failed" } },
+		});
+	});
+
+	test("failed helper processes make every dependent block an error", async () => {
 		const failures: Array<[Result<ProcessOutput>, string]> = [
 			[err("spawn failed"), "spawn failed"],
 			[err("timed out"), "timed out"],
@@ -273,14 +341,15 @@ describe("rig info", () => {
 		expect(body).toMatchObject({ account: 1, claude: { sessionId: SAME_ACCOUNT_ID } });
 	});
 
-	test("one allowlist process covers all session directories and categories", async () => {
+	test("one account process covers all session directories", async () => {
 		const harness = baseHarness({ codex: true, volunteers: true });
 		for (const [id, directory] of [[OWN_ID, OWN_DIRECTORY], [SAME_ACCOUNT_ID, SAME_ACCOUNT_DIRECTORY], [OTHER_ACCOUNT_ID, OTHER_ACCOUNT_DIRECTORY]]) {
 			seedSession(harness, id, directory, claudeUsage(NOW, 1, 2, NOW + HOUR, NOW + DAY));
 		}
 		await infoOf(withTool(harness, tool()));
-		const calls = harness.processCalls.filter((call) => call.args.some((arg) => arg.endsWith("account-allowlist.py")));
+		const calls = harness.processCalls.filter((call) => call.args.some((arg) => arg.endsWith(ACCOUNT_SCRIPT)));
 		expect(calls).toHaveLength(1);
+		expect(calls[0].args).not.toContain("--category");
 		for (const directory of [OWN_DIRECTORY, SAME_ACCOUNT_DIRECTORY, OTHER_ACCOUNT_DIRECTORY]) expect(calls[0].args).toContain(directory);
 	});
 

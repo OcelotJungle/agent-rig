@@ -68,8 +68,8 @@ describe("the owner target of a launch", () => {
 		expect(calls[0].slice(-3)).toEqual(["owner", "--account", String(ACCOUNT)]);
 	});
 	test("the malformed-ids message exists in both languages and is translated", () => {
-		const english = messagesFor("en").info.allowlistBadOwner();
+		const english = messagesFor("en").info.accountBadOwner();
 		expect(english).not.toBe("");
-		expect(messagesFor("ru").info.allowlistBadOwner()).not.toBe(english);
+		expect(messagesFor("ru").info.accountBadOwner()).not.toBe(english);
 	});
 });

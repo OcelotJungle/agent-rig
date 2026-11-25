@@ -45,7 +45,7 @@ export const seedProfile = (h: MemoryRuntimeHarness, account: number, config: Re
 	h.fs.seed(profileFile(account), JSON.stringify(config));
 };
 
-// The allowlist helper's `owner --account N` and `config-dir --account N` answers; other calls go to the runtime's own handler.
+// The cswap-account helper's `owner --account N` and `config-dir --account N` answers; other calls go to the runtime's own handler.
 // An account without an entry answers `{error}`, as the helper does for an unknown account (a failed query still exits 0).
 export const answerHelperQueries = (h: MemoryRuntimeHarness, accounts: Record<number, OwnerIds>): void => {
 	const other = h.runtime.process.run.bind(h.runtime.process);

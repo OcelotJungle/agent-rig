@@ -57,7 +57,7 @@
       ]
     },
     {
-      "path": "rules/claude-delegation-04-volunteers-05-allowlist-codex-on.md",
+      "path": "rules/claude-delegation-04-volunteers-05-denylist-codex-on.md",
       "target": "claude",
       "platform": "windows",
       "whenEnabled": [
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "path": "rules/claude-delegation-04-volunteers-05-allowlist-codex-off.md",
+      "path": "rules/claude-delegation-04-volunteers-05-denylist-codex-off.md",
       "target": "claude",
       "platform": "windows",
       "whenEnabled": [

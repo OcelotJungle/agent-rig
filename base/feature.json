@@ -444,7 +444,8 @@
     "tools/patchlib.py",
     "tools/run-report.py",
     "tools/process-job.py",
-    "tools/account-allowlist.py"
+    "tools/cswap-account.py",
+    "tools/project-denylist.py"
   ],
   "assets": [],
   "agents": [

@@ -9,9 +9,10 @@ Commands:
   reply  <job> --prompt-file F         continue a finished job's Codex session with answers or a follow-up
   cancel <job>                         stop Codex and everything it started
   list                                 recent jobs and their states
-  session-hint                         SessionStart hook: context for a cswap account outside the Codex allowlist
+  session-hint                         SessionStart hook: context for a project directory in the Codex denylist
 
-start and reply refuse on a cswap account outside "codex" in ~/.agent-rig/account-allowlist.json.
+start and reply refuse when the working directory is, or is inside, a directory listed under "codex" in
+~/.agent-rig/project-denylist.json.
 
 
 Model names resolve to the newest visible model of the line in ~/.codex/models_cache.json, never
@@ -43,15 +44,15 @@ validate_report = report_module.validate_report
 job_spec = importlib.util.spec_from_file_location("process_job", Path(__file__).resolve().parents[3] / "base/tools/process-job.py")
 process_job = importlib.util.module_from_spec(job_spec)
 job_spec.loader.exec_module(process_job)
-allowlist_spec = importlib.util.spec_from_file_location("account_allowlist", Path(__file__).resolve().parents[3] / "base/tools/account-allowlist.py")
-account_allowlist = importlib.util.module_from_spec(allowlist_spec)
-allowlist_spec.loader.exec_module(account_allowlist)
+denylist_spec = importlib.util.spec_from_file_location("project_denylist", Path(__file__).resolve().parents[3] / "base/tools/project-denylist.py")
+project_denylist = importlib.util.module_from_spec(denylist_spec)
+denylist_spec.loader.exec_module(project_denylist)
 
 HOME = Path.home()
-ALLOWLIST_CATEGORY = "codex"
-# SessionStart context for a session on a cswap account that the allowlist does not cover
+DENYLIST_CATEGORY = "codex"
+# SessionStart context for a session whose project directory the denylist covers
 SESSION_HINT = (
-    "Codex is disabled in this session: this cswap account is not in the Codex account allowlist. The "
+    "Codex is disabled in this session: this project is in the Codex project denylist. The "
     "\"Delegating to Codex\" section and every mention of Codex in CLAUDE.md do not apply in this session. "
     "Do not launch the `codex` subagent or any `/codex:*` command. Give code search to Explore and mechanical "
     "chains to general-purpose, as CLAUDE.md says for when Codex is unavailable; do it silently, without "
@@ -492,11 +493,11 @@ def spawn_supervisor(d):
 
 
 def cmd_session_hint(a):
-    account_allowlist.session_hint(ALLOWLIST_CATEGORY, SESSION_HINT, home=HOME)
+    project_denylist.session_hint(DENYLIST_CATEGORY, SESSION_HINT, project_denylist.hook_project_dir(), home=HOME)
 
 
 def cmd_start(a):
-    account_allowlist.refuse_if_blocked(ALLOWLIST_CATEGORY, home=HOME)
+    project_denylist.refuse_if_blocked(DENYLIST_CATEGORY, home=HOME)
     line = a.model
     if line == "astra" and not a.approved:
         sys.exit("REFUSED: astra needs the user's explicit consent (--approved)")
@@ -637,7 +638,7 @@ def cmd_wait(a):
 
 
 def cmd_reply(a):
-    account_allowlist.refuse_if_blocked(ALLOWLIST_CATEGORY, home=HOME)
+    project_denylist.refuse_if_blocked(DENYLIST_CATEGORY, home=HOME)
     d = job_dir(a.job)
     st = read_json(d / "state.json")
     if not isinstance(st, dict):
