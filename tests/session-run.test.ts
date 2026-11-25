@@ -10,7 +10,7 @@ import { runCli } from "../src/cli.js";
 import { findCswap, launchRegistrationDeadline, modeCommand, prepareLaunch, resolveLaunch, runSession, transcriptMode } from "../src/commands/session-run.js";
 import { buildLaunchCommand } from "../src/launch-command.js";
 import { messagesFor } from "../src/messages.js";
-import { lookupSession, SESSION_POLL_MS } from "../src/session-core.js";
+import { lookupSession, PROMPT_TIMEOUT_MS, SESSION_POLL_MS } from "../src/session-core.js";
 import { apiFail, apiOk } from "../src/output.js";
 import { err, ok } from "../src/result.js";
 import { withSessionEnding } from "../src/session-ending.js";
@@ -643,6 +643,194 @@ describe("session run and mode", () => {
 			expect(await h.fs.readText("/transcript")).toBe(before);
 			expect(spawns.count()).toBe(0);
 		});
+	});
+	describe("a launch with a prompt hands the text to the registered process through the window request queue", () => {
+		// Every character a launch line could break on: quotes, cmd.exe syntax, a line break, Cyrillic (\u escapes: no Cyrillic in sources).
+		const PROMPT = "continue \"after\" the limit: 100% & !done; ^x | y\n\u0434\u0430\u043b\u044c\u0448\u0435";
+		const PROMPT_PID = 43;
+		const CLAIMANT_PID = 99;
+		const CLAIMANT_CREATED = "2026-01-02T00:00:00.000Z";
+		// The fake clock starts far from 0, after every creation time the table answers, so a modification time of 0 reads as ancient.
+		const LAUNCHED_AT_MS = Date.parse("2026-02-01T00:00:00.000Z");
+		const STALE_MS = 60_000;
+		const LATE_MODULE_POLLS = 3;
+		const SESSION_DIR = `${ROOT}/sessions/${ID}`;
+		const USAGE_PATH = `${SESSION_DIR}/usage.json`;
+		const REQUESTS_DIR = `${SESSION_DIR}/requests`;
+		type ModuleBehaviour = "answers" | "fails" | "claims-and-hangs" | "claimant-dies" | "silent";
+		type UsageSnapshot = "fresh" | "stale" | "late" | "absent";
+		const requestOf = (text: string): { id: string; op: string; text: string } | null => {
+			const value: unknown = JSON.parse(text);
+			if (typeof value !== "object" || value === null || !("id" in value) || !("op" in value) || !("args" in value)) return null;
+			const { id, op, args } = value;
+			if (typeof id !== "string" || typeof op !== "string" || typeof args !== "object" || args === null || !("text" in args) || typeof args.text !== "string") return null;
+			return { id, op, text: args.text };
+		};
+		// A launch's world: the spawned process registers itself (unless `registers` is false), its module writes a usage snapshot as
+		// `usage` says and then answers the requests the way `module` says. The module acts whenever the clock sleeps.
+		const world = (module: ModuleBehaviour, usage: UsageSnapshot, registers = true, withAccount = false) => {
+			const h = setup();
+			seedLaunchers(h);
+			// Without an account the launch has no owner switch to make; with one the owner line is written.
+			if (!withAccount) h.runtime.process.run = async () => ok({ stdout: '{"accounts":{"/cfg/1-test":{"present":true,"account":null}},"categories":{}}', stderr: "", exitCode: 0 });
+			let now = LAUNCHED_AT_MS;
+			let claimantAlive = true;
+			let usageWritten = false;
+			let windowInspections = 0;
+			const seen: { op: string; text: string }[] = [];
+			const handled = new Set<string>();
+			const own = String(h.runtime.lock.process.pid);
+			h.runtime.clock.now = () => new Date(now);
+			h.runtime.process.createdAt = async (pids) => ok(Object.fromEntries(pids.map((pid) => [String(pid), String(pid) === own ? FAKE_OWNER_CREATED : pid === CLAIMANT_PID ? (claimantAlive ? CLAIMANT_CREATED : null) : pid === PROMPT_PID ? CREATED : null])));
+			const listProcesses = h.runtime.process.listProcesses.bind(h.runtime.process);
+			h.runtime.process.listProcesses = async () => { windowInspections++; return listProcesses(); };
+			const writeUsage = (at: number): void => { usageWritten = true; h.fs.seed(USAGE_PATH, "{}"); h.fs.mtimes.set(USAGE_PATH, at); };
+			// A snapshot left by an earlier process of the session.
+			if (usage === "stale") writeUsage(LAUNCHED_AT_MS - STALE_MS);
+			const onSpawn = (): void => {
+				if (registers) h.fs.seed(`${SESSION_DIR}.json`, recordWith(PROMPT_PID, CREATED));
+				if (usage === "fresh") writeUsage(now);
+			};
+			const actAsModule = (): void => {
+				const path = [...h.fs.files.keys()].find((file) => file.startsWith(`${REQUESTS_DIR}/`) && file.endsWith(".json"));
+				if (path === undefined) return;
+				if (handled.has(path)) {
+					if (module === "claimant-dies") claimantAlive = false;
+					return;
+				}
+				handled.add(path);
+				const request = requestOf(h.fs.files.get(path) ?? "null");
+				if (request === null) throw new Error("the request is not well formed");
+				seen.push({ op: request.op, text: request.text });
+				const claim = `${SESSION_DIR}/claims/${request.id}`;
+				const respond = (answer: object): void => h.fs.seed(`${SESSION_DIR}/responses/${request.id}.json`, JSON.stringify({ id: request.id, ...answer }));
+				if (module === "answers") respond({ ok: true, result: {} });
+				else if (module === "fails") respond({ ok: false, error: "no turn to start" });
+				else if (module !== "silent") {
+					h.fs.directories.add(claim);
+					h.fs.mtimes.set(claim, now);
+					h.fs.seed(`${claim}/state`, "running");
+					if (module === "claimant-dies") h.fs.seed(`${claim}/pid`, String(CLAIMANT_PID));
+				}
+			};
+			h.runtime.clock.sleep = async (ms) => {
+				now += ms;
+				if (usage === "late" && !usageWritten && now >= LAUNCHED_AT_MS + LATE_MODULE_POLLS * POLL_MS) writeUsage(now);
+				actAsModule();
+			};
+			return { h, seen, onSpawn, spawn: fakeSpawn(h, onSpawn), elapsed: () => now - LAUNCHED_AT_MS, windowInspections: () => windowInspections };
+		};
+		const launchWith = (w: ReturnType<typeof world>, prompt: string | null) => runSession(w.h.runtime, session, null, null, w.spawn, prompt);
+		const failure = (result: Awaited<ReturnType<typeof launchWith>>): { code: string; message: string } => result.ok ? { code: "ok", message: "" } : result.error;
+		test("the text arrives as a prompt request, and the launch reports it delivered with the process", async () => {
+			const w = world("answers", "fresh");
+			expect(await launchWith(w, PROMPT)).toEqual(apiOk({ session: ID, pid: PROMPT_PID, mode: null, account: null, ownerSwitch: "none", promptDelivered: true }));
+			expect(w.seen).toEqual([{ op: "prompt", text: PROMPT }]);
+			expect(w.windowInspections()).toBe(0);
+			expect(eventsOf(w.h)).toEqual([]);
+		});
+		test("a launch with no owner switch to make and no prompt still returns at once, without the pid and without a request", async () => {
+			const w = world("answers", "fresh");
+			expect(await launchWith(w, null)).toEqual(apiOk({ session: ID, pid: null, mode: null, account: null, ownerSwitch: "none" }));
+			expect(w.seen).toEqual([]);
+		});
+		test("a module that comes up a few polls after the process registered still gets the text", async () => {
+			const w = world("answers", "late");
+			expect(await launchWith(w, PROMPT)).toMatchObject({ ok: true, value: { pid: PROMPT_PID, promptDelivered: true } });
+			expect(w.seen).toEqual([{ op: "prompt", text: PROMPT }]);
+			expect(w.elapsed()).toBeGreaterThanOrEqual(LATE_MODULE_POLLS * POLL_MS);
+		});
+		test("a process that never registers is the launch-timeout refusal, which closes the window and says the text was not delivered", async () => {
+			const w = world("answers", "fresh", false);
+			const refusal = failure(await launchWith(w, PROMPT));
+			expect(refusal.code).toBe("launch-timeout");
+			expect(refusal.message).toContain(messagesFor("en").session.launchPromptNotSent());
+			expect(w.seen).toEqual([]);
+			expect(w.windowInspections()).toBeGreaterThan(0);
+		});
+		test("the same refusal without a prompt does not claim anything about a prompt", async () => {
+			const w = world("answers", "fresh", false, true);
+			const refusal = failure(await runSession(w.h.runtime, session, null, "1", w.spawn));
+			expect(refusal.code).toBe("launch-timeout");
+			expect(refusal.message).not.toContain(messagesFor("en").session.launchPromptNotSent());
+		});
+		for (const usage of ["stale", "absent"] as const) {
+			test(`a registered process whose usage snapshot is ${usage} has no module of its own: prompt-not-delivered with the pid, no request, window kept`, async () => {
+				const w = world("answers", usage);
+				const refusal = failure(await launchWith(w, PROMPT));
+				expect(refusal.code).toBe("prompt-not-delivered");
+				expect(refusal.message).toContain(`process ${PROMPT_PID}`);
+				expect(refusal.message).toContain(messagesFor("en").session.promptModuleNotUp());
+				expect(w.seen).toEqual([]);
+				expect(w.windowInspections()).toBe(0);
+				expect(eventsOf(w.h)).toMatchObject([{ level: "warn", type: "prompt-not-delivered", text: refusal.message }]);
+			});
+		}
+		test("a module that answers with an error did not take the text: prompt-not-delivered with its reason, window kept", async () => {
+			const w = world("fails", "fresh");
+			const refusal = failure(await launchWith(w, PROMPT));
+			expect(refusal.code).toBe("prompt-not-delivered");
+			expect(refusal.message).toContain(`process ${PROMPT_PID}`);
+			expect(refusal.message).toContain("no turn to start");
+			expect(w.windowInspections()).toBe(0);
+			expect(eventsOf(w.h)).toMatchObject([{ level: "warn", type: "prompt-not-delivered" }]);
+		});
+		test("a module that never claims the request within the prompt allowance: prompt-not-delivered", async () => {
+			const w = world("silent", "fresh");
+			const refusal = failure(await launchWith(w, PROMPT));
+			expect(refusal.code).toBe("prompt-not-delivered");
+			expect(w.elapsed()).toBeGreaterThanOrEqual(PROMPT_TIMEOUT_MS);
+			expect(w.windowInspections()).toBe(0);
+		});
+		test("a module that began the request and did not answer in time: prompt-delivery-unknown, window kept, warn event", async () => {
+			const w = world("claims-and-hangs", "fresh");
+			const refusal = failure(await launchWith(w, PROMPT));
+			expect(refusal.code).toBe("prompt-delivery-unknown");
+			expect(refusal.message).toContain(`process ${PROMPT_PID}`);
+			expect(w.elapsed()).toBeGreaterThanOrEqual(PROMPT_TIMEOUT_MS);
+			expect(w.windowInspections()).toBe(0);
+			expect(eventsOf(w.h)).toMatchObject([{ level: "warn", type: "prompt-delivery-unknown", text: refusal.message }]);
+		});
+		test("a module whose claiming process vanished mid-request: prompt-delivery-unknown", async () => {
+			const w = world("claimant-dies", "fresh");
+			const refusal = failure(await launchWith(w, PROMPT));
+			expect(refusal.code).toBe("prompt-delivery-unknown");
+			expect(w.elapsed()).toBeLessThan(PROMPT_TIMEOUT_MS);
+			expect(eventsOf(w.h)).toMatchObject([{ level: "warn", type: "prompt-delivery-unknown" }]);
+		});
+		test("run --prompt through the CLI: the text reaches the module and is on no command line of the launch", async () => {
+			const w = world("answers", "fresh", true, true);
+			const argv: string[][] = [];
+			w.h.runtime.process.spawnDetached = async (command) => {
+				argv.push([...command]);
+				w.onSpawn();
+				return ok({ exited: false, exitCode: null, stderr: "" });
+			};
+			const lines: string[] = [];
+			expect(await runCli(["session", "run", ID, "--account", "1", "--prompt", PROMPT], (line) => lines.push(line), w.h.runtime)).toBe(0);
+			expect(JSON.parse(lines.join(""))).toMatchObject({ pid: PROMPT_PID, ownerSwitch: "written", promptDelivered: true });
+			expect(w.seen).toEqual([{ op: "prompt", text: PROMPT }]);
+			expect(argv).toHaveLength(1);
+			expect(argv.flat().some((part) => part.includes(PROMPT))).toBe(false);
+		});
+		test("run --prompt through the CLI exits non-zero with the refusal when the text is not delivered", async () => {
+			const w = world("fails", "fresh", true, true);
+			w.h.runtime.process.spawnDetached = async () => { w.onSpawn(); return ok({ exited: false, exitCode: null, stderr: "" }); };
+			const lines: string[] = [];
+			expect(await runCli(["session", "run", ID, "--account", "1", "--prompt", PROMPT], (line) => lines.push(line), w.h.runtime)).toBe(1);
+			expect(JSON.parse(lines.join(""))).toMatchObject({ error: { code: "prompt-not-delivered" } });
+		});
+		for (const args of [["--prompt", ""], ["--prompt"], ["--prompt", "a", "--prompt", "b"]]) {
+			test(`run ${JSON.stringify(args)} is a usage error and launches nothing`, async () => {
+				const w = world("answers", "fresh");
+				let spawned = 0;
+				w.h.runtime.process.spawnDetached = async () => { spawned++; return ok({ exited: false, exitCode: null, stderr: "" }); };
+				const lines: string[] = [];
+				expect(await runCli(["session", "run", ID, ...args], (line) => lines.push(line), w.h.runtime)).toBe(1);
+				expect(JSON.parse(lines.join(""))).toMatchObject({ error: { code: "usage" } });
+				expect(spawned).toBe(0);
+			});
+		}
 	});
 	describe("the ending marker of a launch", () => {
 		const OTHER_PID = 11;

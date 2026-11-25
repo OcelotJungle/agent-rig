@@ -13,9 +13,9 @@ import { buildLaunchCommand } from "../launch-command.js";
 import { launchPath, LAUNCH_TOKEN } from "../launch-safety.js";
 import { closeLaunchedWindow } from "../launch-window.js";
 import { messagesFor } from "../messages.js";
-import { apiFail, apiOk, ACCOUNT_CONFIG_BUSY, ACCOUNT_PROFILE_INCOMPLETE, ACCOUNT_PROFILE_MISSING, ACCOUNT_PROFILE_UNREADABLE, ERROR_CODE_USAGE, WORKSPACE_UNTRUSTED, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, SESSION_ENDING, SESSION_RUNNING } from "../output.js";
+import { apiFail, apiOk, ACCOUNT_CONFIG_BUSY, ACCOUNT_PROFILE_INCOMPLETE, ACCOUNT_PROFILE_MISSING, ACCOUNT_PROFILE_UNREADABLE, ERROR_CODE_USAGE, WORKSPACE_UNTRUSTED, LAUNCH_FAILED, LAUNCH_ACCOUNT_LOOKUP, LAUNCH_INVALID, LAUNCH_UNAVAILABLE, LAUNCH_TIMEOUT, OWNER_SWITCH_UNAVAILABLE, PROMPT_DELIVERY_UNKNOWN, PROMPT_NOT_DELIVERED, SESSION_CLAIM_LOST, SESSION_ENDING, SESSION_RUNNING, SESSION_TIMEOUT_RUNNING } from "../output.js";
 import { errorText } from "../result.js";
-import { liveProcesses, lookupSession, lookupSessionForCommand, processKey, recordedConfigDir, sessionLive, SESSION_POLL_MS } from "../session-core.js";
+import { liveProcesses, lookupSession, lookupSessionForCommand, processKey, recordedConfigDir, requestSession, sessionLive, sessionModuleStartedSince, SESSION_POLL_MS, SESSION_TIMEOUTS } from "../session-core.js";
 import { withSessionEnding } from "../session-ending.js";
 import { describeDetail, readOwner, writeOwner } from "../session-owner.js";
 import { scanTranscriptBackwards } from "../transcript-scan.js";
@@ -35,6 +35,8 @@ const MS_PER_SECOND = 1000;
 // The registration allowance used by launch polling and by stop after a launching owner dies.
 export const LAUNCH_REGISTRATION_WAIT_MS = DEFAULT_TIMEOUT_SEC * MS_PER_SECOND;
 export const launchRegistrationDeadline = (startedAt: number): number => startedAt + LAUNCH_EXIT_GRACE_MS + LAUNCH_REGISTRATION_WAIT_MS;
+// The module starts with its process (at session start), so once the process has registered its snapshot gets the same allowance.
+const MODULE_UP_WAIT_MS = LAUNCH_REGISTRATION_WAIT_MS;
 const POSIX_PATH_SEPARATOR = ":";
 const WINDOWS_PATH_SEPARATOR = ";";
 // File types cmd.exe /c tries for a bare name, in its lookup order; PATH order comes first.
@@ -43,11 +45,15 @@ const WINDOWS_EXECUTABLE_SUFFIXES = [".exe", ".com", ".cmd", ".bat"] as const;
 const OWNER_SWITCH_REFUSED_EVENT = "owner-switch-refused";
 const ACCOUNT_CONSENT_REFUSED_EVENT = "account-consent-refused";
 const LAUNCH_BLOCKED_SCREEN_EVENT = "launch-blocked-screen";
+// The rig events of a launch whose process started but whose prompt was not (or may not have been) delivered.
+const PROMPT_NOT_DELIVERED_EVENT = "prompt-not-delivered";
+const PROMPT_DELIVERY_UNKNOWN_EVENT = "prompt-delivery-unknown";
 const MODES = ["manual", "auto", "acceptEdits", "plan", "dontAsk"] as const;
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// `pid` is null when the launch had no owner switch to make (`ownerSwitch: "none"`): it is not waited for, only its exit grace is checked.
-type LaunchResult = { session: string; pid: number | null; mode: string | null; account: number | null } & OwnerSwitch;
+// `pid` is null when the launch had no owner switch to make (`ownerSwitch: "none"`) and no prompt to deliver: it is not waited for, only its exit grace is checked.
+// `promptDelivered` is present only on a launch that carried a prompt and delivered it; a launch that did not deliver it fails.
+type LaunchResult = { session: string; pid: number | null; mode: string | null; account: number | null; promptDelivered?: true } & OwnerSwitch;
 // The step a launch runs right before its spawn, inside the ending marker's guarded transition when there is one: it lets
 // the launch go on with a decision, or stays (no spawn) with an outcome.
 type LaunchStep<D, S> = () => Promise<ApiResult<LaunchGate<D, S>>>;
@@ -245,19 +251,20 @@ const refuseLaunch = async (runtime: RuntimePorts, session: string, account: num
 
 // A launch whose process never registered left its window on a screen that wants a person. The window is closed (its screen's
 // text is read first, only to put it into the message) and the launch is refused with that text; a launch whose window could not
-// be found is refused as before.
-const refuseUnregistered = async (runtime: RuntimePorts, launched: LaunchedWindow, account: number | null): Promise<ApiResult<never>> => {
+// be found is refused as before. A launch that carried a prompt says in the refusal that the text was not delivered.
+const refuseUnregistered = async (runtime: RuntimePorts, launched: LaunchedWindow, account: number | null, withPrompt: boolean): Promise<ApiResult<never>> => {
 	const m = messagesFor(runtime.language).session;
+	const refusal = (text: string): ApiResult<never> => apiFail(LAUNCH_TIMEOUT, withPrompt ? `${text} ${m.launchPromptNotSent()}` : text);
 	const closed = await closeLaunchedWindow(runtime, launched);
-	if (closed.killed.length === 0) return apiFail(LAUNCH_TIMEOUT, m.launchTimeout());
+	if (closed.killed.length === 0) return refusal(m.launchTimeout());
 	// A failed event write must not hide the refusal itself.
 	await emitRigEvent(runtime, LAUNCH_BLOCKED_SCREEN_EVENT, "warn", m.launchBlockedScreenEvent(launched.sessionId, account, closed.killed.join(", "), closed.excerpt));
-	return apiFail(LAUNCH_TIMEOUT, closed.excerpt === "" ? m.launchTimeoutWindowClosed() : m.launchTimeoutWindowClosedScreen(closed.excerpt));
+	return refusal(closed.excerpt === "" ? m.launchTimeoutWindowClosed() : m.launchTimeoutWindowClosedScreen(closed.excerpt));
 };
 
 // Waits for the launched process to register: a process the record did not name before the launch, alive, within the deadline.
 // On the deadline the launch's window is closed and the launch refused.
-const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, account: number | null, spawnedAt: Date, deadline: number): Promise<ApiResult<number>> => {
+const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, account: number | null, spawnedAt: Date, deadline: number, withPrompt: boolean): Promise<ApiResult<number>> => {
 	const earlier = new Set(session.processes.map(processKey));
 	for (;;) {
 		const current = await lookupSession(runtime, session.id);
@@ -270,17 +277,57 @@ const awaitRegistration = async (runtime: RuntimePorts, session: SessionRecord, 
 			if (first !== undefined) return apiOk(first.pid);
 		}
 		const remaining = deadline - runtime.clock.now().getTime();
-		if (remaining <= 0) return refuseUnregistered(runtime, { sessionId: session.id, earlier, spawnedAt }, account);
+		if (remaining <= 0) return refuseUnregistered(runtime, { sessionId: session.id, earlier, spawnedAt }, account, withPrompt);
 		await runtime.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
 	}
+};
+
+// A launch whose process started but whose prompt did not (or may not have) reached it leaves the window open, a warn rig event and a failed result.
+const refusePrompt = async (runtime: RuntimePorts, session: string, pid: number, kind: "not-delivered" | "unknown", reason: string): Promise<ApiResult<never>> => {
+	const m = messagesFor(runtime.language).session;
+	const unknown = kind === "unknown";
+	const text = unknown ? m.promptDeliveryUnknown(session, pid, reason) : m.promptNotDelivered(session, pid, reason);
+	// A failed event write must not hide the refusal itself.
+	await emitRigEvent(runtime, unknown ? PROMPT_DELIVERY_UNKNOWN_EVENT : PROMPT_NOT_DELIVERED_EVENT, "warn", text);
+	return apiFail(unknown ? PROMPT_DELIVERY_UNKNOWN : PROMPT_NOT_DELIVERED, text);
+};
+
+// Waits until the module of the launched process is up (its usage snapshot written at or after the spawn), within the allowance.
+const awaitModule = async (runtime: RuntimePorts, session: SessionRecord, spawnedAt: Date): Promise<ApiResult<boolean>> => {
+	const deadline = runtime.clock.now().getTime() + MODULE_UP_WAIT_MS;
+	for (;;) {
+		const up = await sessionModuleStartedSince(runtime, session, spawnedAt.getTime());
+		if (!up.ok || up.value) return up;
+		const remaining = deadline - runtime.clock.now().getTime();
+		if (remaining <= 0) return apiOk(false);
+		await runtime.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
+	}
+};
+
+// Hands the prompt to the registered process through the window request queue, so the text is on no command line. The module must be
+// the one of this process (not a previous process's leftover), else the request would be answered by nobody or by the wrong process.
+const deliverPrompt = async (runtime: RuntimePorts, session: SessionRecord, pid: number, spawnedAt: Date, text: string): Promise<ApiResult<null>> => {
+	const m = messagesFor(runtime.language).session;
+	const up = await awaitModule(runtime, session, spawnedAt);
+	if (!up.ok) return refusePrompt(runtime, session.id, pid, "not-delivered", up.error.message);
+	if (!up.value) return refusePrompt(runtime, session.id, pid, "not-delivered", m.promptModuleNotUp());
+	// The record read before the spawn does not name the new process.
+	const current = await lookupSession(runtime, session.id);
+	if (!current.ok) return refusePrompt(runtime, session.id, pid, "not-delivered", current.error.message);
+	const sent = await requestSession(runtime, current.value, "prompt", { text }, SESSION_TIMEOUTS.prompt);
+	if (sent.ok) return apiOk(null);
+	// A module that began the request, or a claimant that vanished, may have submitted the text already.
+	const unknown = sent.error.code === SESSION_TIMEOUT_RUNNING || sent.error.code === SESSION_CLAIM_LOST;
+	return refusePrompt(runtime, session.id, pid, unknown ? "unknown" : "not-delivered", sent.error.message);
 };
 
 // The last steps of a launch whose command is resolved and whose session is not running: make the launch account the
 // transcript's owner, spawn, and wait for the new process to register. A launch that cannot make the owner switch is
 // refused with no window opened; a transient reason (a process of unknown creation time, a busy or still growing
 // transcript) is waited out, one `SESSION_POLL_MS` at a time, until the registration deadline counted from the first
-// try, and only then refused. A launch with no account to switch to has no owner switch to make: it spawns as before.
-const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, launch: ResolvedLaunch, mode: string | null, spawnCommand: SpawnLaunch): Promise<ApiResult<LaunchResult>> => {
+// try, and only then refused. A launch with no account to switch to has no owner switch to make: it spawns as before. A launch
+// with a prompt always waits for the registration (the prompt goes to the registered process), then delivers the text.
+const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, launch: ResolvedLaunch, mode: string | null, spawnCommand: SpawnLaunch, prompt: string | null = null): Promise<ApiResult<LaunchResult>> => {
 	const account = launch.account === "" ? null : Number(launch.account);
 	const limit = launchRegistrationDeadline(runtime.clock.now().getTime());
 	for (let attempts = 1; ; attempts += 1) {
@@ -302,18 +349,22 @@ const launchResolved = async (runtime: RuntimePorts, session: SessionRecord, lau
 		}
 		const owner = spawned.value.decision;
 		// With no owner switch to make Claude Code may refuse the session at once: the grace check is all the launch can tell.
-		if (owner.ownerSwitch === "none") return apiOk({ session: session.id, pid: null, mode, account, ...owner });
-		const registered = await awaitRegistration(runtime, session, account, spawnedAt, spawned.value.deadline);
-		return registered.ok ? apiOk({ session: session.id, pid: registered.value, mode, account, ...owner }) : registered;
+		// A launch with a prompt cannot stop there: the text goes to the registered process.
+		if (owner.ownerSwitch === "none" && prompt === null) return apiOk({ session: session.id, pid: null, mode, account, ...owner });
+		const registered = await awaitRegistration(runtime, session, account, spawnedAt, spawned.value.deadline, prompt !== null);
+		if (!registered.ok) return registered;
+		if (prompt === null) return apiOk({ session: session.id, pid: registered.value, mode, account, ...owner });
+		const delivered = await deliverPrompt(runtime, session, registered.value, spawnedAt, prompt);
+		return delivered.ok ? apiOk({ session: session.id, pid: registered.value, mode, account, ...owner, promptDelivered: true }) : delivered;
 	}
 };
 
-export const runSession = async (runtime: RuntimePorts, session: SessionRecord, mode: string | null, accountOverride: string | null, spawnCommand: SpawnLaunch = launcher(runtime)): Promise<ApiResult<LaunchResult>> => {
+export const runSession = async (runtime: RuntimePorts, session: SessionRecord, mode: string | null, accountOverride: string | null, spawnCommand: SpawnLaunch = launcher(runtime), prompt: string | null = null): Promise<ApiResult<LaunchResult>> => {
 	const live = await sessionLive(runtime, session);
 	if (!live.ok) return live;
 	if (live.value) return apiFail(SESSION_RUNNING, messagesFor(runtime.language).session.alreadyRunning());
 	const launch = await resolveLaunch(runtime, session, mode, accountOverride);
-	return launch.ok ? launchResolved(runtime, session, launch.value, mode, spawnCommand) : launch;
+	return launch.ok ? launchResolved(runtime, session, launch.value, mode, spawnCommand, prompt) : launch;
 };
 
 // After a launch inside the ending marker: a stop that took the marker over ends the session the launch started.
@@ -336,11 +387,12 @@ export const runCommand = async (runtime: RuntimePorts, args: readonly string[])
 	if (!id) return apiFail(ERROR_CODE_USAGE, messagesFor(runtime.language).session.usageRun());
 	let mode: string | null = null;
 	let account: string | null = null;
+	let prompt: string | null = null;
 	for (let index = 0; index < flags.length; index += 2) {
 		const flag = flags[index];
 		const value = flags[index + 1];
-		if (!value || (flag === "--mode" && mode !== null) || (flag === "--account" && account !== null) || (flag !== "--mode" && flag !== "--account")) return apiFail(ERROR_CODE_USAGE, messagesFor(runtime.language).session.invalidRunArguments());
-		if (flag === "--mode") mode = value; else account = value;
+		if (!value || (flag === "--mode" && mode !== null) || (flag === "--account" && account !== null) || (flag === "--prompt" && prompt !== null) || (flag !== "--mode" && flag !== "--account" && flag !== "--prompt")) return apiFail(ERROR_CODE_USAGE, messagesFor(runtime.language).session.invalidRunArguments());
+		if (flag === "--mode") mode = value; else if (flag === "--account") account = value; else prompt = value;
 	}
 	// Only to refuse an unknown id before the marker directory is created for it; the launch reads the record again inside the marker.
 	const known = await lookupSessionForCommand(runtime, id, false);
@@ -348,7 +400,7 @@ export const runCommand = async (runtime: RuntimePorts, args: readonly string[])
 	return withSessionEnding<LaunchResult>(runtime, id, async (ending) => {
 		const session = await lookupSessionForCommand(runtime, id, false);
 		if (!session.ok) return session;
-		const result = await runSession(runtime, session.value, mode ?? await transcriptMode(runtime, session.value.transcriptPath), account, launcher(runtime, ending));
+		const result = await runSession(runtime, session.value, mode ?? await transcriptMode(runtime, session.value.transcriptPath), account, launcher(runtime, ending), prompt);
 		return unlessTakenOver(runtime, id, ending, result);
 	}, undefined, (result, takenOver) => endingReleased(runtime, result, takenOver));
 };

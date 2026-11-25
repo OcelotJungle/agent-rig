@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 import { runCli } from "../src/cli.js";
 import { apiOk } from "../src/output.js";
-import { COMPACT_TIMEOUT_MS, lookupSession, listSessions, requestSession, sessionLive, SESSION_POLL_MS } from "../src/session-core.js";
+import { COMPACT_TIMEOUT_MS, lookupSession, listSessions, requestSession, sessionLive, sessionModuleStartedSince, SESSION_POLL_MS } from "../src/session-core.js";
 import { ok } from "../src/result.js";
 import { createMemoryRuntime } from "./fakes/memory-runtime.js";
 
@@ -218,6 +218,49 @@ describe("session core", () => {
 		const answer = await requestSession(w.h.runtime, record, "compact", {}, LONG_SILENCE_MS);
 		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout");
 		expect(w.now()).toBe(LONG_SILENCE_MS);
+	});
+	// The state file the module keeps in a claim directory, written at the first sleep (after rig published the request).
+	const claimWithState = (state: string) => {
+		const w = claimWorld(() => null, false);
+		const sleep = w.h.runtime.clock.sleep;
+		w.h.runtime.clock.sleep = async (ms) => {
+			await sleep(ms);
+			w.h.fs.seed(`${w.claim}/state`, state);
+		};
+		return w;
+	};
+	test("a request the module began (claim state running) that runs out of time is session-timeout-running, not session-timeout", async () => {
+		const w = claimWithState("running");
+		const answer = await requestSession(w.h.runtime, record, "compact", {}, SESSION_POLL_MS * 3);
+		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout-running");
+		expect(w.h.fs.files.has(`${ROOT}/abc/requests/event-1.json`)).toBe(false);
+	});
+	test("a request the module claimed but did not begin (claim state waiting) that runs out of time is session-timeout", async () => {
+		const w = claimWithState("waiting");
+		const answer = await requestSession(w.h.runtime, record, "compact", {}, SESSION_POLL_MS * 3);
+		expect(answer.ok ? "ok" : answer.error.code).toBe("session-timeout");
+	});
+	describe("the module of this process is up (usage snapshot written at or after a moment)", () => {
+		const SINCE = 5000;
+		const usagePath = `${ROOT}/abc/usage.json`;
+		const started = async (h: ReturnType<typeof setup>) => sessionModuleStartedSince(h.runtime, record, SINCE);
+		test("a snapshot older than the moment is a previous process's leftover", async () => {
+			const h = setup();
+			h.fs.mtimes.set(usagePath, SINCE - 1);
+			expect(await started(h)).toEqual(apiOk(false));
+		});
+		test("a snapshot written at the moment or later counts", async () => {
+			const h = setup();
+			h.fs.mtimes.set(usagePath, SINCE);
+			expect(await started(h)).toEqual(apiOk(true));
+			h.fs.mtimes.set(usagePath, SINCE + 1);
+			expect(await started(h)).toEqual(apiOk(true));
+		});
+		test("no snapshot means no module", async () => {
+			const h = setup();
+			h.fs.files.delete(usagePath);
+			expect(await started(h)).toEqual(apiOk(false));
+		});
 	});
 	// Guards that no query runs once removed files leave no checkable process.
 	test("removed process files stop waiting without another process query", async () => {

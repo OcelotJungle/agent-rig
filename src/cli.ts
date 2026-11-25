@@ -51,7 +51,7 @@ const USAGE: string[] = [
 	"rig session autocompact <id> <N|auto>",
 	"rig session stop <id>",
 	"rig session cleanup <id>",
-	"rig session run <id> [--mode <mode>] [--account <n>]",
+	"rig session run <id> [--mode <mode>] [--account <n>] [--prompt <text>]",
 	"rig session mode <id> <mode>",
 	"rig exec start <shell> --cwd <dir>",
 	"rig exec start rig -- <rig arguments>",

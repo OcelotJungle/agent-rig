@@ -38,6 +38,9 @@ export type Deps = {
   rename(name: string): Promise<void>;
   // Runs the session's own /autocompact with the window (a number or "auto"); resolves to the command's text, if any.
   autocompact(window: number | "auto"): Promise<string | undefined>;
+  // Submits a prompt as the session's own turn (the engine's prompt.submit, the call it makes for a typed prompt);
+  // resolves once the prompt entered or was queued, not when its turn ends. `drop` is the reason a hook refused it.
+  prompt(text: string): Promise<{ drop?: string }>;
   now(): number;
   // This process's Claude pid, when it is known.
   readonly pid: number | undefined;
@@ -192,7 +195,7 @@ export class Window {
     const parsed = parseRequest(id, text);
     if (!parsed.ok) return this.answer(dir, { id, ok: false, error: parsed.error });
     const request = parsed.value;
-    // The read-only ops answer at once; compact, rename and autocompact wait for the turn to end.
+    // The read-only ops answer at once; compact, rename, autocompact and prompt wait for the turn to end.
     if (request.op === "usage") {
       try {
         return await this.answer(dir, { id, ok: true, result: await this.snapshot() });
@@ -239,6 +242,15 @@ export class Window {
         if (name === "") return { id: request.id, ok: false, error: "args.name must be a non-empty string" };
         await this.deps.rename(name);
         return { id: request.id, ok: true, result: { name } };
+      }
+      if (request.op === "prompt") {
+        // The text goes as given: no trimming, so the turn starts with exactly what rig sent.
+        const text = request.args.text;
+        if (typeof text !== "string" || text.trim() === "") return { id: request.id, ok: false, error: "args.text must be a non-empty string" };
+        const submitted = await this.deps.prompt(text);
+        // A hook refused the prompt: it never entered, so the sender is told rather than shown a success.
+        if (submitted.drop !== undefined) return { id: request.id, ok: false, error: `the prompt was refused: ${submitted.drop}` };
+        return { id: request.id, ok: true, result: {} };
       }
       if (request.op === "autocompact") {
         const window = request.args.window;

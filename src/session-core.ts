@@ -5,7 +5,7 @@ import type { RuntimePorts } from "./ports.js";
 import { CLAIM_PID_FILE, CLAIM_STATE_FILE, CLAIM_STATE_RUNNING, CLAIM_STATE_WAITING, CLAIMS_DIR, ID_PATTERN, REQUEST_SUFFIX } from "../plugins/agent-rig-window/mod/queue-protocol.js";
 import { joinPath } from "./file-system.js";
 import { messagesFor } from "./messages.js";
-import { apiFail, apiOk, PROGRESS_CODE_SESSION_RUNNING, PROGRESS_CODE_SESSION_WAITING, SESSION_BAD_ID, SESSION_BAD_RESPONSE, SESSION_CLAIM_LOST, SESSION_ENDED, SESSION_INVALID, SESSION_IO, SESSION_MODULE_ERROR, SESSION_NO_MODULE, SESSION_TIMEOUT, SESSION_UNKNOWN } from "./output.js";
+import { apiFail, apiOk, PROGRESS_CODE_SESSION_RUNNING, PROGRESS_CODE_SESSION_WAITING, SESSION_BAD_ID, SESSION_BAD_RESPONSE, SESSION_CLAIM_LOST, SESSION_ENDED, SESSION_INVALID, SESSION_IO, SESSION_MODULE_ERROR, SESSION_NO_MODULE, SESSION_TIMEOUT, SESSION_TIMEOUT_RUNNING, SESSION_UNKNOWN } from "./output.js";
 import { errorText } from "./result.js";
 import { removeSessionUnlessEnding } from "./session-ending.js";
 import { resolveTranscriptPath } from "./transcript-path.js";
@@ -22,7 +22,9 @@ export const COMPACT_TIMEOUT_MS = 10 * 60 * SESSION_POLL_MS;
 export const RENAME_TIMEOUT_MS = COMPACT_TIMEOUT_MS;
 // Like rename: the command waits for the turn to end, so it gets the same allowance.
 export const AUTOCOMPACT_TIMEOUT_MS = COMPACT_TIMEOUT_MS;
-export const SESSION_TIMEOUTS: Record<Op, number> = { compact: COMPACT_TIMEOUT_MS, rename: RENAME_TIMEOUT_MS, autocompact: AUTOCOMPACT_TIMEOUT_MS, usage: READ_TIMEOUT_MS, mode: READ_TIMEOUT_MS };
+// Like rename: a submitted prompt waits for the turn to end, so it gets the same allowance.
+export const PROMPT_TIMEOUT_MS = COMPACT_TIMEOUT_MS;
+export const SESSION_TIMEOUTS: Record<Op, number> = { compact: COMPACT_TIMEOUT_MS, rename: RENAME_TIMEOUT_MS, autocompact: AUTOCOMPACT_TIMEOUT_MS, usage: READ_TIMEOUT_MS, mode: READ_TIMEOUT_MS, prompt: PROMPT_TIMEOUT_MS };
 
 // One Claude process of a session, from its file ~/.agent-rig/sessions/<id>/processes/<pid>.json (or a legacy record).
 // A process with no recorded creation time cannot be told from a reused pid, so it never counts as live.
@@ -186,6 +188,16 @@ export const sessionModule = async (r: RuntimePorts, session: SessionRecord): Pr
 	catch (e) { return missing(e) ? apiOk(false) : apiFail(SESSION_IO, messagesFor(r.language).session.io(errorText(e))); }
 };
 
+// Whether the module of the process started at `since` (epoch ms) is up: the module writes the usage snapshot at its session start,
+// so a snapshot written at or after `since` is that process's own. `sessionModule` alone is not enough here: a previous process of the
+// session leaves its snapshot behind, and that file satisfies it. `>=` because a file system may round a modification time down.
+export const sessionModuleStartedSince = async (r: RuntimePorts, session: SessionRecord, since: number): Promise<ApiResult<boolean>> => {
+	try {
+		const written = await r.fs.modifiedAt(joinPath(folder(r, session.id), USAGE_FILE));
+		return apiOk(written !== null && written >= since);
+	} catch (e) { return apiFail(SESSION_IO, messagesFor(r.language).session.io(errorText(e))); }
+};
+
 export const listSessions = async (r: RuntimePorts): Promise<ApiResult<{ sessions: SessionListEntry[] }>> => {
 	let entries;
 	try { entries = await r.fs.listDirectory(root(r)); }
@@ -309,9 +321,8 @@ export const requestSession = async (r: RuntimePorts, session: SessionRecord, op
 				if (now === null || now !== claimant.created) return apiFail(SESSION_CLAIM_LOST, m.claimLost());
 			}
 			const remaining = deadline - r.clock.now().getTime();
-			if (remaining <= 0) {
-				return apiFail(SESSION_TIMEOUT, m.timeout());
-			}
+			// A request the module began (state `running`) may still complete: that is told apart from one it never started.
+			if (remaining <= 0) return stateText === CLAIM_STATE_RUNNING ? apiFail(SESSION_TIMEOUT_RUNNING, m.timeoutRunning()) : apiFail(SESSION_TIMEOUT, m.timeout());
 			await r.clock.sleep(Math.min(SESSION_POLL_MS, remaining));
 		}
 	} catch (e) { return apiFail(SESSION_IO, m.io(errorText(e))); }

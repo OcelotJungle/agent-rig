@@ -47,6 +47,10 @@ function process(s: Shared, ran: string[], dirOf: () => string = () => DIR): Dep
       ran.push("autocompact");
       return undefined;
     },
+    prompt: async text => {
+      ran.push(`prompt:${text}`);
+      return {};
+    },
     now: () => s.now,
     pid: PID,
     sessionDir: async () => dirOf(),
@@ -268,6 +272,82 @@ test("a rejected compaction goes back to waiting and is not rewritten while it s
   await w.poll();
   await flush();
   expect(s.states).toEqual(["c1:running", "c1:waiting", "c1:running"]);
+});
+
+const MULTILINE_TEXT = "  Continue \"the task\" \u043d\u0430 \u0440\u0443\u0441\u0441\u043a\u043e\u043c: 100% & done!\nsecond line  ";
+
+test("a prompt request submits the exact text once and answers ok", async () => {
+  const s = shared();
+  const ran: string[] = [];
+  const w = new Window(process(s, ran));
+  put(s, "p1", { id: "p1", op: "prompt", args: { text: MULTILINE_TEXT } });
+  await w.poll();
+  await flush();
+  await w.poll();
+  await flush();
+  expect(ran).toEqual([`prompt:${MULTILINE_TEXT}`]);
+  expect(JSON.parse(s.files.get(`${DIR}/responses/p1.json`) ?? "null")).toEqual({ id: "p1", ok: true, result: {} });
+  expect(s.files.has(`${DIR}/requests/p1.json`)).toBe(false);
+});
+
+test("a prompt request with no text is an error answer and submits nothing", async () => {
+  const s = shared();
+  const ran: string[] = [];
+  const w = new Window(process(s, ran));
+  const bad: unknown[] = [undefined, "", "  \n ", 5, null, ["x"]];
+  bad.forEach((text, i) => put(s, `b${i}`, { id: `b${i}`, op: "prompt", args: { text } }));
+  put(s, "b-none", { id: "b-none", op: "prompt" });
+  await w.poll();
+  await flush();
+  expect(ran).toEqual([]);
+  for (const id of ["b0", "b1", "b2", "b3", "b4", "b5", "b-none"]) {
+    const answer = JSON.parse(s.files.get(`${DIR}/responses/${id}.json`) ?? "null");
+    expect(answer.ok).toBe(false);
+    expect(answer.error).toContain("args.text");
+  }
+});
+
+test("a prompt request waits for the turn to end, then submits", async () => {
+  const s = shared();
+  const ran: string[] = [];
+  const w = new Window(process(s, ran));
+  w.turn(true);
+  put(s, "p1", { id: "p1", op: "prompt", args: { text: "go on" } });
+  await w.poll();
+  await flush();
+  expect(ran).toEqual([]);
+  expect(s.states).toEqual(["p1:waiting"]);
+  expect(s.files.has(`${DIR}/responses/p1.json`)).toBe(false);
+  w.turn(false);
+  await flush();
+  expect(ran).toEqual(["prompt:go on"]);
+  expect(s.states).toEqual(["p1:waiting", "p1:running"]);
+  expect(JSON.parse(s.files.get(`${DIR}/responses/p1.json`) ?? "null").ok).toBe(true);
+});
+
+test("a prompt a hook refused, or a submit that fails, is an error answer and is not submitted again", async () => {
+  const s = shared();
+  const deps = process(s, []);
+  let calls = 0;
+  deps.prompt = async () => {
+    calls++;
+    if (calls === 1) return { drop: "blocked by a hook" };
+    throw new Error("no session");
+  };
+  const w = new Window(deps);
+  put(s, "p1", { id: "p1", op: "prompt", args: { text: "one" } });
+  put(s, "p2", { id: "p2", op: "prompt", args: { text: "two" } });
+  await w.poll();
+  await flush();
+  await w.poll();
+  await flush();
+  expect(calls).toBe(2);
+  const first = JSON.parse(s.files.get(`${DIR}/responses/p1.json`) ?? "null");
+  expect(first.ok).toBe(false);
+  expect(first.error).toContain("blocked by a hook");
+  const second = JSON.parse(s.files.get(`${DIR}/responses/p2.json`) ?? "null");
+  expect(second.ok).toBe(false);
+  expect(second.error).toContain("no session");
 });
 
 test("when the session changes, a claimed request is answered in its own directory, an unclaimed one of the old session is left, and the new directory is served", async () => {

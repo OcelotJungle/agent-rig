@@ -24,6 +24,8 @@ export const SESSION_IO = "session-io";
 export const SESSION_ENDED = "session-ended";
 export const SESSION_NO_MODULE = "session-no-module";
 export const SESSION_TIMEOUT = "session-timeout";
+// The deadline passed while the module had claimed the request and was running it: it may still complete, so a retry could repeat it.
+export const SESSION_TIMEOUT_RUNNING = "session-timeout-running";
 export const SESSION_CLAIM_LOST = "session-claim-lost";
 export const SESSION_MODULE_ERROR = "session-module-error";
 export const SESSION_BAD_RESPONSE = "session-bad-response";
@@ -34,6 +36,10 @@ export const LAUNCH_INVALID = "launch-invalid";
 export const LAUNCH_ACCOUNT_LOOKUP = "launch-account-lookup";
 export const LAUNCH_FAILED = "launch-failed";
 export const LAUNCH_TIMEOUT = "launch-timeout";
+// A launch with a prompt whose session registered but the prompt was not delivered: the window stays open, the text did not reach the session.
+export const PROMPT_NOT_DELIVERED = "prompt-not-delivered";
+// A launch with a prompt that timed out after the module had begun it: the text may still arrive, so it is not sent again.
+export const PROMPT_DELIVERY_UNKNOWN = "prompt-delivery-unknown";
 export const OWNER_SWITCH_UNAVAILABLE = "owner-switch-unavailable";
 // A launch under an account is refused before any window because the folder's consent cannot be carried into the account's profile.
 export const WORKSPACE_UNTRUSTED = "workspace-untrusted";

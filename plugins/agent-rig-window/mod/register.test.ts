@@ -25,6 +25,9 @@ type World = {
   context: { tokens?: number; window: number; breakdown?: { totalTokens: number } };
   renames: string[];
   autocompacts: string[];
+  // The texts the module submitted as prompts; `promptDrop` makes the engine refuse them with that reason.
+  prompts: string[];
+  promptDrop?: string;
   compactResult: { skip?: string };
   autocompactText?: string;
   // What `$.session.id()` answers now; a test changes it to switch the session inside the window.
@@ -34,7 +37,7 @@ type World = {
 
 // Every `$` call the module makes, answered by the test; `session.start` is the engine's own echo.
 function world(on: On): World {
-  const w: World = { files: new Map(), dirs: new Set(), pidText: CLAUDE_PID, compactions: [], snapshotWrites: 0, context: { tokens: TOKENS, window: WINDOW }, renames: [], autocompacts: [], compactResult: {}, sessionId: SESSION, clock: mock.clock(on) };
+  const w: World = { files: new Map(), dirs: new Set(), pidText: CLAUDE_PID, compactions: [], snapshotWrites: 0, context: { tokens: TOKENS, window: WINDOW }, renames: [], autocompacts: [], prompts: [], compactResult: {}, sessionId: SESSION, clock: mock.clock(on) };
   on("session.start", (_, e) => ({ cwd: e.cwd }));
   on("env.get", (_, e) => ({ value: e.name === "HOME" ? HOME : undefined }));
   on("session.id", () => ({ value: w.sessionId }));
@@ -85,6 +88,10 @@ function world(on: On): World {
     return { messages: [{ role: "user" as const, text: "summary", toolUses: [] }], tokensBefore: 163_000, tokensAfter: 13_000 };
   });
   on("session.measure", (_, e) => ({ changed: e.changed }));
+  on("prompt.submit", (_, e) => {
+    w.prompts.push(e.text);
+    return w.promptDrop === undefined ? { text: e.text } : { drop: w.promptDrop };
+  });
   on("command.run", (_, e) => {
     if (e.command === "autocompact") {
       w.autocompacts.push(e.args);
@@ -231,6 +238,38 @@ test("an autocompact request that arrives during a turn waits until the turn end
   await w.clock.advance(POLL_MS);
   expect(w.autocompacts).toEqual(["auto"]);
   expect(response(w, "a1")?.ok).toBe(true);
+});
+
+test("a prompt request goes through the engine's prompt.submit with the exact text, and a refusal is an error answer", async ($, on) => {
+  const w = world(on);
+  await start($);
+  const text = "Continue \"the task\" \u043d\u0430 \u0440\u0443\u0441\u0441\u043a\u043e\u043c: 100% & done!\nsecond line";
+  request(w, "p1", { id: "p1", op: "prompt", args: { text } });
+  await w.clock.advance(POLL_MS);
+  expect(w.prompts).toEqual([text]);
+  expect(response(w, "p1")).toEqual({ id: "p1", ok: true, result: {} });
+
+  w.promptDrop = "a hook said no";
+  request(w, "p2", { id: "p2", op: "prompt", args: { text: "again" } });
+  await w.clock.advance(POLL_MS);
+  expect(response(w, "p2")?.ok).toBe(false);
+  expect(String(response(w, "p2")?.error)).toContain("a hook said no");
+});
+
+test("a prompt request that arrives during a turn is submitted only after the turn ends", async ($, on) => {
+  const w = world(on);
+  on("turn.start", (_, e) => ({ turnId: e.turnId }));
+  on("turn.complete", (_, e) => ({ text: e.answer }));
+  await start($);
+  await $.turn.start({ text: "hi", turnId: "t1" });
+  request(w, "p1", { id: "p1", op: "prompt", args: { text: "next" } });
+  await w.clock.advance(POLL_MS * 3);
+  expect(w.prompts).toEqual([]);
+  expect(response(w, "p1")).toBeUndefined();
+  await $.turn.complete({ answer: "done", durationMs: 1, isAborted: false, turnId: "t1", reason: "answer" });
+  await w.clock.advance(POLL_MS);
+  expect(w.prompts).toEqual(["next"]);
+  expect(response(w, "p1")?.ok).toBe(true);
 });
 
 test("a compaction skipped by a hook is answered as a result with the reason", async ($, on) => {

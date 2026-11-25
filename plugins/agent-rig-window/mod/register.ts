@@ -91,6 +91,10 @@ export const register: Register = on => {
         const result = await $.command.run({ command: "autocompact", args: String(window) });
         return result.text;
       },
+      prompt: async text => {
+        const result = await $.prompt.submit({ text });
+        return result.drop === undefined ? {} : { drop: result.drop };
+      },
       now: () => Date.now(),
       pid,
     });
@@ -113,7 +117,7 @@ export const register: Register = on => {
     return result;
   });
 
-  // The main loop's turns: a compaction or a rename waits for none to run.
+  // The main loop's turns: a compaction, a rename or a submitted prompt waits for none to run.
   on("turn.start", async ($, e, next) => {
     if (e.agentId === undefined) window?.turn(true);
     return next(e);
